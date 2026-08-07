@@ -1,0 +1,43 @@
+{
+  "name": "crewcode-plugin-api",
+  "version": "0.1.1",
+  "description": "Typed browser API for isolated CrewCode plugin panels.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "keywords": [
+    "crewcode",
+    "plugin",
+    "plugin-api",
+    "ade",
+    "ai-agents"
+  ],
+  "homepage": "https://github.com/OnPoint-Dev-Tools/crewcode/tree/main/packages/crewcode-plugin-api#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OnPoint-Dev-Tools/crewcode.git",
+    "directory": "packages/crewcode-plugin-api"
+  },
+  "bugs": {
+    "url": "https://github.com/OnPoint-Dev-Tools/crewcode/issues"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./browser": "./browser/crewcode-plugin-api.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && npm run build:browser",
+    "build:browser": "node scripts/build-browser.mjs",
+    "sync": "node scripts/sync-vendored.mjs",
+    "prepublishOnly": "npm run build"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "typescript": "^5.5.0"
+  },
+  "files": ["dist", "browser", "LICENSE", "README.md"]
+}

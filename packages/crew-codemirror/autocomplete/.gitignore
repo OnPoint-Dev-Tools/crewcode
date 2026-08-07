@@ -1,0 +1,7 @@
+/node_modules
+package-lock.json
+/test/*.js
+/test/*.d.ts
+/test/*.d.ts.map
+.tern-*
+# dist ships: npm cannot build file: deps at install time.

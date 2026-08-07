@@ -1,0 +1,509 @@
+/* Fallback diff renderer — used when Pierre can't parse the patch. */
+.pierre-diff-empty {
+  padding: 14px 16px;
+  font-family: var(--font-family-mono);
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+}
+
+.pierre-diff-fallback {
+  padding: 6px 0;
+  font-size: 11.5px;
+  line-height: 1.55;
+  background: var(--background);
+  overflow-x: hidden;
+}
+
+.pierre-diff-fallback .fb-line {
+  padding: 0 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.pierre-diff-fallback .fb-add {
+  background: rgba(34,197,94,0.10);
+  color: #b3e5b8;
+}
+
+.pierre-diff-fallback .fb-del {
+  background: rgba(248,113,113,0.10);
+  color: #f7b8b8;
+}
+
+.pierre-diff-fallback .fb-hunk {
+  color: #7aa6ff;
+}
+
+.pierre-diff-fallback .fb-meta {
+  color: var(--muted-foreground);
+}
+
+.pierre-diff-fallback .fb-ctx {
+  color: var(--foreground);
+}
+
+/* Inline "files changed this turn" affordance under each agent bubble. */
+.turn-changes {
+  margin: 6px 0 14px 36px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgba(40, 90, 72, 0.04);
+  overflow: hidden;
+}
+
+.turn-changes-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-family: var(--font-family-mono);
+  font-size: 11.5px;
+  color: var(--foreground);
+  text-align: left;
+}
+
+.turn-changes-head:hover {
+  background: rgba(40, 90, 72, 0.08);
+}
+
+.turn-changes-arrow {
+  width: 10px;
+  color: var(--muted-foreground);
+}
+
+.turn-changes-count {
+  color: var(--foreground);
+}
+
+.turn-changes-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--border);
+}
+
+.turn-changes-file {
+  border-top: 1px solid var(--border);
+}
+
+.turn-changes-file:first-child {
+  border-top: none;
+}
+
+.turn-changes-file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 10px 5px 22px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+  color: var(--muted-foreground);
+  text-align: left;
+}
+
+.turn-changes-file-row:hover {
+  background: rgba(40, 90, 72, 0.08);
+  color: var(--foreground);
+}
+
+.turn-changes-file-arrow {
+  width: 10px;
+}
+
+.turn-changes-file-path {
+  color: var(--foreground);
+}
+
+.turn-changes-file-diff {
+  padding: 4px 10px 10px 22px;
+  border-top: 1px solid var(--border);
+  background: var(--background);
+}
+
+/* ── Drawer: cross-turn history ───────────────────────────────────────── */
+.turn-drawer {
+  position: relative;
+  align-self: stretch;
+  /* width is set inline so the resize handle can drive it. */
+  min-width: 360px;
+  max-width: 95vw;
+  flex-shrink: 0;
+  min-height: 0;
+  animation: sidePaneIn 180ms cubic-bezier(0.2,0.8,0.2,1);
+  background: var(--card);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+}
+
+.turn-drawer-resize {
+  position: absolute;
+  left: -3px;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: ew-resize;
+  background: transparent;
+  z-index: 1;
+}
+
+.turn-drawer-resize:hover,
+.turn-drawer-resize:active {
+  background: rgba(40, 90, 72, 0.35);
+}
+
+.turn-drawer-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted-foreground);
+}
+
+.turn-drawer-title {
+  color: var(--foreground);
+  letter-spacing: 0;
+  text-transform: none;
+  font-size: 13px;
+}
+
+.turn-drawer-sidebar-toggle,
+.turn-drawer-close {
+  background: transparent;
+  border: none;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  line-height: 1;
+}
+
+.turn-drawer-sidebar-toggle {
+  margin-left: auto;
+  width: 26px;
+  height: 24px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.turn-drawer-sidebar-toggle.on {
+  color: var(--foreground);
+  background: rgba(40, 90, 72, 0.12);
+}
+
+.turn-drawer-close {
+  font-size: 18px;
+  padding: 2px 5px;
+}
+
+.turn-drawer-sidebar-toggle:hover,
+.turn-drawer-close:hover {
+  color: var(--foreground);
+  background: rgba(40, 90, 72, 0.12);
+}
+
+.turn-drawer-empty {
+  padding: 24px;
+  font-family: var(--font-family-mono);
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+  text-align: center;
+}
+
+.turn-drawer-body {
+  flex: 1;
+  display: grid;
+  min-height: 0;
+}
+
+.turn-drawer-body.sidebar-closed .turn-drawer-diff {
+  border-left: 0;
+}
+
+.turn-drawer-list {
+  grid-column: 3;
+  grid-row: 1;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow-y: auto;
+  min-width: 0;
+}
+
+.turn-drawer-section {
+  border-bottom: 1px solid var(--border);
+}
+
+.turn-drawer-section-toggle,
+.turn-drawer-section-title {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+  color: var(--muted-foreground);
+  font-family: var(--font-family-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.turn-drawer-section-title {
+  display: block;
+  padding: 7px 10px;
+}
+
+.turn-drawer-section-toggle {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 7px 10px;
+  border-top: 0;
+  border-right: 0;
+  border-left: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+.turn-drawer-section-toggle:hover {
+  color: var(--foreground);
+  background: rgba(40, 90, 72, 0.08);
+}
+
+.turn-drawer-section-toggle .turn-drawer-section-title {
+  position: static;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.turn-drawer-section-count {
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  letter-spacing: 0;
+}
+
+.turn-drawer-section-empty {
+  padding: 10px;
+  color: var(--muted-foreground);
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+}
+
+.turn-drawer-final-list,
+.turn-drawer-turn-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.turn-drawer-final-item {
+  border-bottom: 1px solid rgba(28, 47, 47, 0.72);
+}
+
+.turn-drawer-final-item.on {
+  background: rgba(40, 90, 72, 0.12);
+}
+
+.turn-drawer-final-item:last-child {
+  border-bottom: 0;
+}
+
+.turn-drawer-final-row {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: start;
+  gap: 7px;
+  width: 100%;
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+}
+
+.turn-drawer-final-row:hover {
+  background: rgba(40, 90, 72, 0.08);
+}
+
+.turn-drawer-final-text {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--foreground);
+  font-family: var(--font-family-sans);
+  font-size: 12px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  white-space: pre-wrap;
+}
+
+.turn-drawer-list-resize {
+  grid-column: 2;
+  grid-row: 1;
+  cursor: col-resize;
+  background: transparent;
+  border-left: 1px solid var(--border);
+  border-right: 1px solid var(--border);
+}
+
+.turn-drawer-list-resize:hover,
+.turn-drawer-list-resize:active {
+  background: rgba(40, 90, 72, 0.35);
+}
+
+.turn-drawer-turn {
+  border-bottom: 1px solid var(--border);
+}
+
+.turn-drawer-turn.on {
+  background: rgba(40, 90, 72, 0.06);
+}
+
+.turn-drawer-turn-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-family: var(--font-family-sans);
+  font-size: 12px;
+  color: var(--foreground);
+  text-align: left;
+}
+
+.turn-drawer-turn-row:hover {
+  background: rgba(40, 90, 72, 0.08);
+}
+
+.turn-drawer-turn-time {
+  font-size: 10.5px;
+  color: var(--muted-foreground);
+}
+
+.turn-drawer-turn-summary {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.turn-drawer-turn-count {
+  font-family: var(--font-family-mono);
+  font-size: 10.5px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted-foreground);
+}
+
+.turn-drawer-files {
+  margin: 0;
+  padding: 0 0 4px 0;
+  list-style: none;
+}
+
+.turn-drawer-file.on {
+  background: rgba(40, 90, 72, 0.12);
+}
+
+.turn-drawer-file-row {
+  display: block;
+  width: 100%;
+  padding: 4px 10px 4px 24px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--muted-foreground);
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.turn-drawer-file-row:hover {
+  color: var(--foreground);
+}
+
+.turn-drawer-file.on .turn-drawer-file-row {
+  color: var(--foreground);
+}
+
+.turn-drawer-diff {
+  grid-column: 1;
+  grid-row: 1;
+  overflow: auto;
+  /* Grid cell holding Pierre's host — needs min-height/min-width: 0 so the cell
+   * can shrink below the diff's intrinsic size and actually scroll. */
+  min-height: 0;
+  min-width: 0;
+  background: var(--background);
+}
+
+.turn-drawer-message-pane {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 18px;
+}
+
+.turn-drawer-message-head {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.turn-drawer-message-kicker {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
+.turn-drawer-message-head h3 {
+  margin: 0;
+  color: var(--foreground);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.turn-drawer-message-head p {
+  margin: 8px 0 0;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.turn-drawer-message-text {
+  margin: 14px 0 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--foreground);
+  font-family: var(--font-family-sans);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Codebase Graph Lite</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, system-ui, sans-serif; background: #0f120f; color: #fafafa; }
+    body { margin: 0; background: #0f120f; }
+    main { padding: 22px; display: grid; gap: 16px; }
+    header { display: flex; align-items: baseline; justify-content: space-between; border-bottom: 1px solid #1c2f2f; padding-bottom: 12px; }
+    h1 { margin: 0; font-size: 18px; letter-spacing: -0.01em; }
+    .mono, button, code { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+    .muted { color: #8a948a; font-size: 12px; }
+    button { background: #142018; border: 1px solid #1c2f2f; color: #fafafa; border-radius: 8px; padding: 7px 10px; cursor: pointer; }
+    button:hover { background: #1e3a30; }
+    .grid { display: grid; grid-template-columns: 280px 1fr; gap: 16px; min-height: 0; }
+    .panel { border: 1px solid #1c2f2f; background: #111611; border-radius: 10px; min-height: 360px; overflow: hidden; }
+    .panel h2 { margin: 0; padding: 10px 12px; font-size: 12px; border-bottom: 1px solid #1c2f2f; color: #8a948a; text-transform: uppercase; letter-spacing: .12em; }
+    ul { list-style: none; padding: 6px; margin: 0; max-height: 520px; overflow: auto; }
+    li { padding: 6px 8px; border-radius: 6px; font-size: 12px; color: #d7ddd7; cursor: pointer; }
+    li:hover, li.on { background: #1e3a30; }
+    pre { margin: 0; padding: 14px; white-space: pre-wrap; color: #d7ddd7; font-size: 12px; max-height: 520px; overflow: auto; }
+    .pill { border: 1px solid #1c2f2f; border-radius: 999px; padding: 3px 8px; color: #8a948a; font-size: 11px; }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Codebase Graph Lite</h1>
+        <div id="workspace" class="muted mono">waiting for CrewCode context…</div>
+      </div>
+      <div style="display:flex; gap:8px; align-items:center">
+        <span id="count" class="pill mono">0 files</span>
+        <button id="refresh">refresh graph</button>
+      </div>
+    </header>
+    <div class="grid">
+      <section class="panel">
+        <h2>files</h2>
+        <ul id="files"></ul>
+      </section>
+      <section class="panel">
+        <h2>preview</h2>
+        <pre id="preview">Select a file to read it through the plugin permission gate.</pre>
+      </section>
+    </div>
+  </main>
+  <script src="crewcode-plugin-api.js"></script>
+  <script src="plugin.js"></script>
+</body>
+</html>

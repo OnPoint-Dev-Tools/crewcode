@@ -1,0 +1,13 @@
+{
+  "$schema": "../../../schemas/crewcode.plugin.schema.json",
+  "id": "terminal-watchdog-lite",
+  "name": "Terminal Watchdog Lite",
+  "version": "0.1.0",
+  "description": "Dogfoods opt-in terminal watcher contribution without automatic terminal output access.",
+  "crewcode": { "apiVersion": "0.1" },
+  "permissions": ["terminal:read"],
+  "contributes": {
+    "sidebarPanels": [{ "id": "watchdog", "title": "Watchdog", "icon": "terminal", "entry": "panel.html" }],
+    "terminalWatchers": [{ "id": "watch-pane", "title": "Open Watchdog Lite", "icon": "terminal", "sidebarPanel": "watchdog", "mode": "opt-in" }]
+  }
+}

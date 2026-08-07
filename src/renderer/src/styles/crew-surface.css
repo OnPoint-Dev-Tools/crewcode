@@ -1,0 +1,1197 @@
+/* ============================================================
+   CrewCode · Active Crew Surface
+   ------------------------------------------------------------
+   Sibling to the Crew Config Panel (crew-config.css). Same
+   register: hairline frame, themed header tape, semantic
+   accent, mono for system facts. No gradients, no glass.
+   Local aliases keep the surface portable across color themes.
+   ============================================================ */
+.crew-surface {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--background);
+  color: var(--foreground);
+  border: 1px solid var(--border);
+  overflow: hidden;
+  --crs-accent: var(--crew-green, var(--primary));
+  --crs-accent-bright: var(--crew-green-bright, var(--ring));
+  --crs-accent-soft: var(--crew-green-soft, color-mix(in srgb, var(--primary) 16%, transparent));
+  --crs-accent-fg: var(--crew-mint, var(--primary));
+  --crs-header: var(--crew-header, var(--popover));
+  --crs-accent-hover: color-mix(in srgb, var(--crs-accent-bright) 10%, transparent);
+  --crs-accent-ring: color-mix(in srgb, var(--crs-accent-bright) 26%, transparent);
+  --crs-warning-soft: color-mix(in srgb, var(--warning) 10%, transparent);
+  --crs-warning-border: color-mix(in srgb, var(--warning) 34%, transparent);
+  --crs-danger: var(--destructive, #dc2626);
+  --crs-danger-soft: color-mix(in srgb, var(--crs-danger) 10%, transparent);
+  --crs-danger-border: color-mix(in srgb, var(--crs-danger) 36%, transparent);
+}
+
+/* ---------- header (status tape) ---------- */
+.crew-surface-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--crs-header);
+  flex-shrink: 0;
+}
+
+.crew-surface-title {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+/* accent icon badge — gives the title an anchor instead of a floating glyph */
+.crew-surface-icon {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  background: var(--background);
+  border: 1px solid var(--ring);
+  color: var(--crs-accent-fg);
+}
+
+.crew-surface-name {
+  font-weight: 600;
+  font-size: 15px;
+  letter-spacing: -0.01em;
+  color: var(--foreground);
+}
+
+/* mode pill — "multiple workspaces" / "single workspace" */
+.crew-mode-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--card);
+  font-family: var(--font-family-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--muted-foreground);
+  text-transform: lowercase;
+}
+
+.crew-mode-tag.mode-isolated {
+  border-color: var(--crs-accent);
+  background: var(--crs-accent-soft);
+  color: var(--crs-accent-fg);
+}
+
+/* ghost action buttons in the header */
+.crew-btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--muted-foreground);
+  font-family: var(--font-family-sans);
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+}
+
+.crew-btn-ghost:hover {
+  border-color: var(--crs-accent);
+  color: var(--foreground);
+  background: var(--crs-accent-hover);
+}
+
+.crew-btn-ghost > svg { color: var(--crs-accent-fg); opacity: 0.7; }
+
+/* stop-all: warning-tinted ghost so the abort reads as distinct from the rest */
+.crew-btn-stop { border-color: var(--crs-warning-border); color: var(--warning); }
+.crew-btn-stop:hover { border-color: var(--warning); color: var(--warning); background: var(--crs-warning-soft); }
+.crew-btn-stop > svg { color: var(--warning); opacity: 0.9; }
+
+/* inline error / warning strip */
+.crew-warning {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--crs-warning-border);
+  border-radius: var(--radius-sm);
+  background: var(--crs-warning-soft);
+  font-size: 11.5px;
+  color: var(--warning);
+}
+
+.crew-warning > svg { flex-shrink: 0; }
+
+.crew-stop-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 12px 0;
+  padding: 7px 10px;
+  border: 1px solid var(--crs-accent);
+  border-radius: var(--radius-sm);
+  background: rgba(40, 90, 72, 0.08);
+  color: var(--foreground);
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+}
+
+.crew-stop-notice > svg { color: var(--crs-accent-fg); flex-shrink: 0; }
+
+/* status pill — a dot keyed to the session state plus the copy. Replaces the
+   bare uppercase text so "active" vs "error" reads at a glance. */
+.crew-surface-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 10px 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--card);
+  font-family: var(--font-family-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+.crew-state-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--muted-foreground);
+}
+
+/* active: live evergreen with a soft pulse halo */
+.crew-surface-state[data-state='active'] {
+  border-color: var(--crs-accent);
+  background: var(--crs-accent-soft);
+  color: var(--crs-accent-fg);
+}
+.crew-surface-state[data-state='active'] .crew-state-dot {
+  background: var(--crs-accent-bright);
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--crs-accent-bright) 50%, transparent);
+  animation: crew-state-pulse 1.8s ease-out infinite;
+}
+@keyframes crew-state-pulse {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--crs-accent-bright) 45%, transparent); }
+  70%  { box-shadow: 0 0 0 5px color-mix(in srgb, var(--crs-accent-bright) 0%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--crs-accent-bright) 0%, transparent); }
+}
+
+/* provisioning / archiving: amber, in-progress */
+.crew-surface-state[data-state='provisioning'],
+.crew-surface-state[data-state='archiving'] {
+  border-color: var(--crs-warning-border);
+  background: var(--crs-warning-soft);
+  color: var(--warning);
+}
+.crew-surface-state[data-state='provisioning'] .crew-state-dot,
+.crew-surface-state[data-state='archiving'] .crew-state-dot { background: var(--warning); }
+
+/* error: red */
+.crew-surface-state[data-state='error'] {
+  border-color: var(--crs-danger-border);
+  background: var(--crs-danger-soft);
+  color: var(--crs-danger);
+}
+.crew-surface-state[data-state='error'] .crew-state-dot { background: var(--crs-danger); }
+
+.crew-surface-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.crew-surface-error {
+  margin: 10px 14px 0;
+}
+
+/* ---------- body ---------- */
+.crew-surface-body {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: row;
+  overflow: hidden;
+}
+
+/* lanes occupy the remaining space to the right of the supervisor sidebar.
+   overflow:hidden + min-width:0 clip the lane region (isolated columns each have
+   a 340px min-width, the shared timeline a wide intrinsic min-content) so they
+   can't blow the flex row out and shove the fixed-width sidebar off-screen. */
+.crew-surface-lanes {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+/* ---------- isolated: side-by-side lane columns ---------- */
+.crew-columns {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow-x: auto;
+}
+
+/* ============================================================
+   Supervisor sidebar — the moderated group chat. Sits left of
+   the lanes; same hairline register as the surface.
+   ============================================================ */
+.supervisor-sidebar {
+  flex: 0 0 340px;
+  width: 340px;
+  max-width: 340px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  border-right: 1px solid var(--border);
+  background: var(--crs-header);
+}
+
+.supervisor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.supervisor-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 600;
+  font-size: 14.5px;
+}
+.supervisor-title > svg { color: var(--crs-accent-fg); opacity: 0.85; }
+
+.supervisor-agent-logo {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  object-fit: contain;
+}
+
+.supervisor-agent-logo-fallback {
+  width: 18px;
+  height: 18px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--crs-accent);
+  border-radius: var(--radius-sm);
+  background: var(--crs-accent-soft);
+  color: var(--crs-accent-fg);
+  font-family: var(--font-family-mono);
+  font-size: 9px;
+  text-transform: uppercase;
+}
+
+.supervisor-head-right { display: flex; align-items: center; gap: 8px; }
+
+.supervisor-status {
+  font-family: var(--font-family-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+.supervisor-status.status-thinking,
+.supervisor-status.status-delegating { color: var(--crs-accent-fg); }
+.supervisor-status.status-error { color: var(--warning); }
+
+.supervisor-thread {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: var(--sidebar);
+}
+
+.supervisor-empty {
+  margin: auto 4px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--muted-foreground);
+  text-align: center;
+}
+
+.supervisor-scroll-bottom {
+  position: sticky;
+  bottom: 8px;
+  align-self: flex-end;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  margin-top: -38px;
+  z-index: 2;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--card);
+  color: var(--crs-accent-fg);
+  cursor: pointer;
+}
+.supervisor-scroll-bottom:hover { border-color: var(--crs-accent); background: var(--crs-accent-soft); }
+
+.supervisor-composer {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.supervisor-ta-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+}
+
+.supervisor-composer textarea {
+  width: 100%;
+  resize: none;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--foreground);
+  font-family: var(--font-family-sans);
+  font-size: 12.5px;
+  line-height: 1.45;
+  min-height: 46px;
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  outline: none;
+}
+.supervisor-composer textarea:focus { border-color: var(--ring); }
+
+.supervisor-send {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border: 1px solid var(--crs-accent);
+  background: var(--crs-accent-soft);
+  color: var(--crs-accent-fg);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.12s, opacity 0.12s;
+}
+.supervisor-send:hover:not(:disabled) { background: var(--crs-accent-hover); }
+.supervisor-send:disabled { opacity: 0.4; cursor: default; }
+
+.supervisor-stop {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--warning);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.supervisor-stop:hover { border-color: var(--warning); background: color-mix(in srgb, var(--warning) 12%, transparent); }
+
+/* collapsed rail — a thin vertical reopen affordance */
+.supervisor-rail {
+  width: 34px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 0;
+  border-right: 1px solid var(--border);
+  background: var(--crs-header);
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.supervisor-rail:hover { color: var(--foreground); }
+.supervisor-rail > svg { color: var(--crs-accent-fg); opacity: 0.85; }
+.supervisor-rail-label {
+  writing-mode: vertical-rl;
+  font-family: var(--font-family-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+/* relayed worker turns in the supervisor thread — labeled incoming bubbles */
+.bub-speaker { display: flex; flex-direction: column; gap: 4px; }
+.bub-speaker-head { display: flex; align-items: center; gap: 6px; }
+.bub-speaker-name {
+  font-family: var(--font-family-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.03em;
+  color: var(--crs-accent-fg);
+}
+.avatar-worker {
+  background: var(--crs-accent-soft);
+  color: var(--crs-accent-fg);
+  border: 1px solid var(--crs-accent);
+}
+.bub-incoming {
+  align-self: flex-start;
+  max-width: 92%;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px 11px;
+  font-family: var(--font-family-mono);
+  font-size: var(--mono-size, 12.5px);
+  font-weight: var(--mono-weight, 500);
+  line-height: var(--mono-line-height, 1.5);
+  font-feature-settings: var(--mono-ligatures, normal);
+  font-variant-ligatures: normal;
+  color: var(--foreground);
+}
+
+/* ============================================================
+   lane column (isolated mode) — one agent, its own worktree,
+   thread and composer. Cards entry-stagger via --lane-i.
+   ============================================================ */
+.lane-col {
+  /* Equal-width columns that fill the surface; min-width drives the horizontal
+     scroll only once there are too many lanes to fit (no empty gap with 2–3). */
+  flex: 1 1 0;
+  min-width: 340px;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  background: var(--background);
+  opacity: 0;
+  transform: translateY(6px);
+  animation: lane-enter 0.32s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  animation-delay: calc(var(--lane-i, 0) * 60ms);
+}
+
+.lane-col:last-child { border-right: 0; }
+
+.lane-col.is-muted { opacity: 0.62; }
+.lane-col.is-muted .lane-head { background: repeating-linear-gradient(
+  135deg, transparent 0, transparent 6px, color-mix(in srgb, var(--crs-accent-bright) 4%, transparent) 6px, color-mix(in srgb, var(--crs-accent-bright) 4%, transparent) 7px), var(--crs-header); }
+
+@keyframes lane-enter {
+  to { opacity: 1; transform: none; }
+}
+
+/* ---------- lane header ---------- */
+.lane-head {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 9px 11px;
+  border-bottom: 1px solid var(--border);
+  background: var(--crs-header);
+  flex-shrink: 0;
+}
+
+.lane-head-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.lane-head-agent {
+  font-weight: 600;
+  font-size: 12.5px;
+  letter-spacing: -0.005em;
+  color: var(--foreground);
+}
+
+.lane-head-provider {
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-sm);
+  object-fit: contain;
+  flex-shrink: 0;
+  display: block;
+}
+
+.lane-head-role{
+  font-family: var(--font-family-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 130px;
+}
+
+.lane-head-spacer { flex: 1; }
+
+.lane-head-btn {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.lane-head-btn:hover:not(:disabled) {
+  background: var(--accent);
+  color: var(--foreground);
+}
+
+.lane-head-btn:disabled { opacity: 0.35; cursor: default; }
+.lane-head-btn.is-on {
+  color: var(--warning);
+  border-color: var(--crs-warning-border);
+}
+
+/* ---------- status dot ---------- */
+.crew-status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--muted-foreground);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--foreground) 4%, transparent);
+}
+
+.crew-status-dot.status-pending,
+.crew-status-dot.status-ready { background: var(--muted-foreground); opacity: 0.55; }
+
+.crew-status-dot.status-provisioning {
+  background: var(--warning);
+  animation: crs-pulse 1.4s ease-out infinite;
+}
+
+.crew-status-dot.status-running {
+  background: var(--crs-accent-bright);
+  box-shadow: 0 0 0 3px var(--crs-accent-ring);
+  animation: crs-pulse-green 1.6s ease-out infinite;
+}
+
+.crew-status-dot.status-done { background: var(--crs-accent-fg); }
+.crew-status-dot.status-error { background: var(--crs-danger); box-shadow: 0 0 0 3px var(--crs-danger-soft); }
+
+@keyframes crs-pulse {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--warning) 30%, transparent); }
+  70%  { box-shadow: 0 0 0 6px color-mix(in srgb, var(--warning) 0%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--warning) 0%, transparent); }
+}
+@keyframes crs-pulse-green {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--crs-accent-bright) 30%, transparent); }
+  70%  { box-shadow: 0 0 0 7px color-mix(in srgb, var(--crs-accent-bright) 0%, transparent); }
+  100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--crs-accent-bright) 0%, transparent); }
+}
+
+/* ---------- lane meta row (branch + model + effort) ---------- */
+.lane-head-meta { gap: 6px; }
+
+.lane-head-branch {
+  display: inline-flex;
+  align-items: center;
+  max-width: 150px;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--card);
+  font-size: 10px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* per-lane model + effort selectors — shared shape */
+.crew-lane-model,
+.crew-lane-effort {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 6px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--muted-foreground);
+  font-family: var(--font-family-mono);
+  font-size: 10px;
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+}
+
+.crew-lane-model:hover,
+.crew-lane-effort:hover {
+  border-color: var(--crs-accent);
+  color: var(--foreground);
+}
+
+.crew-lane-model > svg:first-child,
+.crew-lane-effort > svg:first-child { color: var(--crs-accent-fg); opacity: 0.7; }
+
+.crew-lane-model-id,
+.crew-lane-effort-id {
+  max-width: 92px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lane-head-meta .crew-lane-effort { margin-left: auto; }
+
+/* explicit per-model run switch — distinct from picking the model itself */
+.crew-lane-run-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 6px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--muted-foreground);
+  font-family: var(--font-family-mono);
+  font-size: 10px;
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+}
+
+.crew-lane-run-switch:hover {
+  border-color: var(--crs-accent);
+  color: var(--foreground);
+}
+
+.crew-lane-run-switch.is-on {
+  border-color: var(--crs-accent);
+  background: var(--crs-accent-soft);
+  color: var(--crs-accent-fg);
+}
+
+.crew-lane-run-switch.is-off {
+  border-color: var(--crs-warning-border);
+  background: var(--crs-warning-soft);
+  color: var(--warning);
+}
+
+.crew-lane-run-switch.is-compact .crew-lane-run-label { display: none; }
+
+.crew-lane-run-track {
+  width: 20px;
+  height: 12px;
+  padding: 1px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--muted-foreground) 24%, transparent);
+  transition: background 0.12s;
+}
+
+.crew-lane-run-switch.is-on .crew-lane-run-track { background: var(--crs-accent); }
+.crew-lane-run-switch.is-off .crew-lane-run-track { background: color-mix(in srgb, var(--warning) 40%, transparent); }
+
+.crew-lane-run-thumb {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--background);
+  transition: transform 0.12s;
+}
+
+.crew-lane-run-switch.is-on .crew-lane-run-thumb { transform: translateX(8px); }
+.crew-lane-run-label { line-height: 1; }
+
+/* ---------- usage strip ---------- */
+.lane-usage {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-family-mono);
+  font-size: 10px;
+  color: var(--muted-foreground);
+}
+
+.lane-usage-cell {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.lane-usage-cell > svg { opacity: 0.6; }
+
+.lane-usage-cell.is-ticking {
+  color: var(--crs-accent-fg);
+  animation: crs-tick 0.5s ease-out;
+}
+.lane-usage-cell.is-ticking > svg { opacity: 1; }
+
+@keyframes crs-tick {
+  0%   { opacity: 0.5; }
+  40%  { opacity: 1; }
+  100% { opacity: 0.85; }
+}
+
+/* ---------- lane body ---------- */
+.lane-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.lane-body-term { background: var(--crew-term); }
+
+.lane-thread {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 10px 11px;
+}
+
+/* empty / unavailable placeholder — used in lanes and timeline */
+.lane-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 18px;
+  text-align: center;
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  color: var(--muted-foreground);
+  opacity: 0.75;
+}
+
+/* ---------- lane composer ---------- */
+.lane-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 7px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+  background: var(--crs-header);
+  flex-shrink: 0;
+}
+
+.lane-composer-input {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  max-height: 120px;
+  padding: 7px 9px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--foreground);
+  font-family: var(--font-family-sans);
+  font-size: 12.5px;
+  line-height: 1.4;
+  outline: none;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+
+.lane-composer-input::placeholder { color: var(--muted-foreground); opacity: 0.7; }
+
+.lane-composer-input:focus {
+  border-color: var(--crs-accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--crs-accent-bright) 14%, transparent);
+}
+
+.lane-composer-input:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.lane-composer-send {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  background: var(--crs-accent);
+  border: 1px solid var(--crs-accent-bright);
+  border-radius: var(--radius-sm);
+  color: var(--primary-foreground);
+  cursor: pointer;
+  transition: background 0.12s, opacity 0.12s;
+}
+
+.lane-composer-send:hover:not(:disabled) { background: var(--crs-accent-bright); }
+.lane-composer-send:disabled {
+  background: var(--card);
+  border-color: var(--border);
+  color: var(--muted-foreground);
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.lane-composer-stop {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--warning);
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.lane-composer-stop:hover { border-color: var(--warning); background: color-mix(in srgb, var(--warning) 12%, transparent); }
+
+/* ---------- shared: merged timeline ---------- */
+.crew-timeline {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.crew-timeline-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+/* Jump-to-latest affordance — mirrors `.supervisor-scroll-bottom`. The scroll
+   container is a flex column, so `position: sticky` + a negative top margin
+   parks the button just above the foot without leaving the document flow. */
+.crew-scroll-bottom {
+  position: sticky;
+  bottom: 8px;
+  align-self: flex-end;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  margin-top: -38px;
+  z-index: 2;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--card);
+  color: var(--crs-accent-fg);
+  cursor: pointer;
+}
+.crew-scroll-bottom:hover { border-color: var(--crs-accent); background: var(--crs-accent-soft); }
+
+.crew-run-setup {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+}
+
+.crew-run-setup-copy {
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+
+.crew-run-setup-lanes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.crew-run-setup-lane {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--background);
+}
+
+.crew-run-setup-lane.is-muted { opacity: 0.68; }
+
+.crew-run-setup-main {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  flex: 1;
+}
+
+.crew-round {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.crew-round-prompt {
+  display: flex;
+  flex-direction: column;
+}
+
+.crew-round-lanes {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.crew-lane-group {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.crew-lane-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--border);
+}
+
+.crew-lane-group-head .crew-status-dot {
+  margin-left: auto;
+}
+
+.crew-lane-collapse {
+  color: var(--muted-foreground);
+}
+
+.crew-lane-group.is-collapsed {
+  gap: 0;
+}
+
+.crew-lane-group.is-collapsed .crew-lane-group-head {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.crew-lane-task {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.crew-lane-task .bub-user {
+  max-width: none;
+  width: 100%;
+}
+
+.crew-lane-group-wait {
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+  font-style: italic;
+}
+
+/* shared-timeline equivalents */
+.crew-lane-group-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.crew-lane-group-usage {
+  margin-left: auto;
+  font-family: var(--font-family-mono);
+  font-size: 10px;
+  color: var(--muted-foreground);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.crew-lane-group-history-model {
+  padding-top: 4px;
+  font-size: 10px;
+  color: var(--muted-foreground);
+  opacity: 0.7;
+}
+
+.crew-lane-group.is-muted {
+  opacity: 0.85;
+  border-style: dashed;
+}
+
+/* ---------- timeline footer (chip + composer) ---------- */
+.crew-timeline-foot {
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+  background: var(--background);
+}
+
+.crew-timeline-foot .lane-composer {
+  border-top: 0;
+  padding-top: 6px;
+}
+
+/* Split mode: one composer per worker, laid out in a responsive row so the user
+   can send a distinct task to each without retargeting a single input. */
+.crew-split-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 12px;
+}
+
+.crew-split-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 240px;
+  min-width: 220px;
+}
+
+.crew-split-composer .lane-composer {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px 6px;
+}
+
+.crew-split-label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding-left: 2px;
+}
+
+.crew-split-empty {
+  padding: 10px 4px;
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+
+/* Header split/broadcast toggle — split is the "on" state, tinted with accent;
+   broadcast reads as a neutral ghost so the active default is legible at a glance. */
+.crew-dist-toggle.is-split {
+  border-color: var(--crs-accent-border, var(--border));
+  color: var(--crs-accent-fg);
+}
+.crew-dist-toggle.is-split > svg { opacity: 0.9; }
+
+.crew-broadcast-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 12px 0;
+  padding: 4px 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  /* Slow, deliberate state change — the chip is the load-bearing signal of
+     where the next prompt is going, so the eye should catch the shift. */
+  transition:
+    border-color 0.22s ease,
+    color        0.22s ease,
+    background   0.22s ease,
+    box-shadow   0.22s ease;
+}
+
+.crew-broadcast-chip:hover {
+  color: var(--foreground);
+}
+
+.crew-broadcast-chip.is-broadcast {
+  border-color: var(--border);
+  color: var(--foreground);
+  background: var(--crs-accent-soft);
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+.crew-broadcast-chip.is-targeted {
+  border-color: var(--warning);
+  color: var(--warning);
+  background: var(--crs-warning-soft);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 12%, transparent);
+}
+
+.crew-broadcast-chip-text {
+  letter-spacing: 0.02em;
+}
+
+.crew-broadcast-chip.is-targeted svg:first-child {
+  transform: rotate(-90deg) scale(1.05);
+}
+
+/* Crew file diff — wrapper around Pierre's host owns the scroll. Pierre grows to
+ * full content height and clips vertically internally; bound the height and let
+ * it scroll. min-* lets it shrink below intrinsic size. */
+.crew-diff-body {
+  max-height: 480px;
+  min-height: 0;
+  min-width: 0;
+  overflow: auto;
+}
+
+/* Light app theme: crew orchestration chrome should read as light panels; only
+   embedded terminal bodies stay dark. */
+body.light .crew-surface-head,
+body.light .supervisor-sidebar,
+body.light .supervisor-rail,
+body.light .lane-head,
+body.light .lane-composer {
+  background: var(--crs-header);
+}
+
+body.light .lane-col.is-muted .lane-head {
+  background:
+    repeating-linear-gradient(
+      135deg,
+      transparent 0,
+      transparent 6px,
+      color-mix(in srgb, var(--crs-accent-bright) 5%, transparent) 6px,
+      color-mix(in srgb, var(--crs-accent-bright) 5%, transparent) 7px
+    ),
+    var(--crs-header);
+}
+
+body.light .supervisor-composer textarea {
+  background: var(--card);
+}

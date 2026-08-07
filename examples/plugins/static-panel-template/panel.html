@@ -1,0 +1,36 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Static Panel Template</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { margin: 0; background: #0f120f; color: #e6f0eb; font: 13px Inter, system-ui, sans-serif; }
+    main { padding: 16px; max-width: 760px; }
+    h1 { margin: 6px 0 8px; font-size: 22px; letter-spacing: -0.02em; }
+    p { color: #8b9a91; line-height: 1.5; }
+    button { background: #285a48; color: #e6f0eb; border: 1px solid #356b57; padding: 8px 10px; font: 11px 'JetBrains Mono', monospace; text-transform: lowercase; }
+    pre, code, .mono { font-family: 'JetBrains Mono', monospace; color: #9fbfaf; }
+    .eyebrow { color: #8b9a91; font-size: 11px; text-transform: lowercase; }
+    .panel { border: 1px solid #1c2f2f; background: #121712; padding: 12px; margin-top: 12px; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; }
+    .metric strong { display: block; font-size: 24px; color: #e6f0eb; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="eyebrow mono">crewcode plugin template / static panel</div>
+    <h1>workspace snapshot</h1>
+    <p>This template uses static HTML, CSS, and JavaScript. It runs in a sandboxed iframe and talks to CrewCode only through <code>crewcode-plugin-api.js</code>.</p>
+    <button id="refresh">refresh files</button>
+    <section class="panel grid">
+      <div class="metric"><span class="mono">files</span><strong id="file-count">—</strong></div>
+      <div class="metric"><span class="mono">source files</span><strong id="source-count">—</strong></div>
+      <div class="metric"><span class="mono">docs</span><strong id="doc-count">—</strong></div>
+    </section>
+    <pre id="output" class="panel">waiting for context…</pre>
+  </main>
+  <script src="crewcode-plugin-api.js"></script>
+  <script src="plugin.js"></script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+{
+  "$schema": "../../../schemas/crewcode.plugin.schema.json",
+  "id": "git-risk-lens",
+  "name": "Git Risk Lens",
+  "version": "0.1.0",
+  "description": "Dogfoods a read-only git lens contribution that opens a risk review panel.",
+  "crewcode": { "apiVersion": "0.1" },
+  "permissions": ["workspace:read", "git:read"],
+  "contributes": {
+    "sidebarPanels": [{ "id": "risk", "title": "Risk Lens", "icon": "alert", "entry": "panel.html" }],
+    "gitLenses": [{ "id": "open-risk", "title": "Open Risk Lens", "icon": "alert", "sidebarPanel": "risk", "placement": "sidebar" }]
+  }
+}

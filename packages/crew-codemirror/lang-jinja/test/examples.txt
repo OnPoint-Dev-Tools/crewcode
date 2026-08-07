@@ -1,0 +1,313 @@
+# Comments
+
+{# Just a comment #}
+Not a comment
+
+==>
+
+Template(Comment, Text)
+
+# Interpolation
+
+{{ a }}
+{{ a | upper }}
+
+==>
+
+Template(Interpolation(VariableName), Text, Interpolation(FilterExpression(VariableName, FilterOp, FilterName)))
+
+# If
+
+{% if a %}A{% endif %}
+{% if a %}A{% elif b %}B{% else %}C{% endif %}
+
+==>
+
+Template(
+  IfStatement(Tag(if, VariableName),Text,EndTag(endif)),
+  Text,
+  IfStatement(Tag(if, VariableName),Text,Tag(elif, VariableName),Text,Tag(else),Text,EndTag(endif)))
+
+# For
+
+{% for user in users %}<li>{{ user.name }}</li>{% endfor %}
+{% for key, value in my_dict | dictsort %}{{ loop.index }}{% endfor %}
+{% for x in y recursive %}...{% endfor %}
+
+==>
+
+Template(
+  ForStatement(
+    Tag(for,Definition,in,VariableName),
+    Text,
+    Interpolation(MemberExpression(VariableName, PropertyName)),
+    Text,
+    EndTag(endfor)),
+  Text,
+  ForStatement(
+    Tag(for,Definition,Definition,in,FilterExpression(VariableName, FilterOp, FilterName)),
+    Interpolation(MemberExpression(loop, PropertyName)),
+    EndTag(endfor)),
+  Text,
+  ForStatement(
+    Tag(for,Definition,in,VariableName,recursive),
+    Text,
+    EndTag(endfor)))
+
+# Raw
+
+{% raw %} {% for not really %} {{ ? }} {% endraw %}
+Done
+
+==>
+
+Template(RawStatement(Tag(raw),RawText,EndTag(endraw)), Text)
+
+# Dashes on tags
+
+{%- if y -%} ... {%- endif -%}
+
+==>
+
+Template(IfStatement(Tag(if, VariableName), Text, EndTag(endif)))
+
+# Block
+
+{% block head %}{{ self.title}}{% endblock %}
+{% block body scoped required %}...{% endblock body %}
+
+==>
+
+Template(
+  BlockStatement(Tag(block, Definition), Interpolation(MemberExpression(self, PropertyName)), EndTag(endblock)),
+  Text,
+  BlockStatement(Tag(block, Definition, scoped, required), Text, EndTag(endblock, Definition)))
+
+# Extends
+
+{% extends "/a/file" %}
+
+==>
+
+Template(Tag(TagName, StringLiteral))
+
+# Macro
+
+{% macro input(name, type='text', size=20) -%}...{%- endmacro %}
+
+==>
+
+Template(MacroStatement(
+  Tag(macro, Definition, ParamList(
+    Definition,
+    OptionalParameter(Definition, AssignOp, StringLiteral),
+    OptionalParameter(Definition, AssignOp, NumberLiteral))),
+  Text,
+  EndTag(endmacro)))
+
+# Call
+
+{% call render_dialog('Hello World') %}...{% endcall %}
+{% call(user) dump_users(list_of_user) %}...{% endcall %}
+
+==>
+
+Template(
+  CallStatement(Tag(call, VariableName, ArgumentList(StringLiteral)), Text, EndTag(endcall)),
+  Text,
+  CallStatement(Tag(call, ParamList(Definition), VariableName, ArgumentList(VariableName)), Text, EndTag(endcall)))
+
+# Filter
+
+{% filter upper %}aaah{% endfilter %}
+{% filter join(",") %}...{% endfilter %}
+
+==>
+
+Template(
+  FilterStatement(Tag(filter, FilterName), Text, EndTag(endfilter)),
+  Text,
+  FilterStatement(Tag(filter, FilterCall(FilterName, ArgumentList(StringLiteral))), Text, EndTag(endfilter)))
+
+# Assignment
+
+{% set a = b %}
+{% set key, value = c() %}
+{% set d %}...{% endset %}
+
+==>
+
+Template(
+  Tag(set, Definition, AssignOp, VariableName),
+  Text,
+  Tag(set, Definition, Definition, AssignOp, CallExpression(VariableName, ArgumentList)),
+  Text,
+  SetStatement(Tag(set, Definition), Text, EndTag(endset)))
+
+# Include
+
+{% include "foo.html" %}
+{% include "bar.html" without context %}
+{% include "quux.html" ignore missing with context %}
+
+==>
+
+Template(
+  Tag(include, StringLiteral),
+  Text,
+  Tag(include, StringLiteral, without, context),
+  Text,
+  Tag(include, StringLiteral, ignore missing, with, context))
+
+# Import
+
+{% import 'forms.html' as forms %}
+{% from 'forms.html' import input as input_field, textarea %}
+
+==>
+
+Template(
+  Tag(import, StringLiteral, as, Definition),
+  Text,
+  Tag(from, StringLiteral, import, ImportItem(VariableName, as, Definition), ImportItem(Definition)))
+
+# Translation
+
+{% trans %}Hello, {{ user }}!{% endtrans %}
+{% trans user=user.username %}...{% pluralize user %}...{% endtrans %}
+
+==>
+
+Template(
+  TransStatement(Tag(trans), Text, Interpolation(VariableName), Text, EndTag(endtrans)),
+  Text,
+  TransStatement(
+    Tag(trans, Definition, AssignOp, MemberExpression(VariableName, PropertyName)),
+    Text,
+    Tag(pluralize, VariableName),
+    Text,
+    EndTag(endtrans)))
+
+# With
+
+{% with %}...{% endwith %}
+{% with a={}, b=[] %}...{% endwith %}
+
+==>
+
+Template(
+  WithStatement(Tag(with), Text, EndTag(endwith)),
+  Text,
+  WithStatement(Tag(with, Definition, AssignOp, DictExpression, Definition, AssignOp, ArrayExpression), Text, EndTag(endwith)))
+
+# Autoescape
+
+{% autoescape true %}
+    Autoescaping is active within this block
+{% endautoescape %}
+
+==>
+
+Template(AutoescapeStatement(Tag(autoescape, BooleanLiteral), Text, EndTag(endautoescape)))
+
+# Literals
+
+{% set x = 1 + -1.5 + +5e-3 %}
+{% set y = "hello\nworld" %}
+
+==>
+
+Template(
+  Tag(set, Definition, AssignOp, BinaryExpression(BinaryExpression(NumberLiteral, ArithOp, NumberLiteral), ArithOp, NumberLiteral)),
+  Text,
+  Tag(set, Definition, AssignOp, StringLiteral))
+
+# Booleans
+
+{% if true %}{% elif false %}{% endif %}
+
+==>
+
+Template(IfStatement(Tag(if, BooleanLiteral),Tag(elif, BooleanLiteral), EndTag(endif)))
+
+# Data Structures
+
+{% set x = [(1, 2), {"a": 1, "b": 22}, (), []] %}
+
+==>
+
+Template(Tag(set, Definition, AssignOp, ArrayExpression(
+  TupleExpression(NumberLiteral, NumberLiteral),
+  DictExpression(Entry(StringLiteral, NumberLiteral), Entry(StringLiteral, NumberLiteral)),
+  TupleExpression,
+  ArrayExpression)))
+
+# Operators
+
+{% if not 1 - 1 ** 3 == 0 or a * b < 5 and c % 2 >= 1 %}
+  wow
+{% elif a in b() %}
+  ok {{ u ~ v }}
+{% endif %}
+
+==>
+
+Template(IfStatement(
+  Tag(if, BinaryExpression(
+    NotExpression(not, BinaryExpression(
+      BinaryExpression(NumberLiteral, ArithOp, BinaryExpression(NumberLiteral, ArithOp, NumberLiteral)), CompareOp, NumberLiteral)),
+    or,
+    BinaryExpression(
+      BinaryExpression(BinaryExpression(VariableName, ArithOp, VariableName), CompareOp, NumberLiteral),
+      and,
+      BinaryExpression(BinaryExpression(VariableName, ArithOp, NumberLiteral), CompareOp, NumberLiteral)))),
+  Text,
+  Tag(elif, BinaryExpression(VariableName, in, CallExpression(VariableName, ArgumentList))),
+  Text, Interpolation(BinaryExpression(VariableName, ConcatOp, VariableName)), Text,
+  EndTag(endif)))
+
+# Is Operator
+
+{% set x = a is something %}
+{% set x = a is divisibleby 3 %}
+
+==>
+
+Template(
+  Tag(set, Definition, AssignOp, BinaryExpression(VariableName, is, VariableName)),
+  Text,
+  Tag(set, Definition, AssignOp, BinaryExpression(VariableName, is, VariableName, NumberLiteral)))
+
+# Properties
+
+{% set u = a.b.c ~ c["d"] %}
+
+==>
+
+Template(Tag(set, Definition, AssignOp, BinaryExpression(
+  MemberExpression(MemberExpression(VariableName, PropertyName), PropertyName),
+  ConcatOp,
+  SubscriptExpression(VariableName, StringLiteral))))
+
+# Call expression
+
+{% set a = foo(1, b=bar(4)) %}
+
+==>
+
+Template(Tag(set, Definition, AssignOp, CallExpression(VariableName, ArgumentList(
+  NumberLiteral,
+  NamedArgument(VariableName, AssignOp, CallExpression(VariableName, ArgumentList(NumberLiteral)))))))
+
+# If expression
+
+{% set i = a if b + 3 else not d %}
+
+==>
+
+Template(Tag(set, Definition, AssignOp, ConditionalExpression(
+  VariableName,
+  if,
+  BinaryExpression(VariableName, ArithOp, NumberLiteral),
+  else,
+  NotExpression(not, VariableName))))

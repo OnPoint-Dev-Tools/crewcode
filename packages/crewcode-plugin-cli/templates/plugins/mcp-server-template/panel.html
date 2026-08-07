@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>MCP Server Template</title>
+  <style>
+    body { margin: 0; background: #0f120f; color: #e6f0eb; font: 13px Inter, system-ui, sans-serif; padding: 16px; }
+    h1 { margin: 6px 0 8px; font-size: 22px; }
+    p { color: #8b9a91; line-height: 1.5; }
+    code, pre, .mono { font-family: 'JetBrains Mono', monospace; color: #9fbfaf; }
+    .panel { border: 1px solid #1c2f2f; background: #121712; padding: 12px; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <div class="mono">crewcode plugin template / mcp server</div>
+  <h1>local context MCP</h1>
+  <p>This plugin declares an MCP server contribution. CrewCode owns enablement and spawning; the plugin UI is only a companion panel.</p>
+  <pre class="panel">contributes.mcpServers[0]
+command: node
+args: server.mjs</pre>
+  <pre id="ctx" class="panel">waiting for context…</pre>
+  <script src="crewcode-plugin-api.js"></script>
+  <script src="plugin.js"></script>
+</body>
+</html>

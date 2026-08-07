@@ -1,0 +1,42 @@
+{
+   "$schema": "../../../schemas/crewcode.plugin.schema.json",
+   "id": "github-copilot-cli-provider",
+   "name": "GitHub Copilot CLI Provider",
+   "version": "0.1.0",
+   "description": "Dogfoods a real exec-backed plugin agent provider using the GitHub CLI Copilot extension.",
+   "crewcode": {
+      "apiVersion": "0.1"
+   },
+   "permissions": [
+      "agent:provider",
+      "terminal:spawn"
+   ],
+   "contributes": {
+      "tabs": [
+         {
+            "id": "main",
+            "title": "Copilot CLI Provider",
+            "icon": "bot",
+            "entry": "panel.html",
+            "singleton": true
+         }
+      ],
+      "agentProviders": [
+         {
+            "id": "copilot-cli",
+            "title": "GitHub Copilot CLI",
+            "runtime": "exec",
+            "description": "Runs gh copilot through CrewCode's brokered exec provider runtime.",
+            "command": "gh",
+            "args": [
+               "copilot",
+               "-p",
+               "{{prompt}}"
+            ],
+            "models": [
+               "gpt-5.4-mini"
+            ]
+         }
+      ]
+   }
+}

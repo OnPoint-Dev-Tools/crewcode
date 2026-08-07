@@ -1,0 +1,51 @@
+CrewCode
+Copyright 2026 OnPoint Tools
+
+This product is licensed under the Apache License, Version 2.0.
+See the LICENSE file for the full text.
+
+================================================================================
+THIRD-PARTY COMPONENTS UNDER DIFFERENT LICENSES
+================================================================================
+
+The following components are NOT covered by the Apache License, Version 2.0.
+They retain their original licenses and are aggregated with, not incorporated
+into, the Apache-licensed portions of this work.
+
+--------------------------------------------------------------------------------
+Bearded Icons (GPL-3.0)
+--------------------------------------------------------------------------------
+
+Path:      src/renderer/src/assets/bearded-icons/
+Upstream:  Bearded Icons 1.22.0 by BeardedBear
+           https://github.com/BeardedBear/bearded-icons
+License:   GNU General Public License v3.0
+Full text: src/renderer/src/assets/bearded-icons/LICENSE.txt
+
+The SVG icon assets and the icon-theme mapping data in that directory are
+licensed under GPL-3.0 by their original authors. CrewCode uses these assets
+unmodified and does not claim authorship over them.
+
+These assets are distributed alongside CrewCode as a separate, severable
+component. They are emitted at build time as standalone asset files and are
+referenced by URL; no GPL-licensed code is linked into or compiled with the
+Apache-licensed CrewCode source. CrewCode functions without them.
+
+Because these files are provided in their original SVG and JSON source form,
+the corresponding source requirement of GPL-3.0 section 6 is satisfied by the
+files themselves. Recipients are free to modify or replace them under the
+terms of GPL-3.0.
+
+--------------------------------------------------------------------------------
+CodeMirror packages (MIT)
+--------------------------------------------------------------------------------
+
+Path:      packages/crew-codemirror/
+Upstream:  https://github.com/codemirror
+License:   MIT
+Full text: packages/crew-codemirror/LICENSE
+
+--------------------------------------------------------------------------------
+
+For licenses of runtime npm dependencies, see the individual packages under
+node_modules/ or run `npx license-checker --summary`.

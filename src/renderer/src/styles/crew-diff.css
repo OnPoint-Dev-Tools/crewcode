@@ -1,0 +1,277 @@
+/* ============================================================
+   CrewCode · Cross-lane diff modal
+   ------------------------------------------------------------
+   Side-by-side comparison of each isolated lane's changes vs the
+   base branch. Extracted from crew-surface.css so these rules
+   load independently. Same register: hairline frame, #0c0f0c
+   header tape, evergreen accent, mono for paths/branches.
+   ============================================================ */
+
+/* The modal mounts in a fixed backdrop outside .crew-surface, so the
+   accent tokens it shares with the surface aren't in scope here. Re-bind
+   them locally so the file is self-contained wherever it renders. */
+.crew-diff-modal {
+  width: min(1140px, 95vw);
+  height: min(780px, 90vh);
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  --crs-accent: var(--crew-green);
+  --crs-accent-bright: var(--crew-green-bright);
+  --crs-accent-soft: var(--crew-green-soft);
+  --crs-accent-fg: var(--crew-mint);
+}
+
+/* push refresh/close to the right edge of the header tape */
+.crew-diff-modal .crew-modal-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.crew-diff-modal .crew-modal-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* base branch ref pill in the title */
+.crew-diff-base {
+  font-family: var(--font-family-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--crs-accent-fg);
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--crs-accent);
+  background: var(--crs-accent-soft);
+}
+
+/* ---------- summary strip: one stat card per lane ---------- */
+.crew-diff-summary {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  background:
+    linear-gradient(180deg, rgba(125, 211, 168, 0.03), transparent 60%),
+    #0a0d0a;
+  flex-shrink: 0;
+}
+
+.crew-diff-summary-cell {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 14px;
+  border-right: 1px solid var(--border);
+  transition: background 0.14s;
+}
+
+.crew-diff-summary-cell:last-child { border-right: 0; }
+
+/* accent rail on lanes that actually changed something — quick scan of
+   "who did work" without reading the numbers */
+.crew-diff-summary-cell::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: transparent;
+  transition: background 0.14s;
+}
+.crew-diff-summary-cell[data-active='true']::before { background: var(--crs-accent-bright); }
+.crew-diff-summary-cell[data-active='true'] { background: rgba(125, 211, 168, 0.04); }
+
+.crew-diff-cell-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.crew-diff-cell-name {
+  font-weight: 600;
+  font-size: 12.5px;
+  letter-spacing: -0.005em;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.crew-diff-cell-branch {
+  font-family: var(--font-family-mono);
+  font-size: 10px;
+  color: var(--crs-accent-fg);
+  opacity: 0.85;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* count badge — big number, muted unit; goes accent when nonzero */
+.crew-diff-cell-count {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+}
+.crew-diff-cell-count strong {
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  line-height: 1;
+}
+.crew-diff-cell-count span {
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  color: var(--muted-foreground);
+}
+.crew-diff-summary-cell[data-active='true'] .crew-diff-cell-count {
+  border-color: var(--crs-accent);
+  background: var(--crs-accent-soft);
+}
+.crew-diff-summary-cell[data-active='true'] .crew-diff-cell-count strong { color: var(--crs-accent-fg); }
+
+/* ---------- columns ---------- */
+.crew-diff-columns {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.crew-diff-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-right: 1px solid var(--border);
+  overflow-y: auto;
+}
+
+.crew-diff-col:last-child { border-right: 0; }
+
+.crew-diff-col-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 13px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(180deg, #11161180 0%, #0c0f0c 100%), #0c0f0c;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.crew-diff-provider-icon {
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-sm);
+  object-fit: contain;
+  flex-shrink: 0;
+  display: block;
+}
+
+.crew-diff-col-head .lane-head-agent { font-size: 12px; }
+.crew-diff-col-head .lane-head-role { margin-left: auto; }
+
+.crew-diff-files {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.crew-diff-file { border-bottom: 1px solid var(--border); }
+.crew-diff-file:last-child { border-bottom: 0; }
+
+.crew-diff-file-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 7px 13px 7px 11px;
+  background: none;
+  border: none;
+  border-left: 2px solid transparent;
+  color: var(--foreground);
+  text-align: left;
+  cursor: pointer;
+  font-size: 11.5px;
+  transition: background 0.1s, border-color 0.1s;
+}
+
+.crew-diff-file-row:hover {
+  background: rgba(125, 211, 168, 0.05);
+  border-left-color: var(--crs-accent);
+}
+
+/* status glyph — colored square chip per change type (M/A/D/R/?) */
+.crew-diff-st {
+  font-family: var(--font-family-mono);
+  font-size: 9.5px;
+  font-weight: 600;
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+  border: 1px solid transparent;
+  color: var(--muted-foreground);
+  background: rgba(255, 255, 255, 0.04);
+}
+.crew-diff-st.st-M { color: #e0b26e; background: rgba(224, 178, 110, 0.14); border-color: rgba(224, 178, 110, 0.25); }
+.crew-diff-st.st-A { color: var(--crs-accent-fg); background: rgba(125, 211, 168, 0.14); border-color: rgba(125, 211, 168, 0.28); }
+.crew-diff-st.st-D { color: #f06a5a; background: rgba(240, 106, 90, 0.14); border-color: rgba(240, 106, 90, 0.28); }
+.crew-diff-st.st-R { color: #7aa2f0; background: rgba(122, 162, 240, 0.14); border-color: rgba(122, 162, 240, 0.28); }
+
+.crew-diff-file-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--foreground);
+}
+
+.crew-diff-file-path.mono { font-family: var(--font-family-mono); }
+
+/* chevron sits at the far right, dims until row hover */
+.crew-diff-file-row > svg {
+  flex-shrink: 0;
+  color: var(--muted-foreground);
+  opacity: 0.5;
+  transition: opacity 0.1s, color 0.1s;
+}
+.crew-diff-file-row:hover > svg { opacity: 1; color: var(--crs-accent-fg); }
+
+/* loading / empty states inside a column — centered and soft */
+.crew-diff-col .lane-empty {
+  padding: 22px 14px;
+  text-align: center;
+  font-family: var(--font-family-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--muted-foreground);
+  opacity: 0.6;
+}
+
+.crew-diff-col .crew-warning {
+  margin: 10px;
+}
+
+/* Note: .crew-diff-body (the Pierre diff scroll wrapper) is defined in
+   crew-surface.css — don't redefine it here. */

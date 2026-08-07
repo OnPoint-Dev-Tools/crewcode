@@ -1,0 +1,28 @@
+{
+  "$schema": "../../../schemas/crewcode.plugin.schema.json",
+  "id": "openai-compatible-provider",
+  "name": "OpenAI Compatible Provider",
+  "version": "0.1.0",
+  "description": "Template for local/company model gateways that expose the OpenAI chat completions shape.",
+  "crewcode": { "apiVersion": "0.1" },
+  "permissions": ["agent:provider", "network:fetch"],
+  "contributes": {
+    "tabs": [
+      { "id": "main", "title": "OpenAI Compatible", "icon": "bot", "entry": "panel.html", "singleton": true }
+    ],
+    "agentProviders": [
+      {
+        "id": "local-openai-compatible",
+        "title": "OpenAI Compatible Agent",
+        "runtime": "openai-compatible",
+        "description": "POSTs to /v1/chat/completions and reads choices[0].message.content.",
+        "endpoint": "http://localhost:4000/v1",
+        "apiKeyEnv": "OPENAI_COMPATIBLE_API_KEY",
+        "timeoutMs": 90000,
+        "maxOutputBytes": 524288,
+        "responsePath": "choices.0.message.content",
+        "models": ["local-default"]
+      }
+    ]
+  }
+}

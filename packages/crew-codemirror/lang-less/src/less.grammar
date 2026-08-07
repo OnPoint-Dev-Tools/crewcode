@@ -1,0 +1,257 @@
+@precedence {
+  attribute @left
+  structure @left
+  valueOp @left
+  sub
+  call
+}
+
+@skip { whitespace | Comment | LineComment }
+
+@top StyleSheet { blockContent }
+
+item {
+  RuleSet |
+  ImportStatement |
+  MediaStatement |
+  CharsetStatement |
+  NamespaceStatement |
+  KeyframesStatement |
+  SupportsStatement |
+  DetachedRuleSet
+}
+
+mixinArgList {
+  "(" (mixinArg (("," | ";") mixinArg)*)? ")"
+}
+
+mixinArg {
+  value (":" value+ | value*) | AtKeyword? "..."
+}
+
+RuleSet {
+  selector ("," selector)* mixinArgList? (@extend[@name=when]<identifier, "when"> value)? Block
+}
+
+ImportStatement {
+  @specialize[@name=import]<AtKeyword, "@import" | "@plugin"> ("(" commaSep<value> ")")? StringLiteral commaSep<query> ";"
+}
+
+MediaStatement {
+  @specialize[@name=media]<AtKeyword, "@media"> commaSep<query> Block
+}
+
+CharsetStatement {
+  @specialize[@name=charset]<AtKeyword, "@charset"> value ";"
+}
+
+NamespaceStatement {
+  @specialize[@name=namespace]<AtKeyword, "@namespace">
+  NamespaceName { identifier }?
+  (StringLiteral | CallLiteral) ";"
+}
+
+KeyframesStatement {
+  @specialize[@name=keyframes]<AtKeyword, "@keyframes">
+  KeyframeName { identifier }
+  KeyframeList
+}
+
+KeyframeList {
+  "{" ((kw<"from"> | kw<"to"> | NumberLiteral) Block)* "}"
+}
+
+SupportsStatement {
+  @specialize[@name=supports]<AtKeyword, "@supports"> query Block
+}
+
+DetachedRuleSet { propertyName ":" Block ";"? }
+
+Block { "{" blockContent "}" }
+
+decl { Declaration | Inclusion | CallExpression { AtKeyword mixinArgList } }
+
+blockContent {
+  (~item item | decl ";")* decl?
+}
+
+selector {
+  UniversalSelector |
+  TagSelector { ~item TagName { identifier ~item } } |
+  NestingSelector |
+  ClassSelector { selector? !attribute "." ClassName } |
+  PseudoClassSelector {
+    selector? !attribute (":" | "::") (
+      PseudoClassName { identifier } ArgList<selector>? |
+      pseudoClassWithArg ArgList<value+>)
+  } |
+  IdSelector |
+  AttributeSelector { selector? !attribute "[" AttributeName { identifier } (MatchOp value)? "]" } |
+  ChildSelector { selector !structure ChildOp selector } |
+  DescendantSelector { selector !structure descendantOp selector } |
+  SiblingSelector { selector !structure SiblingOp { "~" | "+" } selector } |
+  InterpolatedSelector { Interpolation ~item }
+}
+
+IdSelector { selector? !attribute "#" IdName }
+
+ClassName { identifier }
+IdName { identifier }
+
+pseudoClassWithArg {
+  @specialize[@name=PseudoClassName]<identifier, "lang" | "nth-child" | "nth-last-child" | "nth-of-type" | "nth-last-of-type" | "nth-of-type" | "dir" | "host-context">
+}
+
+NumberLiteral {
+  numberLiteralInner Unit?
+}
+
+ArgList<content> {
+  openArgList commaSep<content> ")"
+}
+
+PropertyName { identifier ~item }
+
+propertyName {
+  (Interpolation? PropertyName (Interpolation PropertyName?)* | Interpolation ~item | VariableName | AtKeyword | Escape)
+  ("+" | "+_")?
+}
+
+Declaration {
+  propertyName ":"
+  (value (","? value)* Important? | 
+   Inclusion { (IdSelector { "#" IdName } | ClassSelector { "." ClassName }) selector? mixinArgList? })
+}
+
+Inclusion {
+  selector mixinArgList? Important?
+}
+
+unaryOp { @specialize[@name=UnaryQueryOp]<identifier, "not" | "only"> }
+
+query {
+  KeywordQuery { identifier } |
+  FeatureQuery { "(" FeatureName { identifier } ":" value+ ")" } |
+  BinaryQuery { query !valueOp (LogicOp | BinOp) query } |
+  UnaryQuery { unaryOp query } |
+  ParenthesizedQuery { "(" query ")" } |
+  SelectorQuery { @specialize[@name=selector]<identifier, "selector"> "(" selector ")" } |
+  CallQuery { query !call ArgList<query> } |
+  SubscriptQuery { query !sub "[" value? "]" } |
+  AtKeyword |
+  Escape |
+  Interpolation
+}
+
+value {
+  VariableName |
+  AtKeyword |
+  PropertyVariable |
+  ValueName { identifier } |
+  ParenthesizedValue { "(" value ")" } |
+  ColorLiteral |
+  NumberLiteral |
+  StringLiteral |
+  Escape |
+  Interpolation |
+  BinaryExpression { value !valueOp (BinOp | LogicOp) value } |
+  UnaryExpression { unaryOp value } |
+  CallExpression |
+  SubscriptExpression { value !sub "[" value? "]" } |
+  CallLiteral
+}
+
+CallLiteral {
+  @specialize[@name=CallTag]<identifier, "url" | "url-prefix" | "domain" | "regexp">
+  "(" (ParenthesizedContent | StringLiteral) ")"
+}
+
+CallExpression {
+  value !call ArgList<value+>
+}
+
+commaSep<value> { "" | value ("," value)* }
+
+kw<term> { @specialize[@name={term}]<identifier, term> }
+
+@external tokens descendant from "./tokens" {
+  descendantOp
+}
+
+@external tokens unitToken from "./tokens" {
+  Unit
+}
+
+@external tokens argList from "./tokens" { openArgList[@name="("] }
+
+LogicOp { @specialize<identifier, "and" | "or"> }
+
+@tokens {
+  UniversalSelector { "*" }
+
+  NestingSelector { "&" (@asciiLetter | @digit | "-")* }
+
+  word { @asciiLetter (@asciiLetter | @digit | "-")* }
+
+  identifier { word }
+
+  VariableName { "--" word }
+
+  AtKeyword { "@" "@"? word? }
+
+  PropertyVariable { "$" word }
+
+  MatchOp { $[~^|*$]? "=" }
+
+  ChildOp { ">" ">"? }
+
+  BinOp { $[+\-*/=] | $[<>] "="? | "=" $[<>] }
+
+  @precedence { VariableName, BinOp }
+
+  Important { "!important" }
+
+  whitespace { @whitespace+ }
+
+  Comment[isolate] { "/*" commentRest }
+
+  commentRest { ![*] commentRest | "*" commentAfterStar }
+
+  commentAfterStar { "/" | "*" commentAfterStar | ![/*] commentRest }
+
+  LineComment[isolate] { "//" ![\n]* }
+
+  @precedence { Comment, LineComment, BinOp }
+
+  hexDigit { @digit | $[a-fA-F] }
+
+  ParenthesizedContent { !['")] ![)]+ }
+
+  @precedence { whitespace, ParenthesizedContent, Comment, LineComment }
+
+  ColorLiteral {
+    "#" hexDigit hexDigit hexDigit (hexDigit (hexDigit hexDigit (hexDigit hexDigit)?)?)?
+  }
+
+  numberLiteralInner { ("+" | "-")? (@digit+ ("." @digit*)? | "." @digit+) (("e" | "E") ("+" | "-")? @digit+)? }
+
+  @precedence { numberLiteralInner, ".", BinOp }
+
+  StringLiteral[isolate] { "\"" (!["\n\\] | "\\" _)* "\"" | "'" (!['\n\\] | "\\" _)* "'" }
+
+  Escape { "~" StringLiteral }
+
+  Interpolation { "@{" word "}" }
+
+  @precedence { Interpolation, AtKeyword }
+
+  "#"
+
+  ":" "::" ";" ","
+
+  "(" ")" "[" "]" "{" "}"
+}
+
+@external propSource lessHighlighting from "./highlight"
+
+@detectDelim

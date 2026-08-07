@@ -1,0 +1,307 @@
+# Server
+
+Interact with opencode server over HTTP.
+
+The `opencode serve` command runs a headless HTTP server that exposes an OpenAPI endpoint that an opencode client can use.
+
+---
+
+## Endpoints
+
+You can also access Go models through the following API endpoints.
+Model Model ID Endpoint AI SDK Package
+GLM-5.2 glm-5.2 <https://opencode.ai/zen/go/v1/chat/completions> @ai-sdk/openai-compatible
+GLM-5.1 glm-5.1 <https://opencode.ai/zen/go/v1/chat/completions> @ai-sdk/openai-compatible
+Kimi K2.7 Code kimi-k2.7-code <https://opencode.ai/zen/go/v1/chat/completions> @ai-sdk/openai-compatible
+Kimi K2.6 kimi-k2.6 <https://opencode.ai/zen/go/v1/chat/completions> @ai-sdk/openai-compatible
+DeepSeek V4 Pro deepseek-v4-pro <https://opencode.ai/zen/go/v1/chat/completions> @ai-sdk/openai-compatible
+DeepSeek V4 Flash deepseek-v4-flash <https://opencode.ai/zen/go/v1/chat/completions> @ai-sdk/openai-compatible
+MiMo-V2.5 mimo-v2.5 <https://opencode.ai/zen/go/v1/chat/completions> @ai-sdk/openai-compatible
+MiMo-V2.5-Pro mimo-v2.5-pro <https://opencode.ai/zen/go/v1/chat/completions> @ai-sdk/openai-compatible
+MiniMax M3 minimax-m3 <https://opencode.ai/zen/go/v1/messages> @ai-sdk/anthropic
+MiniMax M2.7 minimax-m2.7 <https://opencode.ai/zen/go/v1/messages> @ai-sdk/anthropic
+MiniMax M2.5 minimax-m2.5 <https://opencode.ai/zen/go/v1/messages> @ai-sdk/anthropic
+Qwen3.7 Max qwen3.7-max <https://opencode.ai/zen/go/v1/messages> @ai-sdk/anthropic
+Qwen3.7 Plus qwen3.7-plus <https://opencode.ai/zen/go/v1/messages> @ai-sdk/anthropic
+Qwen3.6 Plus qwen3.6-plus <https://opencode.ai/zen/go/v1/messages> @ai-sdk/anthropic
+
+### [Usage](https://opencode.ai/docs/server#usage)
+
+Terminal window
+
+```
+opencode serve [--port <number>] [--hostname <string>] [--cors <origin>]
+```
+
+#### [Options](https://opencode.ai/docs/server#options)
+
+| Flag            | Description                         | Default          |
+| --------------- | ----------------------------------- | ---------------- |
+| `--port`        | Port to listen on                   | `4096`           |
+| `--hostname`    | Hostname to listen on               | `127.0.0.1`      |
+| `--mdns`        | Enable mDNS discovery               | `false`          |
+| `--mdns-domain` | Custom domain name for mDNS service | `opencode.local` |
+| `--cors`        | Additional browser origins to allow | `[]`             |
+
+`--cors` can be passed multiple times:
+
+Terminal window
+
+```
+opencode serve --cors http://localhost:5173 --cors https://app.example.com
+```
+
+---
+
+### [Authentication](https://opencode.ai/docs/server#authentication)
+
+Set `OPENCODE_SERVER_PASSWORD` to protect the server with HTTP basic auth. The username defaults to `opencode`, or set `OPENCODE_SERVER_USERNAME` to override it. This applies to both `opencode serve` and `opencode web`.
+
+Terminal window
+
+```
+OPENCODE_SERVER_PASSWORD=your-password opencode serve
+```
+
+---
+
+### [How it works](https://opencode.ai/docs/server#how-it-works)
+
+When you run `opencode` it starts a TUI and a server. Where the TUI is the client that talks to the server. The server exposes an OpenAPI 3.1 spec endpoint. This endpoint is also used to generate an [SDK](https://opencode.ai/docs/sdk).
+
+Tip
+
+Use the opencode server to interact with opencode programmatically.
+
+This architecture lets opencode support multiple clients and allows you to interact with opencode programmatically.
+
+You can run `opencode serve` to start a standalone server. If you have the opencode TUI running, `opencode serve` will start a new server.
+
+---
+
+#### [Connect to an existing server](https://opencode.ai/docs/server#connect-to-an-existing-server)
+
+When you start the TUI it randomly assigns a port and hostname. You can instead pass in the `--hostname` and `--port` [flags](https://opencode.ai/docs/cli). Then use this to connect to its server.
+
+The `/tui` endpoint can be used to drive the TUI through the server. For example, you can prefill or run a prompt. This setup is used by the OpenCode [IDE](https://opencode.ai/docs/ide) plugins.
+
+---
+
+## [Spec](https://opencode.ai/docs/server#spec)
+
+The server publishes an OpenAPI 3.1 spec that can be viewed at:
+
+```
+http://<hostname>:<port>/doc
+```
+
+For example, `http://localhost:4096/doc`. Use the spec to generate clients or inspect request and response types. Or view it in a Swagger explorer.
+
+---
+
+## [APIs](https://opencode.ai/docs/server#apis)
+
+The opencode server exposes the following APIs.
+
+---
+
+### [Global](https://opencode.ai/docs/server#global)
+
+| Method | Path             | Description                    | Response                             |
+| ------ | ---------------- | ------------------------------ | ------------------------------------ |
+| `GET`  | `/global/health` | Get server health and version  | `{ healthy: true, version: string }` |
+| `GET`  | `/global/event`  | Get global events (SSE stream) | Event stream                         |
+
+---
+
+### [Project](https://opencode.ai/docs/server#project)
+
+| Method | Path               | Description             | Response    |
+| ------ | ------------------ | ----------------------- | ----------- |
+| `GET`  | `/project`         | List all projects       | `Project[]` |
+| `GET`  | `/project/current` | Get the current project | `Project`   |
+
+---
+
+### [Path &amp; VCS](https://opencode.ai/docs/server#path--vcs)
+
+| Method | Path    | Description                          | Response  |
+| ------ | ------- | ------------------------------------ | --------- |
+| `GET`  | `/path` | Get the current path                 | `Path`    |
+| `GET`  | `/vcs`  | Get VCS info for the current project | `VcsInfo` |
+
+---
+
+### [Instance](https://opencode.ai/docs/server#instance)
+
+| Method | Path                | Description                  | Response  |
+| ------ | ------------------- | ---------------------------- | --------- |
+| `POST` | `/instance/dispose` | Dispose the current instance | `boolean` |
+
+---
+
+### [Config](https://opencode.ai/docs/server#config)
+
+| Method  | Path                | Description                       | Response                                                                                                                                                 |
+| ------- | ------------------- | --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`   | `/config`           | Get config info                   | `Config`                                                                                                                                                 |
+| `PATCH` | `/config`           | Update config                     | `Config`                                                                                                                                                 |
+| `GET`   | `/config/providers` | List providers and default models | `{ providers:` [Provider[]](https://github.com/anomalyco/opencode/blob/dev/packages/sdk/js/src/gen/types.gen.ts)`, default: { [key: string]: string } }` |
+
+---
+
+### [Provider](https://opencode.ai/docs/server#provider)
+
+| Method | Path                             | Description                          | Response                                                                                                                                            |
+| ------ | -------------------------------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`  | `/provider`                      | List all providers                   | `{ all:` [Provider[]](https://github.com/anomalyco/opencode/blob/dev/packages/sdk/js/src/gen/types.gen.ts)`, default: {...}, connected: string[] }` |
+| `GET`  | `/provider/auth`                 | Get provider authentication methods  | `{ [providerID: string]:` [ProviderAuthMethod[]](https://github.com/anomalyco/opencode/blob/dev/packages/sdk/js/src/gen/types.gen.ts) `}`           |
+| `POST` | `/provider/{id}/oauth/authorize` | Authorize a provider using OAuth     | `ProviderAuthAuthorization`                                                                                                                         |
+| `POST` | `/provider/{id}/oauth/callback`  | Handle OAuth callback for a provider | `boolean`                                                                                                                                           |
+
+---
+
+### [Sessions](https://opencode.ai/docs/server#sessions)
+
+| Method   | Path                                     | Description                           | Notes                                                                                                                                     |
+| -------- | ---------------------------------------- | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`    | `/session`                               | List all sessions                     | Returns `Session[]`                                                                                                                       |
+| `POST`   | `/session`                               | Create a new session                  | body: `{ parentID?, title? }`, returns `Session`                                                                                          |
+| `GET`    | `/session/status`                        | Get session status for all sessions   | Returns `{ [sessionID: string]:` [SessionStatus](https://github.com/anomalyco/opencode/blob/dev/packages/sdk/js/src/gen/types.gen.ts) `}` |
+| `GET`    | `/session/:id`                           | Get session details                   | Returns `Session`                                                                                                                         |
+| `DELETE` | `/session/:id`                           | Delete a session and all its data     | Returns `boolean`                                                                                                                         |
+| `PATCH`  | `/session/:id`                           | Update session properties             | body: `{ title? }`, returns `Session`                                                                                                     |
+| `GET`    | `/session/:id/children`                  | Get a session’s child sessions        | Returns `Session[]`                                                                                                                       |
+| `GET`    | `/session/:id/todo`                      | Get the todo list for a session       | Returns `Todo[]`                                                                                                                          |
+| `POST`   | `/session/:id/init`                      | Analyze app and create `AGENTS.md`    | body: `{ messageID, providerID, modelID }`, returns `boolean`                                                                             |
+| `POST`   | `/session/:id/fork`                      | Fork an existing session at a message | body: `{ messageID? }`, returns `Session`                                                                                                 |
+| `POST`   | `/session/:id/abort`                     | Abort a running session               | Returns `boolean`                                                                                                                         |
+| `POST`   | `/session/:id/share`                     | Share a session                       | Returns `Session`                                                                                                                         |
+| `DELETE` | `/session/:id/share`                     | Unshare a session                     | Returns `Session`                                                                                                                         |
+| `GET`    | `/session/:id/diff`                      | Get the diff for this session         | query: `messageID?`, returns `FileDiff[]`                                                                                                 |
+| `POST`   | `/session/:id/summarize`                 | Summarize the session                 | body: `{ providerID, modelID }`, returns `boolean`                                                                                        |
+| `POST`   | `/session/:id/revert`                    | Revert a message                      | body: `{ messageID, partID? }`, returns `boolean`                                                                                         |
+| `POST`   | `/session/:id/unrevert`                  | Restore all reverted messages         | Returns `boolean`                                                                                                                         |
+| `POST`   | `/session/:id/permissions/:permissionID` | Respond to a permission request       | body: `{ response, remember? }`, returns `boolean`                                                                                        |
+
+CrewCode also handles OpenCode 1.4+ question events from the SSE stream. The generated web client exposes `/question`, `/question/:requestID/reply` with body `{ answers: string[][] }`, and `/question/:requestID/reject`; those endpoints may not appear in the public docs table yet.
+
+---
+
+### [Messages](https://opencode.ai/docs/server#messages)
+
+| Method | Path                              | Description                             | Notes                                                                                                                                                                                                                                                                                                 |
+| ------ | --------------------------------- | --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`  | `/session/:id/message`            | List messages in a session              | query: `limit?`, returns `{ info:` [Message](https://github.com/anomalyco/opencode/blob/dev/packages/sdk/js/src/gen/types.gen.ts)`, parts:` [Part[]](https://github.com/anomalyco/opencode/blob/dev/packages/sdk/js/src/gen/types.gen.ts)`}[]`                                                        |
+| `POST` | `/session/:id/message`            | Send a message and wait for response    | body: `{ messageID?, model?, agent?, noReply?, system?, tools?, parts }`, returns `{ info:` [Message](https://github.com/anomalyco/opencode/blob/dev/packages/sdk/js/src/gen/types.gen.ts)`, parts:` [Part[]](https://github.com/anomalyco/opencode/blob/dev/packages/sdk/js/src/gen/types.gen.ts)`}` |
+| `GET`  | `/session/:id/message/:messageID` | Get message details                     | Returns `{ info:` [Message](https://github.com/anomalyco/opencode/blob/dev/packages/sdk/js/src/gen/types.gen.ts)`, parts:` [Part[]](https://github.com/anomalyco/opencode/blob/dev/packages/sdk/js/src/gen/types.gen.ts)`}`                                                                           |
+| `POST` | `/session/:id/prompt_async`       | Send a message asynchronously (no wait) | body: same as `/session/:id/message`, returns `204 No Content`                                                                                                                                                                                                                                        |
+| `POST` | `/session/:id/command`            | Execute a slash command                 | body: `{ messageID?, agent?, model?, command, arguments }`, returns `{ info:` [Message](https://github.com/anomalyco/opencode/blob/dev/packages/sdk/js/src/gen/types.gen.ts)`, parts:` [Part[]](https://github.com/anomalyco/opencode/blob/dev/packages/sdk/js/src/gen/types.gen.ts)`}`               |
+| `POST` | `/session/:id/shell`              | Run a shell command                     | body: `{ agent, model?, command }`, returns `{ info:` [Message](https://github.com/anomalyco/opencode/blob/dev/packages/sdk/js/src/gen/types.gen.ts)`, parts:` [Part[]](https://github.com/anomalyco/opencode/blob/dev/packages/sdk/js/src/gen/types.gen.ts)`}`                                       |
+
+---
+
+### [Commands](https://opencode.ai/docs/server#commands)
+
+| Method | Path       | Description       | Response    |
+| ------ | ---------- | ----------------- | ----------- |
+| `GET`  | `/command` | List all commands | `Command[]` |
+
+---
+
+### [Files](https://opencode.ai/docs/server#files)
+
+| Method | Path                     | Description                        | Response                                                                                    |
+| ------ | ------------------------ | ---------------------------------- | ------------------------------------------------------------------------------------------- |
+| `GET`  | `/find?pattern=<pat>`    | Search for text in files           | Array of match objects with `path`, `lines`, `line_number`, `absolute_offset`, `submatches` |
+| `GET`  | `/find/file?query=<q>`   | Find files and directories by name | `string[]` (paths)                                                                          |
+| `GET`  | `/find/symbol?query=<q>` | Find workspace symbols             | `Symbol[]`                                                                                  |
+| `GET`  | `/file?path=<path>`      | List files and directories         | `FileNode[]`                                                                                |
+| `GET`  | `/file/content?path=<p>` | Read a file                        | `FileContent`                                                                               |
+| `GET`  | `/file/status`           | Get status for tracked files       | `File[]`                                                                                    |
+
+#### `/find/file` [query parameters](https://opencode.ai/docs/server#findfile-query-parameters)
+
+- `query` (required) — search string (fuzzy match)
+- `type` (optional) — limit results to `"file"` or `"directory"`
+- `directory` (optional) — override the project root for the search
+- `limit` (optional) — max results (1–200)
+- `dirs` (optional) — legacy flag (`"false"` returns only files)
+
+---
+
+### [Tools (Experimental)](https://opencode.ai/docs/server#tools-experimental)
+
+| Method | Path                                        | Description                              | Response   |
+| ------ | ------------------------------------------- | ---------------------------------------- | ---------- |
+| `GET`  | `/experimental/tool/ids`                    | List all tool IDs                        | `ToolIDs`  |
+| `GET`  | `/experimental/tool?provider=<p>&model=<m>` | List tools with JSON schemas for a model | `ToolList` |
+
+---
+
+### [LSP, Formatters &amp; MCP](https://opencode.ai/docs/server#lsp-formatters--mcp)
+
+| Method | Path         | Description                | Response                                                                                                                 |
+| ------ | ------------ | -------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `GET`  | `/lsp`       | Get LSP server status      | `LSPStatus[]`                                                                                                            |
+| `GET`  | `/formatter` | Get formatter status       | `FormatterStatus[]`                                                                                                      |
+| `GET`  | `/mcp`       | Get MCP server status      | `{ [name: string]:` [MCPStatus](https://github.com/anomalyco/opencode/blob/dev/packages/sdk/js/src/gen/types.gen.ts) `}` |
+| `POST` | `/mcp`       | Add MCP server dynamically | body: `{ name, config }`, returns MCP status object                                                                      |
+
+---
+
+### [Agents](https://opencode.ai/docs/server#agents)
+
+| Method | Path     | Description               | Response  |
+| ------ | -------- | ------------------------- | --------- |
+| `GET`  | `/agent` | List all available agents | `Agent[]` |
+
+---
+
+### [Logging](https://opencode.ai/docs/server#logging)
+
+| Method | Path   | Description                                                  | Response  |
+| ------ | ------ | ------------------------------------------------------------ | --------- |
+| `POST` | `/log` | Write log entry. Body: `{ service, level, message, extra? }` | `boolean` |
+
+---
+
+### [TUI](https://opencode.ai/docs/server#tui)
+
+| Method | Path                    | Description                                 | Response               |
+| ------ | ----------------------- | ------------------------------------------- | ---------------------- |
+| `POST` | `/tui/append-prompt`    | Append text to the prompt                   | `boolean`              |
+| `POST` | `/tui/open-help`        | Open the help dialog                        | `boolean`              |
+| `POST` | `/tui/open-sessions`    | Open the session selector                   | `boolean`              |
+| `POST` | `/tui/open-themes`      | Open the theme selector                     | `boolean`              |
+| `POST` | `/tui/open-models`      | Open the model selector                     | `boolean`              |
+| `POST` | `/tui/submit-prompt`    | Submit the current prompt                   | `boolean`              |
+| `POST` | `/tui/clear-prompt`     | Clear the prompt                            | `boolean`              |
+| `POST` | `/tui/execute-command`  | Execute a command (`{ command }`)           | `boolean`              |
+| `POST` | `/tui/show-toast`       | Show toast (`{ title?, message, variant }`) | `boolean`              |
+| `GET`  | `/tui/control/next`     | Wait for the next control request           | Control request object |
+| `POST` | `/tui/control/response` | Respond to a control request (`{ body }`)   | `boolean`              |
+
+---
+
+### [Auth](https://opencode.ai/docs/server#auth)
+
+| Method | Path        | Description                                                     | Response  |
+| ------ | ----------- | --------------------------------------------------------------- | --------- |
+| `PUT`  | `/auth/:id` | Set authentication credentials. Body must match provider schema | `boolean` |
+
+---
+
+### [Events](https://opencode.ai/docs/server#events)
+
+| Method | Path     | Description                                                                   | Response                  |
+| ------ | -------- | ----------------------------------------------------------------------------- | ------------------------- |
+| `GET`  | `/event` | Server-sent events stream. First event is `server.connected`, then bus events | Server-sent events stream |
+
+---
+
+### [Docs](https://opencode.ai/docs/server#docs)
+
+| Method | Path   | Description               | Response                    |
+| ------ | ------ | ------------------------- | --------------------------- |
+| `GET`  | `/doc` | OpenAPI 3.1 specification | HTML page with OpenAPI spec |

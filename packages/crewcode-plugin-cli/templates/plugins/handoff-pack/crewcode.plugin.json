@@ -1,0 +1,72 @@
+{
+  "$schema": "../../../schemas/crewcode.plugin.schema.json",
+  "id": "handoff-pack",
+  "name": "Handoff Pack",
+  "version": "0.1.0",
+  "description": "Builds a markdown handoff snapshot for agents and teams from local workspace signals.",
+  "crewcode": { "apiVersion": "0.1" },
+  "permissions": ["workspace:read", "workspace:write"],
+  "contributes": {
+    "tabs": [
+      {
+        "id": "main",
+        "title": "Handoff Pack",
+        "icon": "file-text",
+        "entry": "panel.html",
+        "singleton": true
+      }
+    ],
+    "sidebarPanels": [
+      {
+        "id": "brief",
+        "title": "Handoff",
+        "icon": "file-text",
+        "entry": "panel.html"
+      }
+    ],
+    "statusItems": [
+      {
+        "id": "handoff-status",
+        "title": "Handoff Pack",
+        "text": "handoff",
+        "icon": "file-text",
+        "sidebarPanel": "brief"
+      }
+    ],
+    "commands": [
+      {
+        "id": "open-handoff",
+        "title": "Open Handoff Pack",
+        "icon": "file-text",
+        "group": "Plugins"
+      }
+    ],
+    "chatActions": [
+      {
+        "id": "handoff-from-chat",
+        "title": "Open Handoff Pack",
+        "icon": "file-text",
+        "sidebarPanel": "brief",
+        "messageRole": "any"
+      }
+    ],
+    "chatHeaderItems": [
+      {
+        "id": "handoff-header",
+        "title": "Open Handoff Pack",
+        "text": "handoff",
+        "icon": "file-text",
+        "sidebarPanel": "brief"
+      }
+    ],
+    "editorActions": [
+      {
+        "id": "handoff-current-file",
+        "title": "Add current context to Handoff Pack",
+        "icon": "file-text",
+        "sidebarPanel": "brief",
+        "filePattern": "*"
+      }
+    ]
+  }
+}

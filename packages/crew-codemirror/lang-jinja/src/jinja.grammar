@@ -1,0 +1,181 @@
+@precedence {
+  subscript
+  call
+  concat @left
+  mult @left
+  add @left
+  compare @left
+  contains @left
+  in @left
+  is @left
+  not
+  logicAnd @left
+  logicOr @left
+  if @left
+  else
+  filter @left
+  eager
+}
+
+@top Template { element* }
+
+element { Text | Interpolation | statement | Tag | setTag | importTag | includeTag | Comment }
+
+Text { (!eager text)+ }
+
+statement[@isGroup=Statement] {
+  IfStatement { kwTag1<"if"> (element | kwTag1<"elif">)* (kwTag<"else"> element*)? kwTagEnd<"endif"> } |
+  ForStatement { forTag element* (kwTag<"else"> element*)? kwTagEnd<"endfor"> } |
+  RawStatement { kwTag<"raw"> RawText { rawText+ } endrawTag } |
+  BlockStatement { blockTag element* endBlockTag } |
+  MacroStatement { macroTag element* kwTagEnd<"endmacro"> } |
+  CallStatement { callTag element* kwTagEnd<"endcall"> } |
+  FilterStatement { filterTag element* kwTagEnd<"endfilter"> } |
+  SetStatement { setOpenTag element* kwTagEnd<"endset"> } |
+  TransStatement { transTag element* (kwTag1<"pluralize"> element*)? kwTagEnd<"endtrans"> } |
+  WithStatement { withTag element* kwTagEnd<"endwith"> } |
+  AutoescapeStatement { kwTag1<"autoescape"> element* kwTagEnd<"endautoescape"> }
+}
+
+Comment { commentTagStart commentText+ commentTagEnd }
+
+@skip { space } {
+  forTag[@name=Tag] { tagStart tagName<"for"> Definition ("," Definition)* kw<"in"> expression kw<"recursive">? tagEnd }
+
+  blockTag[@name=Tag] { tagStart tagName<"block"> Definition kw<"scoped">? kw<"required">? tagEnd }
+
+  macroTag[@name=Tag] { tagStart tagName<"macro"> Definition ParamList? tagEnd }
+
+  callTag[@name=Tag] { tagStart tagName<"call"> ParamList? VariableName ArgumentList? tagEnd }
+
+  filterTag[@name=Tag] { tagStart tagName<"filter"> filter tagEnd }
+
+  setTag[@name=Tag] { tagStart tagName<"set"> Definition ("," Definition)* AssignOp expression tagEnd }
+
+  setOpenTag[@name=Tag] { tagStart tagName<"set"> Definition tagEnd }
+
+  withTag[@name=Tag] { tagStart tagName<"with"> commaSep<Definition ("," Definition)* AssignOp expression> tagEnd }
+
+  importTag[@name=Tag] {
+    tagStart (
+      tagName<"import"> expression kw<"as"> Definition |
+      tagName<"from"> expression kw<"import"> ImportItem ("," ImportItem)*
+    ) tagEnd
+  }
+
+  ImportItem { Definition | VariableName kw<"as"> Definition }
+
+  includeTag[@name=Tag] {
+    tagStart tagName<"include"> expression (kw<"ignore"> kw<"missing">)? ((kw<"with"> | kw<"without">) kw<"context">)? tagEnd
+  }
+
+  transTag[@name=Tag] { tagStart tagName<"trans"> (Definition AssignOp expression ("," Definition AssignOp expression)*)? tagEnd }
+
+  endBlockTag[@name=EndTag] { tagStart tagName<"endblock"> Definition? tagEnd }
+
+  endrawTag[@name=EndTag] { endrawTagStart tagName<"endraw"> tagEnd }
+
+  VariableName { identifier }
+  Definition { identifier }
+  
+  expression[@isGroup=Expression] {
+    VariableName |
+    MemberExpression { expression !subscript "." PropertyName } |
+    SubscriptExpression { expression !subscript "[" expression "]" } |
+    BinaryExpression {
+      expression !concat ConcatOp expression |
+      expression !mult multOp expression |
+      expression !add addOp expression |
+      expression !compare CompareOp expression |
+      expression !in kw<"in"> expression |
+      expression !is kw<"is"> expression (VariableName | StringLiteral | NumberLiteral)? |
+      expression !logicAnd kw<"and"> expression |      
+      expression !logicOr kw<"or"> expression
+    } |
+    NotExpression { kw<"not"> !not expression } |
+    FilterExpression { expression !filter FilterOp filter } |
+    ConditionalExpression { expression !if kw<"if"> expression (!else kw<"else"> expression)? } |
+    CallExpression { expression !call ArgumentList } |
+    ArrayExpression { "[" commaSep<expression> "]" } |
+    TupleExpression { "(" ")" | "(" expression ("," expression)+ ")" } |
+    ParenthesizedExpression { "(" expression ")" } |
+    DictExpression { "{" commaSep<Entry { expression ":" expression }> "}" } |
+    @specialize[@name=BooleanLiteral]<identifier, "true" | "false"> |
+    kw<"self"> | kw<"super"> | kw<"loop"> |
+    StringLiteral |
+    NumberLiteral
+  }
+
+  filter {
+    FilterName |
+    FilterCall { FilterName !call ArgumentList }
+  }
+
+  Interpolation { interpolationStart expression interpolationEnd }
+
+  Tag { tagStart TagName expression? tagEnd }
+
+  ParamList { "(" commaSep<Definition | OptionalParameter { Definition AssignOp expression }> ")" }
+
+  ArgumentList { "(" commaSep<expression | NamedArgument { VariableName AssignOp expression }> ")" }
+
+  kw<word> { @specialize[@name={word}]<identifier, word> }
+  tagName<word> { @specialize[@name={word}]<TagName, word> }
+  kwTag[@name=Tag]<word> { tagStart tagName<word> tagEnd }
+  kwTag1[@name=Tag]<word> { tagStart tagName<word> expression tagEnd }
+  kwTagEnd[@name=EndTag]<word> { tagStart tagName<word> tagEnd }
+  commaSep<expr> { (expr ("," expr)*)? }
+}
+
+@external tokens base from "./tokens" {
+  interpolationStart[@name="{{", closedBy="}}"]
+  commentTagStart[@name="{#", closedBy="#}"]
+  tagStart[@name="{%", closedBy="%}"]
+  text
+}
+
+@external tokens raw from "./tokens" {
+  endrawTagStart[@name="{%", closedBy="%}"]
+  rawText
+}
+
+@local tokens {
+  commentTagEnd[@name="#}", openedBy="{#"] { "#}" }
+  @else commentText
+}
+
+@tokens {
+  letter { @asciiLetter | "_" | $[\u00C0-\u{EFFFF}] }
+  identifier { letter (letter | @digit)* }
+  PropertyName { identifier }
+  FilterName { identifier }
+  TagName { identifier }
+
+  StringLiteral {
+    '"' (!["\n] | "\\" _)* '"' | "'" (!['\n] | "\\" _)* "'"
+  }
+
+  NumberLiteral {
+    ("+" | "-")?
+    (@digit ("_" | @digit)* ("." @digit ("_" | @digit)*)? | "." @digit ("_" | @digit)*)
+    ($[eE] $[+\-]? @digit ("_" | @digit)*)?
+  }
+
+  space { (" " | "\t" | "\r" | "\n")+ }
+
+  interpolationEnd[@name="}}", openedBy="{{"] { "}}" }
+  tagEnd[@name="%}", openedBy="{%"] { "-"? "%}" }
+
+  CompareOp { "!=" | "==" | $[<>] "="? }
+  multOp[@name=ArithOp] { "/" | "//" | "%" | "*" | "**" }
+  addOp[@name=ArithOp] { "+" | "-" }
+  ConcatOp { "~" }
+  AssignOp { "=" }
+  FilterOp { "|" }
+
+  @precedence { NumberLiteral addOp "." }
+
+  "(" ")" ":" "," "."
+}
+
+@detectDelim

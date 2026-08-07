@@ -1,0 +1,57 @@
+{
+  "$schema": "../../../schemas/crewcode.plugin.schema.json",
+  "id": "codebase-graph-lite",
+  "name": "Codebase Graph Lite",
+  "version": "0.1.0",
+  "description": "Dogfood plugin: isolated panel that reads the workspace file list through the v0 permission gate.",
+  "author": "CrewCode",
+  "crewcode": {
+    "apiVersion": "0.1"
+  },
+  "permissions": ["workspace:read"],
+  "contributes": {
+    "tabs": [
+      {
+        "id": "main",
+        "title": "Codebase Graph Lite",
+        "icon": "grid",
+        "entry": "panel.html",
+        "singleton": true
+      }
+    ],
+    "sidebarPanels": [
+      {
+        "id": "sidebar",
+        "title": "Graph Lite",
+        "icon": "sidebar",
+        "entry": "panel.html"
+      }
+    ],
+    "statusItems": [
+      {
+        "id": "graph-ready",
+        "title": "Codebase Graph Lite",
+        "text": "graph lite",
+        "icon": "grid",
+        "sidebarPanel": "sidebar"
+      }
+    ],
+    "editorActions": [
+      {
+        "id": "show-in-graph",
+        "title": "Show in Graph Lite",
+        "icon": "grid",
+        "sidebarPanel": "sidebar"
+      }
+    ],
+    "chatActions": [
+      {
+        "id": "inspect-chat",
+        "title": "Inspect chat with Graph Lite",
+        "icon": "grid",
+        "sidebarPanel": "sidebar",
+        "messageRole": "any"
+      }
+    ]
+  }
+}

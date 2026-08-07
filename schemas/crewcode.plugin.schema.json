@@ -1,0 +1,318 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://crewcode-plugins.cortex-ai.icu/schemas/crewcode.plugin.schema.json",
+  "title": "CrewCode Plugin Manifest",
+  "description": "Manifest for local CrewCode plugins loaded from ~/.crewcode/plugins.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "name", "version"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$",
+      "description": "Stable plugin id. Also used as the local folder/protocol host."
+    },
+    "name": { "type": "string", "minLength": 1 },
+    "version": { "type": "string", "minLength": 1 },
+    "description": { "type": "string" },
+    "author": { "type": "string" },
+    "homepage": { "type": "string" },
+    "enabled": {
+      "type": "boolean",
+      "description": "Optional local override. Omit or true to enable; false disables the plugin."
+    },
+    "crewcode": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "apiVersion": {
+          "type": "string",
+          "const": "0.1",
+          "description": "Plugin API version this manifest targets."
+        },
+        "minVersion": { "type": "string" },
+        "maxVersion": { "type": "string" }
+      }
+    },
+    "permissions": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": [
+          "workspace:read",
+          "workspace:write",
+          "git:read",
+          "git:write",
+          "terminal:spawn",
+          "terminal:read",
+          "agent:prompt",
+          "agent:provider",
+          "browser:read",
+          "mcp:server",
+          "network:fetch",
+          "secrets:read"
+        ]
+      }
+    },
+    "contributes": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "commands": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/commandContribution" }
+        },
+        "tabs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/panelContribution" }
+        },
+        "sidebarPanels": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/panelContribution" }
+        },
+        "statusItems": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/statusItemContribution" }
+        },
+        "editorActions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/editorActionContribution" }
+        },
+        "chatActions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/chatActionContribution" }
+        },
+        "chatHeaderItems": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/chatHeaderItemContribution" }
+        },
+        "mcpServers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/mcpServerContribution" }
+        },
+        "agentProviders": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/agentProviderContribution" }
+        },
+        "gitLenses": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/gitLensContribution" }
+        },
+        "missionWidgets": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/missionWidgetContribution" }
+        },
+        "terminalWatchers": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/terminalWatcherContribution" }
+        },
+        "browserActions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/browserActionContribution" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]*$"
+    },
+    "commandContribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "title": { "type": "string", "minLength": 1 },
+        "icon": { "type": "string" },
+        "group": { "type": "string" },
+        "when": { "type": "string" }
+      }
+    },
+    "statusItemContribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "title": { "type": "string", "minLength": 1 },
+        "text": { "type": "string" },
+        "icon": { "type": "string" },
+        "command": { "$ref": "#/$defs/id" },
+        "tab": { "$ref": "#/$defs/id" },
+        "sidebarPanel": { "$ref": "#/$defs/id" },
+        "when": { "type": "string" }
+      }
+    },
+    "editorActionContribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "title": { "type": "string", "minLength": 1 },
+        "icon": { "type": "string" },
+        "command": { "$ref": "#/$defs/id" },
+        "tab": { "$ref": "#/$defs/id" },
+        "sidebarPanel": { "$ref": "#/$defs/id" },
+        "filePattern": { "type": "string" },
+        "when": { "type": "string" }
+      }
+    },
+    "chatActionContribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "title": { "type": "string", "minLength": 1 },
+        "icon": { "type": "string" },
+        "command": { "$ref": "#/$defs/id" },
+        "tab": { "$ref": "#/$defs/id" },
+        "sidebarPanel": { "$ref": "#/$defs/id" },
+        "messageRole": { "enum": ["user", "agent", "any"] },
+        "when": { "type": "string" }
+      }
+    },
+    "actionTargetContribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "title": { "type": "string", "minLength": 1 },
+        "icon": { "type": "string" },
+        "command": { "$ref": "#/$defs/id" },
+        "tab": { "$ref": "#/$defs/id" },
+        "sidebarPanel": { "$ref": "#/$defs/id" },
+        "when": { "type": "string" }
+      }
+    },
+    "gitLensContribution": {
+      "allOf": [
+        { "$ref": "#/$defs/actionTargetContribution" },
+        { "type": "object", "properties": { "placement": { "enum": ["sidebar", "diff"] } } }
+      ]
+    },
+    "missionWidgetContribution": {
+      "allOf": [
+        { "$ref": "#/$defs/actionTargetContribution" },
+        { "type": "object", "properties": { "text": { "type": "string" } } }
+      ]
+    },
+    "terminalWatcherContribution": {
+      "allOf": [
+        { "$ref": "#/$defs/actionTargetContribution" },
+        { "type": "object", "properties": { "mode": { "const": "opt-in" } } }
+      ]
+    },
+    "browserActionContribution": {
+      "allOf": [
+        { "$ref": "#/$defs/actionTargetContribution" },
+        { "type": "object", "properties": { "browserContext": { "enum": ["url", "selection"] } } }
+      ]
+    },
+    "agentProviderContribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "runtime"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "title": { "type": "string", "minLength": 1 },
+        "runtime": {
+          "type": "string",
+          "enum": ["mock", "exec", "http", "sse-http", "openai-compatible", "stdio-jsonrpc", "websocket"],
+          "description": "Provider runtime CrewCode owns: mock test fixture, exec CLI command, HTTP endpoint, SSE HTTP endpoint, OpenAI-compatible chat endpoint, stdio JSON-RPC command, or WebSocket endpoint."
+        },
+        "description": { "type": "string" },
+        "models": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "command": { "type": "string", "minLength": 1 },
+        "args": { "type": "array", "items": { "type": "string" } },
+        "endpoint": { "type": "string", "format": "uri" },
+        "apiKeyEnv": {
+          "type": "string",
+          "description": "Optional environment variable name CrewCode reads for provider auth, for example OPENAI_API_KEY. Secrets are not stored in plugin manifests."
+        },
+        "timeoutMs": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Optional per-turn timeout. CrewCode clamps this to a safe range."
+        },
+        "maxOutputBytes": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Optional per-turn output cap. CrewCode clamps this to a safe range."
+        },
+        "requestFormat": {
+          "type": "string",
+          "enum": ["crewcode", "openai-chat"],
+          "description": "HTTP body format. crewcode sends { prompt, cwd, model, provider }; openai-chat sends { model, messages }."
+        },
+        "responsePath": {
+          "type": "string",
+          "description": "Optional dot path for response text, e.g. choices.0.message.content."
+        },
+        "when": { "type": "string" }
+      }
+    },
+    "mcpServerContribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "command"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "title": { "type": "string", "minLength": 1 },
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Executable command CrewCode may spawn for this MCP server after permission approval. Shell strings are not interpreted."
+        },
+        "args": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "category": { "type": "string" },
+        "description": { "type": "string" },
+        "when": { "type": "string" }
+      }
+    },
+    "chatHeaderItemContribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "title": { "type": "string", "minLength": 1 },
+        "text": { "type": "string" },
+        "icon": { "type": "string" },
+        "command": { "$ref": "#/$defs/id" },
+        "tab": { "$ref": "#/$defs/id" },
+        "sidebarPanel": { "$ref": "#/$defs/id" },
+        "when": { "type": "string" }
+      }
+    },
+    "panelContribution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "entry"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "title": { "type": "string", "minLength": 1 },
+        "icon": { "type": "string" },
+        "entry": {
+          "type": "string",
+          "minLength": 1,
+          "not": { "pattern": "^(?:[a-zA-Z][a-zA-Z0-9+.-]*:|/)" },
+          "description": "Relative path to static panel HTML inside the plugin folder."
+        },
+        "singleton": { "type": "boolean" }
+      }
+    }
+  }
+}

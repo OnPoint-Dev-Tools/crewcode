@@ -1,0 +1,2 @@
+window.crewcode.onContext(ctx=>{document.getElementById('ctx').textContent=ctx.workspace?`${ctx.workspace.name} · ${ctx.workspace.kind}`:'no workspace'})
+document.getElementById('scan').onclick=async()=>{const {files}=await window.crewcode.workspace.listFiles();const risky=files.filter(f=>/(auth|secret|migration|schema|\.env|lock)/i.test(f)).slice(0,40);document.getElementById('out').textContent=risky.length?risky.join('\n'):'no obvious risk filenames found'}

@@ -1,0 +1,41 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-electron/
+out/
+/build/
+release/
+native/**/.build/
+
+# pnpm
+.pnpm-store/
+
+# Environment
+.env
+.env.local
+.env.*.local
+services/local-voice/.venv/
+services/local-voice/build/
+services/local-voice/*.egg-info/
+services/local-voice/**/__pycache__/
+services/local-voice/**/*.pyc
+
+.design/
+.claude
+.claude/skills/
+.agents/skills/
+# docs/
+.crewcode/
+.pi
+docs/AGENT-DO-NOT-READ.md
+.worktrees/
+
+# Local license/file backups
+.backup/
+
+# Astro build cache (docs-website)
+.astro/
+docs-website/dist/
+docs-website/.astro/

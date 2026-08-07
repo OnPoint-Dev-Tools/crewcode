@@ -1,0 +1,38 @@
+{
+  "$schema": "../../../schemas/crewcode.plugin.schema.json",
+  "id": "mock-agent-provider",
+  "name": "Mock Agent Provider",
+  "version": "0.1.0",
+  "description": "Dogfoods plugin-powered agent provider registration without shell, network, or secret access.",
+  "crewcode": { "apiVersion": "0.1" },
+  "permissions": ["agent:provider"],
+  "contributes": {
+    "tabs": [
+      {
+        "id": "main",
+        "title": "Mock Agent Provider",
+        "icon": "bot",
+        "entry": "panel.html",
+        "singleton": true
+      }
+    ],
+    "statusItems": [
+      {
+        "id": "mock-agent-status",
+        "title": "Mock Agent Provider",
+        "text": "mock agent",
+        "icon": "bot",
+        "tab": "main"
+      }
+    ],
+    "agentProviders": [
+      {
+        "id": "mock-reviewer",
+        "title": "Mock Reviewer",
+        "runtime": "mock",
+        "description": "Echoes a deterministic bridge response to validate plugin agent lifecycle.",
+        "models": ["mock-default", "mock-fast"]
+      }
+    ]
+  }
+}

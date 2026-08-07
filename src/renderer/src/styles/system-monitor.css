@@ -1,0 +1,337 @@
+/* ====== System Monitor (mini task manager) ====== */
+
+/* Trigger pill — sits to the right of the Mission Control menulet trigger,
+   left of the window controls. */
+.sysmon-trigger {
+  position: fixed;
+  top: 8px;
+  right: 132px;
+  display: inline-flex; align-items: center; gap: 7px;
+  height: 26px;
+  padding: 0 9px;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border);
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+  color: var(--foreground);
+  cursor: pointer;
+  z-index: 90;
+  -webkit-app-region: no-drag;
+}
+.sysmon-trigger:hover { background: rgba(255,255,255,0.08); }
+body.light .sysmon-trigger { background: rgba(0,0,0,0.04); }
+body.light .sysmon-trigger:hover { background: rgba(0,0,0,0.08); }
+.sysmon-trigger .glyph {
+  width: 14px; height: 14px;
+  display: grid; place-items: center;
+  color: var(--foreground);
+}
+.sysmon-trigger .pct {
+  font-variant-numeric: tabular-nums;
+  min-width: 30px;
+  color: var(--foreground);
+}
+.sysmon-trigger .count {
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--primary);
+  color: #fafafa;
+  border-radius: 999px;
+  padding: 1px 6px;
+  letter-spacing: 0;
+}
+
+/* Pull-down panel */
+.sysmon {
+  position: fixed;
+  top: 40px;
+  right: 12px;
+  width: 340px;
+  max-height: calc(100vh - 60px);
+  background: var(--popover);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 24px 64px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.03);
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  font-family: var(--font-family-sans);
+}
+.sysmon::before {
+  content: '';
+  position: absolute;
+  top: -7px;
+  right: 158px; /* point at the trigger pill */
+  width: 12px; height: 12px;
+  background: var(--popover);
+  border-top: 1px solid var(--border);
+  border-left: 1px solid var(--border);
+  transform: rotate(45deg);
+}
+
+/* Header */
+.sysmon-h {
+  display: flex; align-items: center; gap: 9px;
+  padding: 11px 13px;
+  border-bottom: 1px solid var(--border);
+}
+.sysmon-h .logo {
+  width: 22px; height: 22px;
+  border-radius: 5px;
+  background: var(--card);
+  display: grid; place-items: center;
+  color: var(--foreground);
+}
+.sysmon-h .t {
+  font-family: var(--font-family-mono);
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--foreground);
+}
+.sysmon-h .sub {
+  font-family: var(--font-family-mono);
+  font-size: 10.5px;
+  color: var(--muted-foreground);
+}
+.sysmon-h .right { margin-left: auto; display: flex; gap: 4px; }
+.sysmon-h .right button {
+  width: 24px; height: 24px;
+  display: grid; place-items: center;
+  background: transparent;
+  border: 0;
+  color: var(--muted-foreground);
+  border-radius: 5px;
+  cursor: pointer;
+}
+.sysmon-h .right button:hover { background: var(--accent); color: var(--foreground); }
+
+/* CPU + memory cards */
+.sysmon-cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  background: var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.sysmon-card {
+  background: var(--popover);
+  padding: 11px 13px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sysmon-card .lbl {
+  font-family: var(--font-family-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+.sysmon-card .val {
+  font-family: var(--font-family-mono);
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--foreground);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+.sysmon-card .meta {
+  font-family: var(--font-family-mono);
+  font-size: 10px;
+  color: var(--muted-foreground);
+}
+.sysmon-spark {
+  display: block;
+  width: 100%;
+  height: 22px;
+  margin: 3px 0 1px;
+}
+.sysmon-spark .line {
+  fill: none;
+  stroke: var(--crew-green-bright);
+  stroke-width: 1.4;
+  vector-effect: non-scaling-stroke;
+}
+.sysmon-spark .fill { fill: var(--crew-green-bright); opacity: 0.1; }
+.sysmon-spark.mem .line { stroke: var(--warning); }
+.sysmon-spark.mem .fill { fill: var(--warning); opacity: 0.08; }
+
+/* System RAM meter */
+.sysmon-ram {
+  padding: 9px 13px 10px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sysmon-ram .ram-h {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-family: var(--font-family-mono);
+  font-size: 10.5px;
+}
+.sysmon-ram .ram-h .k {
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-size: 9.5px;
+  color: var(--muted-foreground);
+}
+.sysmon-ram .ram-h .v { color: var(--foreground); font-variant-numeric: tabular-nums; }
+.sysmon-ram .ram-bar {
+  height: 5px;
+  border-radius: 999px;
+  background: var(--accent);
+  overflow: hidden;
+}
+.sysmon-ram .ram-bar span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--crew-green-bright);
+  transition: width 0.4s ease;
+}
+
+/* Counts strip */
+.sysmon-counts {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+}
+.sysmon-counts .stat {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 9px 4px;
+  color: var(--muted-foreground);
+  font-family: var(--font-family-mono);
+  font-size: 10.5px;
+}
+.sysmon-counts .stat + .stat { border-left: 1px solid var(--border); }
+.sysmon-counts .stat .n {
+  color: var(--foreground);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.sysmon-counts .stat .k { letter-spacing: 0.02em; }
+
+/* Body lists */
+.sysmon-body { flex: 1; overflow-y: auto; padding-bottom: 6px; }
+.sysmon-group + .sysmon-group { border-top: 1px solid var(--border); }
+.sysmon-sec {
+  width: 100%;
+  padding: 9px 13px 6px;
+  font-family: var(--font-family-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: transparent;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+}
+.sysmon-sec:hover { background: var(--accent); }
+.sysmon-sec:hover .ws-name { color: var(--crew-green-bright); }
+.sysmon-sec .folder, .sysmon-sec svg:not(.chev) { color: var(--crew-green-bright); opacity: 0.8; }
+.sysmon-sec .chev { color: var(--muted-foreground); }
+.sysmon-sec .ws-name {
+  letter-spacing: 0.04em;
+  text-transform: none;
+  font-size: 13px;
+  color: var(--foreground);
+}
+.sysmon-sec .ct { margin-left: auto; }
+.sysmon-sec .ct {
+  font-size: 10.5px;
+  color: var(--crew-green-bright);
+  background: var(--card);
+  padding: 0 6px;
+  border-radius: 999px;
+}
+.sysmon-empty {
+  padding: 4px 13px 8px;
+  font-family: var(--font-family-mono);
+  font-size: 10.5px;
+  color: var(--muted-foreground);
+  opacity: 0.7;
+}
+.sysmon-list { padding: 0 7px; display: flex; flex-direction: column; gap: 1px; }
+.sysmon-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 7px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.sysmon-row:hover { background: var(--accent); }
+.sysmon-row:hover .name { color: var(--crew-green-bright); }
+.sysmon-row .dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--muted-foreground);
+  flex: none;
+}
+.sysmon-row .dot.live { background: var(--success); animation: pulse 1.4s ease-out infinite; }
+.sysmon-row .dot.agent { background: var(--crew-green-bright); }
+.sysmon-row .rt { min-width: 0; flex: 1; }
+.sysmon-row .name {
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sysmon-row .rsub {
+  font-family: var(--font-family-mono);
+  font-size: 10px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sysmon-row .name .kind {
+  margin-left: 7px;
+  font-size: 8.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0 4px;
+  vertical-align: middle;
+}
+.sysmon-row .usage {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 1px;
+  flex: none;
+  font-family: var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
+  min-width: 56px;
+}
+.sysmon-row .usage .cpu { font-size: 11px; color: var(--foreground); }
+.sysmon-row .usage .mem { font-size: 9.5px; color: var(--muted-foreground); }
+.sysmon-row .kill {
+  width: 22px; height: 22px;
+  display: grid; place-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--muted-foreground);
+  border-radius: 5px;
+  cursor: pointer;
+  flex: none;
+}
+.sysmon-row .kill:hover {
+  background: var(--destructive);
+  color: #fff;
+}

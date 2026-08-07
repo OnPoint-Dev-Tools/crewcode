@@ -1,0 +1,99 @@
+import { createElement } from 'react'
+import TestRenderer, { act } from 'react-test-renderer'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { NotificationsProvider } from './useNotifications'
+import { useAgentBridge } from './useAgentBridge'
+import type { Message } from '../types'
+
+// Repro harness for "claude thinking streams render as agent messages / vanish":
+// drives the exact event sequence observed in the jank trace (thinking bursts →
+// tool call → more thinking → final text → turn_end) through the real hook and
+// asserts what lands in the message map.
+
+describe('useAgentBridge thinking stream routing', () => {
+  let onEvent: ((raw: unknown) => void) | null = null
+  const messagesByTab: Record<string, Message[]> = {}
+
+  const setMessagesForTab = (tabId: string, updater: (prev: Message[]) => Message[]) => {
+    messagesByTab[tabId] = updater(messagesByTab[tabId] ?? [])
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+    onEvent = null
+    for (const k of Object.keys(messagesByTab)) delete messagesByTab[k]
+    vi.stubGlobal('window', {
+      electronAPI: {
+        onBridgeEvent: vi.fn((cb: (raw: unknown) => void) => {
+          onEvent = cb
+          return vi.fn()
+        }),
+      },
+    })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  function renderBridge() {
+    let renderer!: TestRenderer.ReactTestRenderer
+    function Probe(): null {
+      useAgentBridge({
+        setMessagesForTab,
+        bridgeToTab: { b1: 'tab1' },
+        bridgeToCwd: { b1: '/repo' },
+        bridgeToMode: {},
+      })
+      return null
+    }
+    act(() => {
+      renderer = TestRenderer.create(
+        createElement(NotificationsProvider, null, createElement(Probe)),
+      )
+    })
+    return { unmount: () => act(() => renderer.unmount()) }
+  }
+
+  function emit(ev: Record<string, unknown>) {
+    act(() => { onEvent?.(ev) })
+  }
+
+  function flushBuffers() {
+    act(() => { vi.advanceTimersByTime(60) })
+  }
+
+  it('keeps thinking deltas as thinking rows across tools and final text', () => {
+    const bridge = renderBridge()
+    expect(onEvent).not.toBeNull()
+
+    emit({ type: 'turn_start', bridgeId: 'b1', turnId: 't1' })
+    emit({ type: 'thinking_delta', bridgeId: 'b1', turnId: 't1', delta: 'I should check ' })
+    emit({ type: 'thinking_delta', bridgeId: 'b1', turnId: 't1', delta: 'the config first.' })
+    flushBuffers()
+    emit({ type: 'tool_start', bridgeId: 'b1', turnId: 't1', toolCallId: 'c1', toolName: 'Read', args: {} })
+    emit({ type: 'tool_end', bridgeId: 'b1', turnId: 't1', toolCallId: 'c1', result: 'ok', isError: false })
+    emit({ type: 'thinking_delta', bridgeId: 'b1', turnId: 't1', delta: 'Config looks fine.' })
+    flushBuffers()
+    emit({ type: 'text_delta', bridgeId: 'b1', turnId: 't1', delta: 'Here is the answer.' })
+    flushBuffers()
+    emit({ type: 'turn_end', bridgeId: 'b1', turnId: 't1' })
+
+    const kinds = (messagesByTab.tab1 ?? []).map(m => m.kind)
+    expect(kinds).toEqual(['thinking', 'toolcall', 'thinking', 'agent'])
+
+    const thinking = (messagesByTab.tab1 ?? []).filter(m => m.kind === 'thinking')
+    expect(thinking.map(m => (m as Extract<Message, { kind: 'thinking' }>).text)).toEqual([
+      'I should check the config first.',
+      'Config looks fine.',
+    ])
+    // Settled — nothing should still be flagged streaming.
+    for (const m of messagesByTab.tab1 ?? []) {
+      if (m.kind === 'thinking' || m.kind === 'agent') expect(m.streaming).toBe(false)
+    }
+
+    bridge.unmount()
+  })
+})

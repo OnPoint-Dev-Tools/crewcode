@@ -1,0 +1,55 @@
+{
+  "$schema": "../../../schemas/crewcode.plugin.schema.json",
+  "id": "repo-radar",
+  "name": "Repo Radar",
+  "version": "0.1.0",
+  "description": "Scans a workspace for TODOs, risky files, and large source files to help agents orient quickly.",
+  "crewcode": { "apiVersion": "0.1" },
+  "permissions": ["workspace:read"],
+  "contributes": {
+    "tabs": [
+      {
+        "id": "main",
+        "title": "Repo Radar",
+        "icon": "radar",
+        "entry": "panel.html",
+        "singleton": true
+      }
+    ],
+    "sidebarPanels": [
+      {
+        "id": "radar",
+        "title": "Radar",
+        "icon": "radar",
+        "entry": "panel.html"
+      }
+    ],
+    "statusItems": [
+      {
+        "id": "radar-status",
+        "title": "Repo Radar",
+        "text": "radar",
+        "icon": "radar",
+        "sidebarPanel": "radar"
+      }
+    ],
+    "editorActions": [
+      {
+        "id": "scan-current-context",
+        "title": "Scan workspace with Repo Radar",
+        "icon": "radar",
+        "sidebarPanel": "radar",
+        "filePattern": "*"
+      }
+    ],
+    "chatActions": [
+      {
+        "id": "open-radar-from-chat",
+        "title": "Open Repo Radar",
+        "icon": "radar",
+        "sidebarPanel": "radar",
+        "messageRole": "any"
+      }
+    ]
+  }
+}

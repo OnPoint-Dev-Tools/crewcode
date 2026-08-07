@@ -1,0 +1,271 @@
+/* ============================================================
+   CrewCode — colors, type, radii
+   Loaded as the foundational stylesheet for every artifact in
+   this design system. Dark theme is canonical for the product;
+   light theme exists for printable/marketing surfaces.
+   ============================================================ */
+
+/* ---------- Fonts ----------
+   Bundled locally (self-hosted) via @fontsource — see
+   src/renderer/src/styles/fonts.ts, imported first in main.tsx. Works offline
+   and cross-platform; no Google Fonts CDN dependency. */
+
+:root {
+  /* ===== Tokens (light) ===== */
+  --font-family-sans: "Inter", -apple-system, "Segoe UI", "Roboto", sans-serif;
+  --font-family-mono: "JetBrains Mono", ui-monospace, "SF Mono", "Menlo", monospace;
+
+  --radius: 0.625rem;
+  --radius-sm: 0.375rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.875rem;
+  --radius-xl: 1.25rem;
+  --radius-pill: 999px;
+
+  --background: oklch(0.922 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(0.8 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: #285a48;
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --warning: #fcd452;
+  --success: #22c55e;
+  --border: #18372c;
+  /* Delegated (agent-spawned) chat rows. Evergreen accent at low alpha, never a
+     second accent colour. */
+  --delegated-surface: rgba(40, 90, 72, 0.10);
+  --delegated-surface-hover: rgba(40, 90, 72, 0.18);
+  --delegated-border: rgba(40, 90, 72, 0.35);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --sidebar: oklch(0.708 0 0);
+  --window-bezel: oklch(0.708 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: #18372c;
+  --sidebar-ring: oklch(0.708 0 0);
+
+  /* ===== Spacing scale (4-px base) ===== */
+  --space-0: 0;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* ===== Elevation =====
+     CrewCode is "flat with hairline borders" — shadows are subtle
+     and used mostly to lift floating popovers off the workspace. */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.25);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.45);
+  --shadow-inset: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+
+  /* ===== Brand accents ===== */
+  --crew-green: #285a48;          /* primary brand */
+  --crew-green-bright: #2f9d72;   /* user-pill highlight, live indicators */
+  --crew-green-soft: #e8f3ed;     /* surfaces tinted with brand */
+  --crew-mint: #285a48;
+  --crew-header: oklch(1 0 0);           /* light panel header */
+  --terminal-bg: #0f120f;
+  --terminal-fg: #fafafa;
+  --terminal-dim: #a1a1a1;
+  --bubble-user-bg: #e8f3ed;
+  --bubble-user-border: #285a48;
+  --bubble-user-fg: #1e3a30;
+
+  --crew-term: #e8f3ed;
+}
+
+.dark, [data-theme="dark"] {
+  --background: #0f120f;
+  --foreground: #fafafa;
+  --card: #1a1d1a;
+  --card-foreground: #fafafa;
+  --popover: #131713;
+  --popover-foreground: #fafafa;
+  --primary: #285a48;
+  --primary-foreground: #fafafa;
+  --secondary: #202020;
+  --secondary-foreground: #fafafa;
+  --muted: #242424;
+  --muted-foreground: #a1a1a1;
+  --accent: #1e3a30;
+  --accent-foreground: #fafafa;
+  --destructive: #dc2626;
+  --warning: #fcd452;
+  --success: #22c55e;
+  --border: #18372c;
+  --delegated-surface: rgba(40, 90, 72, 0.16);
+  --delegated-surface-hover: rgba(40, 90, 72, 0.26);
+  --delegated-border: rgba(40, 90, 72, 0.42);
+  --input: #323232;
+  --ring: #1e3a30;
+  --window-bezel:  #080a08;
+  --sidebar: #131713;
+  --sidebar-foreground: #fafafa;
+  --sidebar-primary: #285a48;
+  --sidebar-primary-foreground: #fafafa;
+  --sidebar-accent: #282828;
+  --sidebar-accent-foreground: #fafafa;
+  --sidebar-border: #1e1e1e;
+  --sidebar-ring: #285a48;
+  --crew-green-soft: #1e3a30;
+  --crew-mint: #7dd3a8;
+  --crew-header: rgba(17, 24, 18, .96);
+  --bubble-user-bg: #11201b;
+  --bubble-user-border: #285a48;
+  --bubble-user-fg: #d9f0e5;
+}
+
+body {
+  /* Shiki emits these variables directly. Keeping the aliases on body—the
+     scope where app and custom themes apply their overrides—makes existing
+     code spans recolor without re-tokenization. */
+  --syntax-foreground: var(--foreground);
+  --syntax-background: var(--muted);
+  --syntax-token-comment: var(--muted-foreground);
+  --syntax-token-string: color-mix(in srgb, var(--primary) 72%, var(--foreground));
+  --syntax-token-string-expression: color-mix(in srgb, var(--crew-green-bright) 74%, var(--foreground));
+  --syntax-token-constant: color-mix(in srgb, var(--warning) 72%, var(--foreground));
+  --syntax-token-keyword: color-mix(in srgb, var(--primary) 48%, var(--foreground));
+  --syntax-token-parameter: color-mix(in srgb, var(--foreground) 82%, var(--muted-foreground));
+  --syntax-token-function: color-mix(in srgb, var(--crew-green-bright) 70%, var(--foreground));
+  --syntax-token-punctuation: var(--muted-foreground);
+  --syntax-token-link: var(--crew-green-bright);
+  --syntax-token-inserted: var(--success);
+  --syntax-token-deleted: var(--destructive);
+  --syntax-token-changed: var(--warning);
+  --syntax-ansi-black: var(--background);
+  --syntax-ansi-red: var(--destructive);
+  --syntax-ansi-green: var(--success);
+  --syntax-ansi-yellow: var(--warning);
+  --syntax-ansi-blue: var(--primary);
+  --syntax-ansi-magenta: color-mix(in srgb, var(--primary) 45%, var(--destructive));
+  --syntax-ansi-cyan: var(--crew-green-bright);
+  --syntax-ansi-white: var(--foreground);
+  --syntax-ansi-bright-black: var(--muted-foreground);
+  --syntax-ansi-bright-red: var(--destructive);
+  --syntax-ansi-bright-green: var(--success);
+  --syntax-ansi-bright-yellow: var(--warning);
+  --syntax-ansi-bright-blue: color-mix(in srgb, var(--primary) 55%, var(--foreground));
+  --syntax-ansi-bright-magenta: color-mix(in srgb, var(--primary) 45%, var(--destructive));
+  --syntax-ansi-bright-cyan: var(--crew-green-bright);
+  --syntax-ansi-bright-white: var(--foreground);
+}
+
+/* ============================================================
+   Semantic type classes
+   Use these as class names; do not invent new ramp values.
+   ============================================================ */
+
+.cc-display {
+  font-family: var(--font-family-sans);
+  font-weight: 700;
+  font-size: 48px;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+}
+.cc-h1 {
+  font-family: var(--font-family-sans);
+  font-weight: 700;
+  font-size: 32px;
+  line-height: 1.15;
+  letter-spacing: -0.015em;
+}
+.cc-h2 {
+  font-family: var(--font-family-sans);
+  font-weight: 600;
+  font-size: 22px;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+.cc-h3 {
+  font-family: var(--font-family-sans);
+  font-weight: 600;
+  font-size: 16px;
+  line-height: 1.3;
+}
+.cc-body {
+  font-family: var(--font-family-sans);
+  font-weight: 400;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.cc-body-sm {
+  font-family: var(--font-family-sans);
+  font-weight: 400;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.cc-caption {
+  font-family: var(--font-family-sans);
+  font-weight: 500;
+  font-size: 11px;
+  line-height: 1.3;
+  letter-spacing: 0.02em;
+  color: var(--muted-foreground);
+}
+.cc-label {
+  font-family: var(--font-family-sans);
+  font-weight: 500;
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+/* Monospaced — the soul of the product. */
+.cc-mono {
+  font-family: var(--font-family-mono);
+  font-weight: 400;
+  font-size: 13px;
+  line-height: 1.5;
+  letter-spacing: 0;
+}
+.cc-mono-sm {
+  font-family: var(--font-family-mono);
+  font-weight: 400;
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+.cc-mono-label {
+  font-family: var(--font-family-mono);
+  font-weight: 500;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.cc-code-chip {
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  background: var(--muted);
+  color: var(--foreground);
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+
+/* Sensible defaults so cards without explicit classes still look right. */
+.cc-root {
+  font-family: var(--font-family-sans);
+  color: var(--foreground);
+  background: var(--background);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}

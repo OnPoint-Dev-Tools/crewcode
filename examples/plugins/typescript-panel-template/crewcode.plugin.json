@@ -1,0 +1,23 @@
+{
+  "$schema": "../../../schemas/crewcode.plugin.schema.json",
+  "id": "typescript-panel-template",
+  "name": "TypeScript Panel Template",
+  "version": "0.1.0",
+  "description": "Template plugin showing TypeScript source compiled to isolated CrewCode panel assets.",
+  "author": "CrewCode",
+  "crewcode": {
+    "apiVersion": "0.1"
+  },
+  "permissions": ["workspace:read"],
+  "contributes": {
+    "tabs": [
+      {
+        "id": "main",
+        "title": "TypeScript Plugin",
+        "icon": "code",
+        "entry": "compiled/src/panel.html",
+        "singleton": true
+      }
+    ]
+  }
+}

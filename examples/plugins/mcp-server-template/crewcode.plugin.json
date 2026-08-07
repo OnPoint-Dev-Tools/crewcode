@@ -1,0 +1,30 @@
+{
+  "$schema": "../../../schemas/crewcode.plugin.schema.json",
+  "id": "mcp-server-template",
+  "name": "MCP Server Template",
+  "version": "0.1.0",
+  "description": "Starter template for declaring a local MCP server contribution from a CrewCode plugin.",
+  "crewcode": { "apiVersion": "0.1" },
+  "permissions": ["mcp:server", "workspace:read"],
+  "contributes": {
+    "tabs": [
+      {
+        "id": "main",
+        "title": "MCP Template",
+        "icon": "terminal",
+        "entry": "panel.html",
+        "singleton": true
+      }
+    ],
+    "mcpServers": [
+      {
+        "id": "local-context",
+        "title": "Local Context MCP",
+        "command": "node",
+        "args": ["server.mjs"],
+        "category": "context",
+        "description": "Example stdio MCP server. Replace server.mjs with your tool implementation."
+      }
+    ]
+  }
+}

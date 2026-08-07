@@ -1,0 +1,44 @@
+{
+  "$schema": "../../../schemas/crewcode.plugin.schema.json",
+  "id": "static-panel-template",
+  "name": "Static Panel Template",
+  "version": "0.1.0",
+  "description": "Starter template for a sandboxed static HTML/CSS/JS plugin panel.",
+  "crewcode": { "apiVersion": "0.1" },
+  "permissions": ["workspace:read"],
+  "contributes": {
+    "tabs": [
+      {
+        "id": "main",
+        "title": "Static Panel",
+        "icon": "grid",
+        "entry": "panel.html",
+        "singleton": true
+      }
+    ],
+    "sidebarPanels": [
+      {
+        "id": "sidebar",
+        "title": "Static Panel",
+        "icon": "sidebar",
+        "entry": "panel.html"
+      }
+    ],
+    "commands": [
+      {
+        "id": "refresh",
+        "title": "Static Panel: Refresh Workspace Snapshot",
+        "icon": "refresh"
+      }
+    ],
+    "statusItems": [
+      {
+        "id": "status",
+        "title": "Static Panel Template",
+        "text": "plugin ready",
+        "icon": "plug",
+        "sidebarPanel": "sidebar"
+      }
+    ]
+  }
+}

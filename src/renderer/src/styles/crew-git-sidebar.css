@@ -1,0 +1,163 @@
+/* ============================================================
+   CrewCode · Crew Git Sidebar
+   ------------------------------------------------------------
+   Right-docked panel for merging isolated lane branches into
+   the crew's base branch. Same register as the crew surface:
+   hairline frame, #0c0f0c header tape, evergreen accent, mono
+   for branch names. No gradients, no glass.
+   ============================================================ */
+.crew-git-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.42);
+  display: flex;
+  justify-content: flex-end;
+  /* Above the titlebar (z 1500) which holds the window/system + mission-control
+     buttons, so the merge sidebar overlays them instead of being punched through. */
+  z-index: 1600;
+  animation: crew-git-fade 0.14s ease-out;
+}
+@keyframes crew-git-fade { from { opacity: 0; } to { opacity: 1; } }
+
+.crew-git-sidebar {
+  width: 360px;
+  max-width: 92vw;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--background);
+  color: var(--foreground);
+  border-left: 1px solid var(--border);
+  overflow: hidden;
+  animation: crew-git-slide 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+  --crs-accent: var(--crew-green);
+  --crs-accent-bright: var(--crew-green-bright);
+  --crs-accent-fg: var(--crew-mint);
+}
+@keyframes crew-git-slide { from { transform: translateX(18px); opacity: 0.4; } to { transform: translateX(0); opacity: 1; } }
+
+/* ---------- header ---------- */
+.crew-git-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: #0c0f0c;
+  border-bottom: 1px solid var(--border);
+}
+.crew-git-icon { color: var(--crs-accent-fg); display: flex; }
+.crew-git-title { display: flex; flex-direction: column; line-height: 1.2; flex: 1; min-width: 0; }
+.crew-git-title > span:first-child { font-size: 12px; font-weight: 600; }
+.crew-git-base { font-size: 11px; color: var(--crs-accent-fg); opacity: 0.8; }
+.crew-git-head-actions { display: flex; gap: 4px; align-items: center; }
+
+/* ---------- banner ---------- */
+.crew-git-banner {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  font-size: 11px;
+  font-family: var(--font-mono, monospace);
+  border-bottom: 1px solid var(--border);
+  background: var(--crew-green-soft);
+  color: var(--foreground);
+}
+.crew-git-banner.is-err  { background: rgba(140, 40, 40, 0.18); color: #f0b6b6; }
+.crew-git-banner.is-warn { background: rgba(150, 120, 40, 0.16); color: #e8d199; }
+.crew-git-banner > svg { animation: crew-git-spin 1s linear infinite; }
+@keyframes crew-git-spin { to { transform: rotate(360deg); } }
+
+/* ---------- conflicts ---------- */
+.crew-git-conflicts { border-bottom: 1px solid var(--border); padding: 8px 12px; }
+.crew-git-section-head {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; color: #e8d199; margin-bottom: 6px;
+}
+.crew-git-conflict-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.crew-git-conflict {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+.crew-git-conflict-path { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.crew-git-conflict-actions { display: flex; gap: 3px; flex-shrink: 0; }
+.crew-git-conflict-foot { display: flex; gap: 6px; margin-top: 8px; }
+
+/* ---------- lane list ---------- */
+.crew-git-lanes { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 8px; }
+.crew-git-lane {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.012);
+}
+.crew-git-lane-head { display: flex; align-items: baseline; gap: 8px; }
+.crew-git-lane-agent { font-size: 12px; font-weight: 600; }
+.crew-git-lane-role { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.55; }
+.crew-git-lane-branch { font-size: 11px; color: var(--crs-accent-fg); opacity: 0.85; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.crew-git-lane-status { font-size: 11px; }
+.crew-git-muted { opacity: 0.5; }
+.crew-git-err { color: #f0b6b6; display: inline-flex; align-items: center; gap: 4px; }
+.crew-git-pill {
+  display: inline-block; padding: 1px 7px; border-radius: 999px;
+  background: var(--crew-green-soft); color: var(--crs-accent-fg);
+  font-family: var(--font-mono, monospace); font-size: 10px;
+}
+
+.crew-git-warn {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 10.5px; color: #e8d199;
+  background: rgba(150, 120, 40, 0.1);
+  border: 1px solid rgba(150, 120, 40, 0.25);
+  border-radius: 3px; padding: 4px 7px;
+}
+.crew-git-warn > span { flex: 1; }
+
+/* ---------- actions ---------- */
+.crew-git-lane-actions { display: flex; gap: 6px; align-items: stretch; }
+.crew-git-merge {
+  flex: 1;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 6px 10px;
+  font-size: 11px; font-weight: 600;
+  background: var(--crs-accent);
+  color: #eafff2;
+  border: 1px solid var(--crs-accent-bright);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.crew-git-merge:hover:not(:disabled) { background: var(--crs-accent-bright); }
+.crew-git-merge:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.crew-git-discard {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 6px 9px;
+  background: transparent;
+  color: var(--foreground);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0.7;
+}
+.crew-git-discard:hover:not(:disabled) { border-color: #8c2828; color: #f0b6b6; opacity: 1; }
+.crew-git-discard:disabled { opacity: 0.3; cursor: not-allowed; }
+
+.crew-git-mini {
+  font-size: 10px;
+  padding: 2px 7px;
+  background: transparent;
+  color: var(--foreground);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: var(--font-mono, monospace);
+}
+.crew-git-mini:hover { border-color: var(--crs-accent-bright); color: var(--crs-accent-fg); }
+
+/* Light app theme: merge sidebar header follows panel tokens, not terminal black. */
+body.light .crew-git-head {
+  background: var(--popover);
+}

@@ -1,0 +1,13 @@
+{
+  "$schema": "../../../schemas/crewcode.plugin.schema.json",
+  "id": "browser-docs-grabber",
+  "name": "Browser Docs Grabber",
+  "version": "0.1.0",
+  "description": "Dogfoods explicit browser action contributions for docs context workflows.",
+  "crewcode": { "apiVersion": "0.1" },
+  "permissions": ["browser:read"],
+  "contributes": {
+    "sidebarPanels": [{ "id": "docs", "title": "Docs Grabber", "icon": "target", "entry": "panel.html" }],
+    "browserActions": [{ "id": "open-docs-grabber", "title": "Docs Grabber", "icon": "target", "sidebarPanel": "docs", "browserContext": "selection" }]
+  }
+}

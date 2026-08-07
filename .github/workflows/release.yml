@@ -1,0 +1,74 @@
+name: Release
+
+# Fires when `npm run release` pushes a v* tag. Each platform builds on its own
+# runner and uploads into the SAME draft GitHub Release (electron-builder keys
+# the release off the version), so a partial matrix failure never publishes a
+# half-complete update feed.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux
+            os: ubuntu-latest
+            targets: --linux AppImage deb
+          - name: windows
+            os: windows-latest
+            targets: --win nsis portable
+          - name: macos
+            os: macos-latest
+            targets: --mac dmg zip
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # xterm's peer range conflicts with the installed React major; this repo
+      # is installed with legacy peer resolution everywhere, CI included.
+      - name: Install
+        run: npm ci --legacy-peer-deps
+
+      # package.json sets npmRebuild:false, so node-pty is NOT rebuilt for
+      # Electron's ABI automatically. Without this the packaged app dies on
+      # first terminal spawn.
+      - name: Rebuild native modules for Electron
+        run: npm run rebuild
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      # A tag like v0.2.0-nightly.1 must land as a GitHub *prerelease*, because
+      # that is exactly what the app's nightly channel filters on
+      # (autoUpdater.allowPrerelease). A stable tag must not be flagged.
+      - name: Classify release
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then
+            echo "EP_PRE_RELEASE=true" >> "$GITHUB_ENV"
+          else
+            echo "EP_PRE_RELEASE=false" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build and publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npm run build && npx electron-builder ${{ matrix.targets }} --publish always

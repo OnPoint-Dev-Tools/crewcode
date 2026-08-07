@@ -1,0 +1,24 @@
+{
+  "$schema": "../../../schemas/crewcode.plugin.schema.json",
+  "id": "company-agent-http-adapter",
+  "name": "Company Agent HTTP Adapter",
+  "version": "0.1.0",
+  "description": "Template for companies to expose an internal coding agent over a CrewCode-brokered HTTP provider runtime.",
+  "crewcode": { "apiVersion": "0.1" },
+  "permissions": ["agent:provider", "network:fetch"],
+  "contributes": {
+    "tabs": [
+      { "id": "main", "title": "Company Agent HTTP", "icon": "bot", "entry": "panel.html", "singleton": true }
+    ],
+    "agentProviders": [
+      {
+        "id": "company-http",
+        "title": "Company HTTP Agent",
+        "runtime": "http",
+        "description": "POSTs prompts to a local/company-owned HTTP endpoint. Response may be plain text or JSON { text }.",
+        "endpoint": "http://localhost:8787/agent",
+        "models": ["company-default"]
+      }
+    ]
+  }
+}

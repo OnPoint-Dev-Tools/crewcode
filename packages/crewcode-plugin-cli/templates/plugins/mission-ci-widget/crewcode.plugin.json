@@ -1,0 +1,13 @@
+{
+  "$schema": "../../../schemas/crewcode.plugin.schema.json",
+  "id": "mission-ci-widget",
+  "name": "Mission CI Widget",
+  "version": "0.1.0",
+  "description": "Dogfoods mission-control widget contributions with display-only CI status.",
+  "crewcode": { "apiVersion": "0.1" },
+  "permissions": [],
+  "contributes": {
+    "sidebarPanels": [{ "id": "ci", "title": "CI Widget", "icon": "activity", "entry": "panel.html" }],
+    "missionWidgets": [{ "id": "ci-status", "title": "CI Status", "text": "ci: local checks", "icon": "activity", "sidebarPanel": "ci" }]
+  }
+}

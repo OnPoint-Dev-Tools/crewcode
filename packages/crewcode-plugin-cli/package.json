@@ -1,0 +1,40 @@
+{
+  "name": "crewcode-plugin-cli",
+  "version": "0.1.1",
+  "description": "Command-line tool for scaffolding, developing, and packaging CrewCode plugins.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "keywords": [
+    "crewcode",
+    "plugin",
+    "cli",
+    "scaffold",
+    "ade",
+    "ai-agents"
+  ],
+  "homepage": "https://github.com/OnPoint-Dev-Tools/crewcode/tree/main/packages/crewcode-plugin-cli#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/OnPoint-Dev-Tools/crewcode.git",
+    "directory": "packages/crewcode-plugin-cli"
+  },
+  "bugs": {
+    "url": "https://github.com/OnPoint-Dev-Tools/crewcode/issues"
+  },
+  "bin": {
+    "crewcode": "bin/crewcode.mjs"
+  },
+  "exports": {
+    ".": "./bin/crewcode.mjs"
+  },
+  "scripts": {
+    "test": "vitest run ../../src/main/crewcode-plugin-cli.test.ts",
+    "pack:dry": "npm pack --dry-run"
+  },
+  "files": [
+    "bin",
+    "templates",
+    "LICENSE",
+    "README.md"
+  ]
+}

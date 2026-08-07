@@ -1,0 +1,1392 @@
+/* ============================================================
+   CrewCode · Crew Config Panel
+   ------------------------------------------------------------
+   Carbon-fiber terminal register. Two-pane command center:
+   ┌──────────────────────────────────────────────────────┐
+   │ status tape · breadcrumb · base branch · close       │
+   ├───────────────┬──────────────────────────────────────┤
+   │ identity rail │ crew deck                            │
+   │ · name        │ · numbered lane slots                │
+   │ · mode        │ · agent palette                      │
+   │ · topology    │ · mcp toggles                        │
+   │ · templates   │                                      │
+   │ · guide       │                                      │
+   ├───────────────┴──────────────────────────────────────┤
+   │ > launch tape                       [cancel][launch] │
+   └──────────────────────────────────────────────────────┘
+   Extends colors_and_type.css. All borders are hairline.
+   No gradients, no glass, no emoji. Mono for system facts.
+   ============================================================ */
+
+/* ===== root surface ===== */
+.ccp {
+  /* fill whatever parent gives us; in the app this is the right pane */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-family-sans);
+  /* hairline frame even when full-bleed — reads as a "rack panel" */
+  border: 1px solid var(--border);
+  border-radius: 0;
+  overflow: hidden;
+  position: relative;
+  /* density knob — overwritten by .density-dense / .density-comfy */
+  --ccp-gap: 12px;
+  --ccp-pad: 16px;
+  --accent: var(--crew-green);
+  --accent-bright: var(--crew-green-bright);
+  --accent-soft: var(--crew-green-soft);
+  --accent-fg: var(--crew-mint);
+}
+.ccp.density-dense { --ccp-gap: 8px;  --ccp-pad: 12px; }
+.ccp.density-comfy { --ccp-gap: 16px; --ccp-pad: 22px; }
+
+/* faint repeating hairline scanline so the deck reads like a rack-mount
+   panel even at rest — 28px stride, ~3% alpha, never overpowers content */
+.ccp::before {
+  content: "";
+  position: absolute; inset: 0;
+  background:
+    repeating-linear-gradient(
+      0deg,
+      transparent 0,
+      transparent 27px,
+      rgba(125, 211, 168, 0.022) 27px,
+      rgba(125, 211, 168, 0.022) 28px
+    );
+  pointer-events: none;
+  z-index: 0;
+}
+.ccp > * { position: relative; z-index: 1; }
+
+/* ============================================================
+   header (status tape)
+   ============================================================ */
+.ccp-head {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--crew-term);
+  flex-shrink: 0;
+}
+.ccp-head-tag {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--font-family-mono);
+  font-size: 14.5px; letter-spacing: 0.14em;
+  color: var(--muted-foreground);
+  text-transform: uppercase;
+}
+.ccp-head-tag .dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent-bright);
+  box-shadow: 0 0 0 3px rgba(47, 157, 114, 0.18);
+  animation: ccp-pulse 1.6s ease-out infinite;
+}
+@keyframes ccp-pulse {
+  0%   { box-shadow: 0 0 0 0   rgba(47, 157, 114, 0.30); }
+  70%  { box-shadow: 0 0 0 7px rgba(47, 157, 114, 0); }
+  100% { box-shadow: 0 0 0 0   rgba(47, 157, 114, 0); }
+}
+.ccp-head-title {
+  font-family: var(--font-family-sans);
+  font-weight: 600; font-size: 13.5px;
+  letter-spacing: -0.005em;
+  color: var(--foreground);
+}
+.ccp-head-sub {
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+.ccp-head-spacer { flex: 1; }
+.ccp-head-branch {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+  color: var(--muted-foreground);
+  background: var(--card);
+}
+.ccp-head-branch svg { color: var(--accent-fg); opacity: 0.8; }
+.ccp-icon-btn {
+  width: 26px; height: 26px;
+  display: grid; place-items: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.ccp-icon-btn:hover { background: var(--accent); color: var(--foreground); }
+
+/* ============================================================
+   body: 2-pane (identity rail + crew deck)
+   ============================================================ */
+.ccp-body {
+  flex: 1; min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) 1fr;
+  overflow: hidden;
+}
+@media (max-width: 880px) {
+  .ccp-body { grid-template-columns: 1fr; }
+  .ccp-rail { border-right: 0; border-bottom: 1px solid var(--border); }
+}
+
+.ccp-rail {
+  border-right: 1px solid var(--border);
+  background: var(--sidebar);
+  overflow-y: auto;
+  display: flex; flex-direction: column;
+  padding: var(--ccp-pad);
+  gap: var(--ccp-gap);
+}
+.ccp-deck {
+  overflow-y: auto;
+  padding: var(--ccp-pad);
+  display: flex; flex-direction: column;
+  gap: var(--ccp-gap);
+}
+
+/* ============================================================
+   block primitives
+   ============================================================ */
+.ccp-block { display: flex; flex-direction: column; gap: 8px; }
+.ccp-block-head {
+  display: flex; align-items: center; gap: 8px;
+  font-family: var(--font-family-mono);
+  font-size: 10px; letter-spacing: 0.18em;
+  color: var(--muted-foreground);
+  text-transform: uppercase;
+}
+
+/* ---------- supervisor config ----------
+   Elevated from a plain block-head into a featured card: the supervisor is the
+   brain of the crew, so it reads as a distinct, toggleable control rather than
+   another section title. The whole card lights evergreen when it's on. */
+.ccp-sup {
+  gap: 0;
+  padding: 14px 15px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+  transition: border-color 0.16s, background 0.16s, box-shadow 0.16s;
+}
+/* .ccp-sup.is-on {
+  border-color: var(--accent);
+  background:
+    linear-gradient(180deg, rgba(40, 90, 72, 0.16), rgba(40, 90, 72, 0.02) 64%),
+    var(--card);
+  box-shadow: inset 0 0 0 1px rgba(40, 90, 72, 0.28), 0 6px 22px -14px rgba(40, 90, 72, 0.7);
+} */
+
+.ccp-sup-head { display: flex; align-items: center; gap: 12px; }
+.ccp-sup-ico {
+  width: 34px; height: 34px; flex-shrink: 0;
+  display: grid; place-items: center;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--background);
+  color: var(--muted-foreground);
+  transition: color 0.16s, border-color 0.16s, background 0.16s, box-shadow 0.16s;
+}
+.ccp-sup.is-on .ccp-sup-ico {
+  color: var(--crew-green-bright);
+  background: transparent;
+  box-shadow: 0 0 0 2px var(--ring);
+}
+
+.ccp-sup-titles { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ccp-sup-title {
+  font-family: var(--font-family-sans);
+  font-size: 14px; font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--foreground);
+  line-height: 1.1;
+}
+.ccp-sup-status {
+  font-family: var(--font-family-mono);
+  font-size: 10px; letter-spacing: 0.04em;
+  color: var(--muted-foreground);
+  transition: color 0.16s;
+}
+.ccp-sup.is-on .ccp-sup-status { color: var(--crew-green-bright); }
+
+/* on/off switch — track + sliding knob, accent when live */
+.ccp-switch {
+  margin-left: auto;
+  display: inline-flex; align-items: center; gap: 9px;
+  padding: 0; background: transparent; border: 0; cursor: pointer;
+  font-family: var(--font-family-mono);
+  font-size: 9.5px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--muted-foreground);
+  transition: color 0.16s;
+}
+.ccp-sup.is-on .ccp-switch-label { color: var(--crew-green-bright); }
+.ccp-switch-track {
+  width: 36px; height: 20px; flex-shrink: 0;
+  border-radius: 999px;
+  background: var(--background);
+  border: 1px solid var(--border);
+  position: relative;
+  transition: background 0.16s, border-color 0.16s;
+}
+.ccp-switch-knob {
+  position: absolute; top: 50%; left: 2px;
+  width: 14px; height: 14px; border-radius: 50%;
+  transform: translateY(-50%);
+  background: var(--muted-foreground);
+  transition: transform 0.18s cubic-bezier(0.22, 1, 0.36, 1), background 0.16s;
+}
+.ccp-switch:hover .ccp-switch-track { border-color: var(--ring); }
+.ccp-sup.is-on .ccp-switch-track { background: var(--accent); border-color: var(--ring); }
+.ccp-sup.is-on .ccp-switch-knob { transform: translate(16px, -50%); background: #fff; }
+
+.ccp-sup-note {
+  margin: 11px 0 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+.ccp-sup-row {
+  display: flex; gap: 18px; align-items: flex-end;
+  margin-top: 14px;
+  padding-top: 13px;
+  border-top: 1px solid var(--border);
+}
+.ccp-sup.is-on .ccp-sup-row { border-top-color: var(--crew-green-bright); }
+
+/* ---------- per-lane worker instructions ---------- */
+.ccp-block-head .count {
+  margin-left: auto;
+  font-family: var(--font-family-mono);
+  font-size: 10.5px;
+  color: var(--foreground);
+  opacity: 0.55;
+  letter-spacing: 0;
+}
+.ccp-block-head .hint {
+  margin-left: auto;
+  font-family: var(--font-family-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  color: var(--muted-foreground);
+  opacity: 0.55;
+  text-transform: none;
+}
+
+/* ============================================================
+   crew name
+   ============================================================ */
+.ccp-identity {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.ccp-identity-monogram {
+  width: 36px; height: 36px;
+  display: grid; place-items: center;
+  flex-shrink: 0;
+  border-radius: var(--radius-md);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  color: var(--accent-fg);
+  font-family: var(--font-family-mono);
+  font-size: 13px; font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.ccp-identity-fields { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.ccp-identity-input {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font-family: var(--font-family-sans);
+  font-size: 14px; font-weight: 600;
+  color: var(--foreground);
+  outline: none;
+  letter-spacing: -0.005em;
+}
+.ccp-identity-input::placeholder { color: var(--muted-foreground); opacity: 0.7; }
+.ccp-identity-meta {
+  font-family: var(--font-family-mono);
+  font-size: 10.5px;
+  color: var(--muted-foreground);
+  display: flex; align-items: center; gap: 6px;
+}
+.ccp-identity-meta .sep { color: var(--border); }
+
+/* ============================================================
+   mode toggle (compact, not big cards)
+   ============================================================ */
+.ccp-mode {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  padding: 4px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+.ccp-mode-opt {
+  position: relative;
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 9px 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--muted-foreground);
+  font-family: var(--font-family-sans);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.ccp-mode-opt:hover:not(:disabled):not(.is-active) {
+  background: rgba(125, 211, 168, 0.04);
+  color: var(--foreground);
+}
+.ccp-mode-opt:disabled { cursor: default; opacity: 0.5; }
+.ccp-mode-opt.is-active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--foreground);
+}
+.ccp-mode-opt-top {
+  display: flex; align-items: center; gap: 6px;
+  font-family: var(--font-family-mono);
+  font-size: 10px; letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.ccp-mode-opt-top .glyph {
+  width: 14px; height: 14px;
+  display: grid; place-items: center;
+  color: var(--accent-fg);
+  opacity: 0.4;
+}
+.ccp-mode-opt.is-active .glyph { opacity: 1; }
+.ccp-mode-opt-label {
+  font-size: 12.5px; font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--foreground);
+}
+.ccp-mode-opt-sub {
+  font-family: var(--font-family-mono);
+  font-size: 10.5px;
+  color: var(--muted-foreground);
+  line-height: 1.4;
+}
+
+/* ============================================================
+   topology preview (live SVG)
+   ============================================================ */
+.ccp-topo {
+  padding: 14px 12px 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  display: flex; flex-direction: column; gap: 8px;
+  position: relative;
+  overflow: hidden;
+}
+.ccp-topo-svg { width: 100%; height: 92px; display: block; }
+.ccp-topo-svg .base    { stroke: var(--muted-foreground); stroke-width: 1.5; fill: none; opacity: 0.55; }
+.ccp-topo-svg .fork    { stroke: var(--accent-bright); stroke-width: 1.5; fill: none; }
+.ccp-topo-svg .fork-bg { stroke: var(--accent); stroke-width: 4; fill: none; opacity: 0.22; }
+.ccp-topo-svg .node-base { fill: var(--card); stroke: var(--muted-foreground); stroke-width: 1.5; }
+.ccp-topo-svg .node-lane { fill: var(--accent-soft); stroke: var(--accent-bright); stroke-width: 1.5; }
+.ccp-topo-svg .node-lane.is-stale { stroke: var(--muted-foreground); fill: var(--card); }
+.ccp-topo-svg .lane-idx {
+  font-family: var(--font-family-mono);
+  font-size: 8.5px;
+  fill: var(--accent-fg);
+}
+.ccp-topo-svg .branch-label {
+  font-family: var(--font-family-mono);
+  font-size: 8.5px;
+  fill: var(--muted-foreground);
+}
+.ccp-topo-legend {
+  display: flex; justify-content: space-between; align-items: center;
+  font-family: var(--font-family-mono);
+  font-size: 10px;
+  color: var(--muted-foreground);
+  letter-spacing: 0.06em;
+}
+.ccp-topo-legend .left  { color: var(--accent-fg); }
+
+/* ============================================================
+   templates (chip strip)
+   ============================================================ */
+.ccp-templates {
+  display: flex; flex-direction: column; gap: 6px;
+}
+.ccp-template-chip {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  text-align: left;
+  font-family: var(--font-family-sans);
+  color: var(--foreground);
+  transition: border-color 0.12s, background 0.12s;
+}
+.ccp-template-chip:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: inset 2px 0 0 var(--accent-bright);
+}
+.ccp-template-chip-name {
+  font-size: 12px; font-weight: 600;
+  flex-shrink: 0;
+}
+.ccp-template-chip-mode {
+  font-family: var(--font-family-mono);
+  font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase;
+  padding: 2px 5px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  color: var(--muted-foreground);
+}
+.ccp-template-chip-mode.is-isolated { color: var(--accent-fg); border-color: var(--accent); }
+.ccp-template-chip-mode.is-shared   { color: var(--warning); border-color: rgba(252,212,82,.3); }
+.ccp-template-chip-sum {
+  flex: 1; min-width: 0;
+  font-family: var(--font-family-mono);
+  font-size: 10px;
+  color: var(--muted-foreground);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ccp-template-chip-rm {
+  width: 22px; height: 22px;
+  display: grid; place-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.ccp-template-chip-rm:hover { color: var(--destructive); background: rgba(220,38,38,0.08); }
+.ccp-templates-empty {
+  font-family: var(--font-family-mono);
+  font-size: 10.5px;
+  color: var(--muted-foreground);
+  padding: 8px 2px;
+  line-height: 1.5;
+}
+
+/* ============================================================
+   decision guide (collapsible)
+   ============================================================ */
+.ccp-guide {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--card);
+}
+.ccp-guide-toggle {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%;
+  padding: 9px 11px;
+  background: transparent;
+  border: 0;
+  color: var(--accent-fg);
+  font-family: var(--font-family-mono);
+  font-size: 10.5px; letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.ccp-guide-toggle:hover { background: rgba(125,211,168,0.04); }
+.ccp-guide-toggle-label { flex: 1; text-align: left; }
+.ccp-guide-body {
+  border-top: 1px solid var(--border);
+  padding: 8px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.ccp-shape {
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 7px 8px;
+  cursor: pointer;
+  display: flex; flex-direction: column; gap: 3px;
+  transition: background 0.12s, border-color 0.12s;
+}
+.ccp-shape:hover { background: rgba(125,211,168,0.04); border-color: var(--border); }
+.ccp-shape.is-selected {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.ccp-shape-row {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11.5px;
+  color: var(--foreground);
+}
+.ccp-shape-tag {
+  font-family: var(--font-family-mono);
+  font-size: 8.5px; letter-spacing: 0.1em; text-transform: uppercase;
+  padding: 1px 5px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  margin-left: auto;
+  white-space: nowrap;
+}
+.ccp-shape-tag.is-isolated { color: var(--accent-fg); border-color: var(--accent); }
+.ccp-shape-tag.is-shared   { color: var(--warning); border-color: rgba(252,212,82,.3); }
+.ccp-shape-rationale {
+  font-family: var(--font-family-mono);
+  font-size: 9.5px;
+  color: var(--muted-foreground);
+  line-height: 1.4;
+}
+
+/* ============================================================
+   crew deck — lane slots
+   ============================================================ */
+.ccp-lanes {
+  display: flex; flex-direction: column;
+  gap: 8px;
+}
+.ccp-lanes-empty {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 22px 14px;
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-md);
+  /* background: rgba(125,211,168,0.02); */
+}
+.ccp-lanes-empty-title {
+  font-family: var(--font-family-mono);
+  font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--crew-green-bright);
+}
+.ccp-lanes-empty-sub {
+  font-size: 12px; color: var(--muted-foreground);
+}
+
+/* one lane = a horizontal "rack slot" */
+.ccp-lane {
+  position: relative;
+  display: grid;
+  grid-template-columns: 36px 1fr;
+  gap: 0;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  overflow: visible;
+  transition: border-color 0.12s, background 0.12s;
+}
+.ccp-lane:hover { border-color: var(--border); }
+.ccp-lane.is-stale { border-color: rgba(252,212,82,0.45); }
+/* A lane with an open dropdown must outrank the lanes below it — they paint
+   later in DOM order and would otherwise cover the menu as it drops down.
+   z-index (not transform) keeps the fixed model picker correctly anchored. */
+.ccp-lane:has(.ccp-select.open) { z-index: 5; }
+
+/* numbered slot — flush left "rack number" */
+.ccp-lane-slot {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 4px;
+  background: var(--crew-term);
+  border-right: 1px solid var(--border);
+  padding: 8px 0;
+  position: relative;
+}
+.ccp-lane-slot::before {
+  /* tiny diode dot at the top — "rack live" affordance */
+  content: "";
+  position: absolute; top: 6px; left: 50%;
+  width: 3px; height: 3px; border-radius: 50%;
+  transform: translateX(-50%);
+  background: var(--accent-bright);
+  opacity: 0.6;
+}
+.ccp-lane-slot-num {
+  font-family: var(--font-family-mono);
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--accent-fg);
+  letter-spacing: 0.04em;
+  line-height: 1;
+}
+.ccp-lane-slot-tag {
+  font-family: var(--font-family-mono);
+  font-size: 8px; letter-spacing: 0.12em;
+  color: var(--muted-foreground);
+  text-transform: uppercase;
+}
+
+.ccp-lane-body {
+  display: flex; flex-direction: column;
+  padding: 10px 12px;
+  gap: 8px;
+  min-width: 0;
+}
+.ccp-lane-top { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ccp-lane-agent {
+  display: flex; align-items: center; gap: 8px;
+  flex: 1; min-width: 0;
+}
+.ccp-lane-slot { border-radius: var(--radius-md) 0 0 var(--radius-md); }
+.ccp-lane-agent-ico {
+  width: 24px; height: 24px;
+  display: grid; place-items: center;
+  flex-shrink: 0;
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.ccp-lane-agent-ico img { width: 14px; height: 14px; object-fit: contain; }
+
+/* compact CrewCode dropdown */
+.ccp-select-wrap { position: relative; min-width: 0; width: 190px; max-width: 100%; }
+.ccp-lane-agent .ccp-select-wrap:first-of-type { flex: 0 1 178px; width: 178px; max-width: 42%; }
+.ccp-lane-agent .ccp-select-wrap:nth-of-type(2) { flex: 0 0 96px; width: 96px; }
+.ccp-lane-meta-cell .ccp-select-wrap { width: 180px; }
+.ccp-select {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+  color: var(--foreground);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 7px;
+  font-family: var(--font-family-sans);
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background-color 0.12s, border-color 0.12s;
+  max-width: 100%;
+  min-width: 0;
+  text-align: left;
+}
+.ccp-select:hover:not(:disabled),
+.ccp-select.open { background-color: rgba(125,211,168,0.05); border-color: var(--accent); }
+.ccp-select:focus { outline: none; border-color: var(--accent); background-color: rgba(125,211,168,0.05); }
+.ccp-select:disabled { color: var(--muted-foreground); cursor: not-allowed; opacity: 0.65; }
+.ccp-select svg { flex-shrink: 0; color: var(--muted-foreground); transition: transform 0.12s; }
+.ccp-select.open svg { transform: rotate(180deg); }
+.ccp-select-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ccp-select-menu {
+  position: absolute;
+  z-index: 90;
+  top: calc(100% + 5px);
+  left: 0;
+  min-width: 180px;
+  width: max-content;
+  max-width: min(320px, calc(100vw - 32px));
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--card);
+}
+.ccp-select-option {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  padding: 7px 9px;
+  background: transparent;
+  color: var(--foreground);
+  cursor: pointer;
+  text-align: left;
+}
+.ccp-select-option:hover:not(:disabled), .ccp-select-option.on { background: rgba(125,211,168,0.08); }
+.ccp-select-option:disabled { opacity: 0.55; cursor: not-allowed; }
+.ccp-select-option-copy { flex: 1; min-width: 0; display: grid; gap: 2px; }
+.ccp-select-option-copy > span { font: 600 12px var(--font-family-sans); white-space: nowrap; }
+.ccp-select-option-copy small { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 10px var(--font-family-mono); color: var(--muted-foreground); }
+.ccp-select-option svg { color: var(--accent); }
+/* leading per-option icon — muted by default, accent on the active row. */
+.ccp-select-option-ico { display: grid; place-items: center; width: 16px; height: 16px; flex-shrink: 0; }
+.ccp-select-option-ico svg { color: var(--muted-foreground); }
+.ccp-select-option.on .ccp-select-option-ico svg { color: var(--accent); }
+.ccp-select-option-ico img { width: 14px; height: 14px; object-fit: contain; }
+
+.ccp-lane-agent-name { font-weight: 600; font-size: 13px; }
+.ccp-lane-role { font-family: var(--font-family-mono); font-size: 10.5px; color: var(--muted-foreground); }
+
+.ccp-lane-rm {
+  width: 24px; height: 24px;
+  display: grid; place-items: center;
+  margin-left: auto;
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: color 0.12s, background 0.12s, border-color 0.12s;
+}
+.ccp-lane-rm:hover { color: var(--destructive); border-color: rgba(220,38,38,0.35); background: rgba(220,38,38,0.08); }
+
+/* lane meta row (model · effort · branch) */
+.ccp-lane-meta {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+}
+@media (max-width: 720px) {
+  .ccp-lane-meta { grid-template-columns: 1fr; }
+}
+.ccp-lane-meta-cell {
+  display: flex; align-items: center; gap: 8px;
+  min-width: 0;
+}
+.ccp-lane-meta-label {
+  font-family: var(--font-family-mono);
+  font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--muted-foreground);
+  flex-shrink: 0;
+}
+.ccp-lane-model {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: #0c0f0c;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+  color: var(--foreground);
+  cursor: pointer;
+  max-width: 100%;
+  min-width: 0;
+  transition: border-color 0.12s, background 0.12s;
+}
+.ccp-lane-model:hover { border-color: var(--accent); background: rgba(125,211,168,0.04); }
+.ccp-lane-model-id { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ccp-lane-model-caret { color: var(--muted-foreground); opacity: 0.7; flex-shrink: 0; }
+
+/* effort fader — 3 stops, segmented bar */
+.ccp-effort {
+  display: inline-flex; align-items: center;
+  background: var(--crew-term);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 2px;
+  gap: 2px;
+}
+.ccp-effort-seg {
+  width: 22px; height: 16px;
+  display: grid; place-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 3px;
+  color: var(--muted-foreground);
+  font-family: var(--font-family-mono);
+  font-size: 9px; letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+.ccp-effort-seg:hover { color: var(--foreground); }
+.ccp-effort-seg.is-active {
+  background: var(--accent-soft);
+  color: var(--accent-fg);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.ccp-effort-bar {
+  width: 28px; height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  position: relative;
+  overflow: hidden;
+}
+.ccp-effort-bar > i {
+  display: block; height: 100%;
+  background: var(--accent-bright);
+  transition: width 0.16s ease-out;
+}
+
+.ccp-lane-branch {
+  flex: 1; min-width: 0;
+  text-align: right;
+  font-family: var(--font-family-mono);
+  font-size: 10.5px;
+  color: var(--muted-foreground);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ccp-lane-branch::before {
+  content: "↳ ";
+  color: var(--accent-fg);
+  opacity: 0.6;
+}
+
+/* stale-agent badge */
+.ccp-lane-stale {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-family: var(--font-family-mono);
+  font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: var(--radius-pill);
+  border: 1px solid rgba(252,212,82,0.4);
+  color: var(--warning);
+  background: rgba(252,212,82,0.06);
+}
+
+/* ============================================================
+   agent palette (click-to-add chips)
+   ============================================================ */
+.ccp-palette {
+  display: flex; flex-wrap: wrap; gap: 6px;
+}
+.ccp-palette-chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 6px 10px 6px 7px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  color: var(--foreground);
+  font-family: var(--font-family-sans);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s, transform 0.12s;
+}
+.ccp-palette-chip:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.ccp-palette-chip:active:not(:disabled) { transform: scale(0.98); }
+.ccp-palette-chip:disabled { opacity: 0.4; cursor: not-allowed; }
+.ccp-palette-chip-ico {
+  width: 18px; height: 18px;
+  display: grid; place-items: center;
+  background: #0c0f0c;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.ccp-palette-chip-ico img { width: 12px; height: 12px; object-fit: contain; }
+.ccp-palette-chip .plus {
+  color: var(--accent-fg);
+  opacity: 0.7;
+  margin-left: 2px;
+}
+.ccp-palette-chip-count {
+  font-family: var(--font-family-mono);
+  font-size: 9.5px;
+  color: var(--muted-foreground);
+  margin-left: 2px;
+  letter-spacing: 0.04em;
+}
+
+.ccp-palette-disabled-note {
+  font-family: var(--font-family-mono);
+  font-size: 10px;
+  color: var(--warning);
+  padding: 4px 0 0;
+}
+
+/* ============================================================
+   MCP servers (toggle grid)
+   ============================================================ */
+.ccp-mcp {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 6px;
+}
+.ccp-mcp-srv {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.12s, background 0.12s;
+}
+.ccp-mcp-srv:hover { border-color: rgba(125,211,168,0.35); }
+.ccp-mcp-srv.is-on {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+.ccp-mcp-check {
+  width: 14px; height: 14px;
+  display: grid; place-items: center;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  background: #0c0f0c;
+  flex-shrink: 0;
+  color: var(--accent-fg);
+}
+.ccp-mcp-srv.is-on .ccp-mcp-check {
+  background: var(--accent-bright);
+  border-color: var(--accent-bright);
+  color: #0c0f0c;
+}
+.ccp-mcp-name {
+  font-family: var(--font-family-mono);
+  font-size: 11.5px;
+  color: var(--foreground);
+  font-weight: 500;
+}
+.ccp-mcp-tag {
+  margin-left: auto;
+  font-family: var(--font-family-mono);
+  font-size: 9px; letter-spacing: 0.1em;
+  color: var(--muted-foreground);
+  text-transform: uppercase;
+}
+.ccp-mcp-srv.is-on .ccp-mcp-tag { color: var(--accent-fg); }
+
+/* ============================================================
+   warnings (tradeoffs)
+   ============================================================ */
+.ccp-warnings {
+  display: flex; flex-direction: column; gap: 6px;
+  margin-top: 4px;
+}
+.ccp-warning {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 8px 10px;
+  background: rgba(252, 212, 82, 0.06);
+  border: 1px solid rgba(252, 212, 82, 0.25);
+  border-radius: var(--radius-md);
+  font-size: 11.5px; line-height: 1.45;
+  color: var(--warning);
+}
+.ccp-warning svg { flex-shrink: 0; margin-top: 1px; }
+
+/* ============================================================
+   footer (terminal launch tape)
+   ============================================================ */
+.ccp-foot {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--border);
+  background: var(--crew-term);
+  flex-shrink: 0;
+  font-family: var(--font-family-mono);
+}
+.ccp-foot-prompt {
+  flex: 1; min-width: 0;
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ccp-foot-prompt .caret {
+  color: var(--accent-bright);
+  font-weight: 600;
+}
+.ccp-foot-prompt .cmd {
+  color: var(--foreground);
+}
+.ccp-foot-prompt .blink {
+  display: inline-block;
+  width: 7px; height: 12px;
+  background: var(--accent-bright);
+  vertical-align: -2px;
+  animation: ccp-blink 1.05s steps(2, end) infinite;
+}
+@keyframes ccp-blink { 50% { opacity: 0; } }
+
+.ccp-foot-actions {
+  display: flex; align-items: center; gap: 6px;
+  flex-shrink: 0;
+}
+.ccp-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 30px;
+  padding: 0 12px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--muted-foreground);
+  font-family: var(--font-family-sans);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+}
+.ccp-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--foreground); }
+.ccp-btn-warn { color: var(--warning); border-color: rgba(252,212,82,0.3); }
+.ccp-btn-warn:hover:not(:disabled) {
+  background: rgba(252,212,82,0.08);
+  border-color: var(--warning);
+}
+.ccp-btn-go {
+  background: var(--accent);
+  border-color: var(--accent-bright);
+  color: #fff;
+  font-weight: 600;
+  padding: 0 14px;
+  height: 30px;
+}
+.ccp-btn-go:hover:not(:disabled) { background: var(--accent-bright); }
+.ccp-btn-go:disabled { opacity: 0.4; cursor: not-allowed; }
+.ccp-btn-kbd {
+  margin-left: 4px;
+  display: inline-flex; align-items: center; gap: 2px;
+  font-family: var(--font-family-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  color: rgba(255,255,255,0.65);
+  border: 1px solid rgba(255,255,255,0.2);
+  border-radius: 3px;
+  padding: 0 4px;
+  height: 14px;
+  line-height: 14px;
+}
+
+/* ============================================================
+   scrollbar (rail + deck) — terminal feel
+   ============================================================ */
+.ccp-rail::-webkit-scrollbar,
+.ccp-deck::-webkit-scrollbar { width: 8px; }
+.ccp-rail::-webkit-scrollbar-track,
+.ccp-deck::-webkit-scrollbar-track { background: transparent; }
+.ccp-rail::-webkit-scrollbar-thumb,
+.ccp-deck::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 4px;
+}
+.ccp-rail::-webkit-scrollbar-thumb:hover,
+.ccp-deck::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+
+/* ============================================================
+   editing-mode tint — the panel reopens over a launched crew
+   ============================================================ */
+.ccp.is-editing .ccp-head { background: linear-gradient(180deg, rgba(252,212,82,0.04), transparent); }
+.ccp.is-editing .ccp-head-tag .dot {
+  background: var(--warning);
+  box-shadow: 0 0 0 3px rgba(252,212,82,0.18);
+}
+
+/* lane enter animation — staggered fade-in on first paint.
+   `to` must end on `transform: none`, not `translateY(0)`: with fill-mode
+   `both` the end transform sticks, and any non-none transform turns .ccp-lane
+   into the containing block for its position:fixed model picker, mis-anchoring
+   and clipping it inside .ccp's overflow:hidden. `none` looks identical but
+   keeps the picker anchored to the viewport. */
+@keyframes ccp-lane-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: none; }
+}
+.ccp-lane {
+  animation: ccp-lane-in 0.18s ease-out both;
+  animation-delay: calc(var(--lane-i, 0) * 35ms);
+}
+
+/* ============================================================
+   crew confirm dialog (CrewConfirmDialog) — centered modal over
+   the whole window, same register as the config panel.
+   ============================================================ */
+.crew-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  /* Above the titlebar (z 1500) that holds the window/system + mission-control
+     buttons, so the cross-lane diff and confirm dialogs overlay them. */
+  z-index: 1600;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(8, 11, 8, 0.6);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  animation: crew-modal-fade 0.14s ease-out;
+}
+@keyframes crew-modal-fade { from { opacity: 0; } to { opacity: 1; } }
+
+.crew-modal {
+  width: min(460px, 92vw);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+  animation: crew-modal-pop 0.16s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes crew-modal-pop {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to   { opacity: 1; transform: none; }
+}
+
+.crew-modal-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--border);
+  background: #0c0f0c;
+}
+.crew-modal-icon {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  border-radius: var(--radius-sm);
+  background: var(--crew-green-soft);
+  border: 1px solid var(--crew-green);
+  color: var(--crew-mint);
+}
+.crew-modal.is-destructive .crew-modal-icon {
+  background: rgba(220, 38, 38, 0.1);
+  border-color: rgba(220, 38, 38, 0.4);
+  color: #f06a5a;
+}
+.crew-modal-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  color: var(--foreground);
+}
+
+.crew-modal-body {
+  padding: 16px;
+  overflow-y: auto;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+.crew-modal-body strong,
+.crew-modal-body b { color: var(--foreground); }
+
+/* rebuild summary — one bulleted consequence per row */
+.crew-confirm-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.crew-confirm-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.crew-confirm-bullet {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  font-size: 11px;
+  line-height: 1;
+}
+.crew-confirm-bullet.stop  { color: var(--warning); border-color: rgba(252, 212, 82, 0.3); background: rgba(252, 212, 82, 0.08); }
+.crew-confirm-bullet.rm    { color: #f06a5a; border-color: rgba(220, 38, 38, 0.35); background: rgba(220, 38, 38, 0.08); }
+.crew-confirm-bullet.clear { color: var(--muted-foreground); }
+.crew-confirm-bullet.keep  { color: var(--crew-mint); border-color: var(--crew-green); background: var(--crew-green-soft); }
+
+.crew-modal-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  background: #0c0f0c;
+}
+
+/* primary / destructive confirm buttons — sibling to .crew-btn-ghost
+   (defined in crew-surface.css). */
+.crew-btn-go {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 14px;
+  background: var(--crew-green);
+  border: 1px solid var(--crew-green-bright);
+  border-radius: var(--radius-sm);
+  color: #fff;
+  font-family: var(--font-family-sans);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s;
+}
+.crew-btn-go:hover { background: var(--crew-green-bright); }
+.crew-btn-destructive {
+  background: var(--destructive);
+  border-color: #e0644f;
+}
+.crew-btn-destructive:hover { background: #e0644f; }
+
+/* ── Agent role modal ─────────────────────────────────────────────────────── */
+.crew-role-modal { width: min(660px, 94vw); }
+
+.crew-role-modal-body {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  min-height: 320px;
+  max-height: 60vh;
+  overflow: hidden;
+}
+
+.crew-role-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+  background: #0c0f0c;
+}
+.crew-role-new {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  margin-bottom: 6px;
+  background: var(--crew-green-soft);
+  border: 1px solid var(--crew-green);
+  border-radius: var(--radius-sm);
+  color: var(--crew-mint);
+  font-family: var(--font-family-mono);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+.crew-role-new:hover { background: var(--crew-green); color: #fff; }
+.crew-role-empty {
+  margin: 8px 2px;
+  font-size: 11.5px;
+  color: var(--muted-foreground);
+  font-family: var(--font-family-mono);
+}
+.crew-role-row {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  border-radius: var(--radius-sm);
+}
+.crew-role-row.on { background: var(--crew-green-soft); }
+.crew-role-pick {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 6px 8px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.crew-role-row.on .crew-role-pick { border-color: var(--crew-green); }
+.crew-role-pick:hover { background: rgba(255, 255, 255, 0.03); }
+.crew-role-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.crew-role-desc {
+  font-size: 10.5px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.crew-role-del {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--muted-foreground);
+  cursor: pointer;
+}
+.crew-role-del:hover { color: #f06a5a; background: rgba(220, 38, 38, 0.08); }
+
+.crew-role-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  overflow-y: auto;
+}
+.crew-role-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.crew-role-field > span {
+  font-family: var(--font-family-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+  color: var(--muted-foreground);
+}
+.crew-role-field input,
+.crew-role-field textarea {
+  width: 100%;
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--foreground);
+  font-family: var(--font-family-sans);
+  font-size: 12.5px;
+  line-height: 1.45;
+  padding: 8px 10px;
+  outline: none;
+}
+.crew-role-field textarea { resize: vertical; min-height: 96px; }
+.crew-role-field input:focus,
+.crew-role-field textarea:focus { border-color: var(--accent); }
+.crew-role-field input::placeholder,
+.crew-role-field textarea::placeholder { color: var(--muted-foreground); opacity: 0.7; }
+
+.crew-btn-go:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* Carbon Fiber in light app theme keeps the evergreen accents, but panel chrome
+   must follow light tokens rather than the dark terminal rack backgrounds. */
+body.light .ccp-head,
+body.light .ccp-rail,
+body.light .ccp-sup-ico,
+body.light .ccp-switch-track,
+body.light .ccp-lane-agent-ico,
+body.light .ccp-lane-model,
+body.light .ccp-empty-glyph,
+body.light .crew-role-modal,
+body.light .crew-role-rail {
+  background: var(--popover);
+}
+
+body.light .ccp-select-menu,
+body.light .crew-confirm-card,
+body.light .crew-role-form {
+  background: var(--popover);
+}
+
+body.light .ccp-select:hover:not(:disabled),
+body.light .ccp-select.open,
+body.light .ccp-select:focus,
+body.light .ccp-select-option:hover:not(:disabled),
+body.light .ccp-select-option.on,
+body.light .ccp-template-chip,
+body.light .ccp-shape:hover,
+body.light .ccp-shape.is-selected,
+body.light .ccp-lane-model:hover,
+body.light .crew-role-row.on,
+body.light .crew-role-pick:hover {
+  background: color-mix(in srgb, var(--primary) 10%, var(--popover));
+}

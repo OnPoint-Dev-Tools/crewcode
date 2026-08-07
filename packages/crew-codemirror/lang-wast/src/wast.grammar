@@ -1,0 +1,53 @@
+@skip { whitespace | LineComment | BlockComment }
+
+@top Module { expression* }
+
+expression[@isGroup=Expression] {
+  App { "(" expression* ")" } |
+  Identifier |
+  Type |
+  Keyword |
+  Number |
+  String
+}
+
+Type {
+  @specialize<Keyword,
+    "anyref" | "dataref" | "eqref" | "externref" | "i31ref" | "funcref" |
+    "i8" | "i16" | "i32" | "i64" | "f32" | "f64"
+  >
+}
+
+@tokens {
+  idChar { $[0-9A-Za-z!#$%&'*+\-./:<=>?@\^_`|~] }
+
+  Keyword { $[a-z] idChar* }
+
+  Identifier { "$" idChar+ }
+
+  digit { $[0-9] }
+  digits { digit ("_"? digit)* }
+  hexDigit { $[0-9a-fA-F] }
+  hexDigits { hexDigit ("_"? hexDigit)* }
+
+  Number {
+    $[+-]? (
+      digits ("." digits?)? ($[eE] $[+-]? digits)? |
+      "0x" hexDigits ("." hexDigits?)? ($[pP] $[+-]? hexDigits)?
+    )
+  }
+
+  String[isolate] { '"' (!["\\] | "\\" _)* '"' }
+
+  LineComment[isolate] { ";;" ![\n]* }
+
+  blockCommentRest { ![;] blockCommentRest | ";" blockCommentSemi }
+  blockCommentSemi { ![);] blockCommentRest | ";" blockCommentSemi | ")" }
+  BlockComment[isolate] { "(;" blockCommentRest }
+
+  whitespace { $[ \n\r\t] }
+
+  "(" ")"
+}
+
+@detectDelim
