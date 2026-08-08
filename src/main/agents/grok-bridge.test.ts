@@ -14,6 +14,8 @@ import {
   grokPermissionMode,
   grokPermissionOptions,
   grokReasoningEffort,
+  grokRequestErrorMessage,
+  grokStderrMessage,
   grokSelectedOption,
   grokSpawnArgs,
   grokToolBlocked,
@@ -497,6 +499,7 @@ describe('grok bridge vendor notification channel', () => {
     // Usage appears ONLY on this channel while streaming; a standard-only ACP
     // client renders a dead context meter.
     const { harness, events } = await startBridge('build')
+    await harness.bridge.prompt('go')
     harness.notify('session/update', {
       sessionId: 'grok-session-1',
       update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'hi' } },
@@ -525,6 +528,7 @@ describe('grok bridge vendor notification channel', () => {
 describe('grok bridge read-only tool gate', () => {
   it('blocks a mutating tool announcement in ask mode', async () => {
     const { harness, events } = await startBridge('ask')
+    await harness.bridge.prompt('go')
     harness.notify('session/update', {
       sessionId: 'grok-session-1',
       update: {
@@ -541,6 +545,7 @@ describe('grok bridge read-only tool gate', () => {
 
   it('allows a read-only tool in ask mode', async () => {
     const { harness, events } = await startBridge('ask')
+    await harness.bridge.prompt('go')
     harness.notify('session/update', {
       sessionId: 'grok-session-1',
       update: {
@@ -552,6 +557,63 @@ describe('grok bridge read-only tool gate', () => {
     })
     await settle()
     expect(events.some(event => event.type === 'tool_start')).toBe(true)
+  })
+})
+
+describe('grok bridge failure reporting', () => {
+  // Captured verbatim from `grok agent stdio` 1.0.0 against an exhausted free
+  // quota. Grok answers session/prompt with a JSON-RPC error whose `message`
+  // is useless and whose `data` holds the entire actionable explanation.
+  const REAL_RATE_LIMIT_ERROR = {
+    code: -32003,
+    message: 'Rate limited',
+    data: 'API error (status 429 Too Many Requests): subscription:free-usage-exhausted: You\'ve used all the included free usage for model grok-4.5 for now. Usage resets over a rolling 24-hour window — tokens (actual/limit): 513300/500000. Upgrade to a Grok subscription for higher limits: https://grok.com/supergrok',
+  }
+
+  it('reports the quota detail, not just "Rate limited"', () => {
+    const message = grokRequestErrorMessage('session/prompt', REAL_RATE_LIMIT_ERROR)
+    expect(message).toContain('free-usage-exhausted')
+    expect(message).toContain('513300/500000')
+    expect(message).toContain('https://grok.com/supergrok')
+  })
+
+  it('does not repeat the summary when data already restates it', () => {
+    expect(grokRequestErrorMessage('session/prompt', { message: 'Rate limited', data: 'Rate limited: slow down' }))
+      .toBe('session/prompt: Rate limited: slow down')
+    expect(grokRequestErrorMessage('session/new', { message: 'boom' })).toBe('session/new: boom')
+  })
+
+  it('surfaces the prompt failure as an error event', async () => {
+    const { harness, events } = await startBridge('build')
+    await harness.bridge.prompt('hi')
+    const promptRequest = harness.sent.find(message => message.method === 'session/prompt')
+    harness.proc.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: promptRequest?.id, error: REAL_RATE_LIMIT_ERROR })}\n`)
+    await settle(); await settle()
+
+    const error = events.find(event => event.type === 'error')
+    expect(error && 'message' in error ? error.message : '').toContain('free-usage-exhausted')
+    // The turn must still end, or the composer stays stuck on "working".
+    expect(events.filter(event => event.type === 'turn_end')).toHaveLength(1)
+    expect(await harness.bridge.prompt('again')).toEqual({ ok: true })
+  })
+
+  it('strips tracing noise and ANSI from stderr', () => {
+    const raw = '[2m2026-08-07T20:52:30.333496Z[0m [31mERROR[0m responses API error [3mstatus[0m[2m=[0m429 Too Many Requests'
+    const message = grokStderrMessage(raw)
+    expect(message).toBe('responses API error status=429 Too Many Requests')
+    expect(message).not.toContain('')
+    expect(grokStderrMessage('  Shell cwd was reset to /repo  ')).toBeNull()
+    expect(grokStderrMessage('   ')).toBeNull()
+  })
+
+  it('collapses the identical error grok logs once per retry attempt', async () => {
+    const { harness, events } = await startBridge('build')
+    const line = '[31mERROR[0m Rate limited: free-usage-exhausted\n'
+    harness.proc.stderr.write(line)
+    harness.proc.stderr.write(line)
+    harness.proc.stderr.write(line)
+    await settle()
+    expect(events.filter(event => event.type === 'error')).toHaveLength(1)
   })
 })
 
@@ -585,6 +647,37 @@ describe('grok bridge out-of-turn updates', () => {
     const bridge = harness.bridge
     const result = await bridge.prompt('hello')
     expect(result).toEqual({ ok: true })
+  })
+
+  it('ignores turn content flushed after the prompt already returned', async () => {
+    // Grok keeps pushing updates after it answers session/prompt. Those used
+    // to open a second turn that nothing could ever end: the composer stayed
+    // "working" after the reply was done, and the user's next message failed
+    // with "a turn is already running".
+    const { harness, events } = await startBridge('build')
+    expect(await harness.bridge.prompt('first')).toEqual({ ok: true })
+
+    const promptRequest = harness.sent.find(message => message.method === 'session/prompt')
+    harness.proc.stdout.write(`${JSON.stringify({
+      jsonrpc: '2.0',
+      id: promptRequest?.id,
+      result: REAL_PROMPT_RESULT,
+    })}\n`)
+    await settle(); await settle()
+    expect(events.filter(event => event.type === 'turn_end')).toHaveLength(1)
+
+    harness.notify('session/update', {
+      sessionId: 'grok-session-1',
+      update: { sessionUpdate: 'tool_call_update', toolCallId: 'call-late-0', status: 'completed' },
+    })
+    harness.notify('session/update', {
+      sessionId: 'grok-session-1',
+      update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'trailing' } },
+    })
+    await settle()
+
+    expect(events.filter(event => event.type === 'turn_start')).toHaveLength(1)
+    expect(await harness.bridge.prompt('second')).toEqual({ ok: true })
   })
 
   it('still rejects a genuinely concurrent prompt', async () => {

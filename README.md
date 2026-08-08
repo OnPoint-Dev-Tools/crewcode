@@ -1,10 +1,16 @@
-# CrewCode
+<div align="center">
+
+<img src="assets/crewcoder-logo.png" alt="CrewCoder" width="420" />
 
 > **CrewCode is the control center for multi-agent software development.**
 >
 > Run, supervise, and review multiple AI coding agents across git worktrees without losing control of your repo.
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
+
+</div>
+
+# CrewCode
 
 CrewCode is a free, open-source desktop ACE for developers who already work repo-first and agent-first.
 
@@ -26,7 +32,7 @@ CrewCode is built to make that workflow supervised, inspectable, and easier to l
 
 ### Run multiple agents in one workspace
 
-- Run **Claude Code**, **Codex**, **OpenCode**, **pi**, and **Hermes** from one app
+- Run **CrewCoder agent**, **Claude Code agent**, **Codex**, **OpenCode**, **pi**, **Ollama**, **Hermes**, **OpenRouter** and **Grok Build**from one app
 - Mix **structured agent bridges** and **PTY-backed terminals** depending on provider
 - Keep multiple chat **sessions per workspace**, each with its own agent, model, mode, and effort
 - Resume persistent sessions instead of starting from scratch every time
@@ -50,6 +56,16 @@ CrewCode is built to make that workflow supervised, inspectable, and easier to l
 - Run agents in isolated worktrees or shared workspace patterns
 - Save and reuse crew templates
 - Restart, mute, rebroadcast to, and inspect lanes independently
+
+# Delegated Threads
+
+Lets a coding agent create and drive **real, persistent chat sessions** from inside a
+turn, so "spin up some agents in another thread to run a regression test, keep me
+updated" produces threads you can open, read, and continue yourself.
+
+This is distinct from Crew Surface. Crew lanes are ephemeral, live in one tab, and
+exist for the duration of a crew run. Delegated threads are ordinary `Session`s with
+transcripts, archiving, and drawer rows — they outlive the turn that made them.
 
 ### Control Center for supervision
 

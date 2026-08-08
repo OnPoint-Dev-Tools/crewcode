@@ -71,6 +71,7 @@ interface PendingRequest {
 }
 
 export const GROK_PROMPT_INACTIVITY_TIMEOUT_MS = 10 * 60_000
+const STDERR_DEDUPE_WINDOW_MS = 30_000
 const GROK_PROMPT_CANCELLATION_GRACE_MS = 10_000
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -285,6 +286,47 @@ export function grokContextWindow(meta: unknown, model?: string): number | undef
   return finiteNumber(record(record(match)?._meta)?.totalContextTokens)
 }
 
+/**
+ * Grok puts the useless half of a failure in `error.message` and the entire
+ * actionable half in `error.data`. A rate limit arrives as
+ * `{ code: -32003, message: 'Rate limited', data: "API error (status 429 ...):
+ * subscription:free-usage-exhausted: You've used all the included free usage
+ * for model grok-4.5 ... Upgrade ..." }`. Reporting only `message` tells the
+ * user "Rate limited" with no quota, no reset window, and no link.
+ */
+export function grokRequestErrorMessage(
+  method: string,
+  error: { message?: string; data?: unknown },
+): string {
+  const summary = error.message?.trim() || 'request failed'
+  const detail = typeof error.data === 'string'
+    ? error.data.trim()
+    : error.data === undefined || error.data === null
+      ? ''
+      : JSON.stringify(error.data)
+  if (!detail || detail === summary) return `${method}: ${summary}`
+  // Grok's data often already restates the summary; don't say it twice.
+  if (detail.toLowerCase().includes(summary.toLowerCase())) return `${method}: ${detail}`
+  return `${method}: ${summary} — ${detail}`
+}
+
+// Grok's stderr is tracing-formatted: ANSI colour codes, an RFC3339 timestamp,
+// then a level. Emitting it raw puts escape sequences in the chat, and it
+// repeats the same failure once per retry attempt.
+const ANSI_PATTERN = /\[[0-9;]*m/g
+const TRACING_PREFIX = /^\d{4}-\d{2}-\d{2}T[\d:.]+Z?\s+(TRACE|DEBUG|INFO|WARN|ERROR)\s+/
+
+export function grokStderrMessage(raw: string): string | null {
+  const line = raw.replace(ANSI_PATTERN, '').trim()
+  if (!line) return null
+  const body = line.replace(TRACING_PREFIX, '').trim()
+  if (!body) return null
+  // Only surface things that read as failures; grok writes benign notices
+  // (shell cwd resets, update checks) to stderr too.
+  if (!/\b(error|fatal|panic)\b/i.test(line) && !/^Traceback /.test(body)) return null
+  return body
+}
+
 // ---------------------------------------------------------------------------
 // Update projection
 // ---------------------------------------------------------------------------
@@ -416,11 +458,17 @@ export async function createGrokBridge(
   let contextWindow: number | undefined
   let stdoutBuffer = ''
   let stderrBuffer = ''
+  let lastStderrMessage = ''
+  let lastStderrAt = 0
   let replayingSessionLoad = false
   let replayTurnSequence = 0
   let replayTurnId: string | null = null
   let tools = createGrokToolProjectionState()
   let promptWatchdog: InactivityWatchdog | null = null
+  // True only while a session/prompt request is outstanding. Turn content that
+  // arrives outside that window belongs to a turn that already ended, and must
+  // never open a new one — see handleSessionUpdate.
+  let promptInFlight = false
   let stopping = false
   let unusable = false
   let followUpSeq = 0
@@ -492,7 +540,7 @@ export async function createGrokBridge(
         reject,
         resolve: response => {
           if (entry.timedOut) reject(timeoutError)
-          else if (response.error) reject(new Error(`${method}: ${response.error.message}`))
+          else if (response.error) reject(new Error(grokRequestErrorMessage(method, response.error)))
           else resolve(response.result as T)
         },
       }
@@ -542,6 +590,7 @@ export async function createGrokBridge(
   }
 
   async function endTurn(): Promise<void> {
+    promptInFlight = false
     if (!currentTurnId) return
     const turnId = currentTurnId
     const turnTools = tools
@@ -597,6 +646,17 @@ export async function createGrokBridge(
     // turn; only turn content does.
     if (!grokUpdateStartsTurn(update.sessionUpdate)) {
       dbg('<<', `non-turn update:${update.sessionUpdate}`)
+      return
+    }
+
+    // Grok keeps flushing updates after it has answered the session/prompt —
+    // a trailing tool_call_update, or content flushed after a cancel. With no
+    // request left in flight nothing will ever call endTurn for those, so
+    // opening a turn here pins the composer as "working" after the reply is
+    // visibly done and makes the user's next message fail with "a turn is
+    // already running". Drop them instead; endTurn already settled the tools.
+    if (!currentTurnId && !promptInFlight) {
+      dbg('<<', `out-of-turn update:${update.sessionUpdate}`)
       return
     }
 
@@ -809,14 +869,21 @@ export async function createGrokBridge(
     const lines = stderrBuffer.split(/\r?\n/)
     stderrBuffer = lines.pop() ?? ''
     for (const raw of lines) {
-      const line = raw.trim()
-      if (!line) continue
-      dbg('<<', 'stderr', line)
-      // Grok writes benign notices to stderr (shell cwd resets, update checks).
-      // Only surface things that read as failures.
-      if (/\b(error|fatal|panic)\b|^Traceback /i.test(line)) {
-        emit({ type: 'error', bridgeId: opts.bridgeId, message: `grok: ${line}` })
+      if (!raw.trim()) continue
+      dbg('<<', 'stderr', raw.trim())
+      const message = grokStderrMessage(raw)
+      if (!message) continue
+      // Grok retries a failing call up to 15 times and logs the identical
+      // error every attempt. One rate limit produced five stderr lines and
+      // would have produced five red rows in the chat.
+      const now = Date.now()
+      if (message === lastStderrMessage && now - lastStderrAt < STDERR_DEDUPE_WINDOW_MS) {
+        lastStderrAt = now
+        continue
       }
+      lastStderrMessage = message
+      lastStderrAt = now
+      emit({ type: 'error', bridgeId: opts.bridgeId, message: `grok: ${message}` })
     }
   })
 
@@ -915,6 +982,7 @@ export async function createGrokBridge(
         return { ok: true }
       }
       if (proc.stdin.destroyed || !proc.stdin.writable) return { ok: false, error: 'grok acp: process not writable' }
+      promptInFlight = true
       startTurn()
       void (async () => {
         try {

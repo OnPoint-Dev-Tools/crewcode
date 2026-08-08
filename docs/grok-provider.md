@@ -132,6 +132,60 @@ flag, so Grok keeps its own configured default.
 
 Effort is applied at spawn, so changing it requires a bridge restart.
 
+## Only a live `session/prompt` may open a turn
+
+Two guards decide whether an incoming `session/update` starts a turn, and both
+exist because of the same user-visible failure: the composer stuck on "working"
+after the reply was already finished, and the next message rejected with
+`grok acp: a turn is already running`.
+
+1. **Update kind** (`grokUpdateStartsTurn`) — only `agent_message_chunk`,
+   `agent_thought_chunk`, `tool_call`, and `tool_call_update` carry turn
+   content. Session chrome (`available_commands_update`, `current_mode_update`,
+   `session_info_update`) never does. Grok pushes `available_commands_update`
+   twice right after `session/new`, before any prompt exists.
+2. **Prompt in flight** (`promptInFlight`) — Grok also keeps flushing turn
+   *content* after it has answered the `session/prompt` request: a trailing
+   `tool_call_update`, or chunks flushed after a `session/cancel`. Those arrive
+   when no request is outstanding, so nothing will ever call `endTurn` for the
+   turn they would open. They are dropped instead; `endTurn` has already swept
+   every unsettled tool call to `cancelled`, so no row is left spinning.
+
+`promptInFlight` is set in `prompt()` immediately before `startTurn()` and
+cleared at the top of `endTurn()` — before its `await`, so the network-backed
+usage enrichment cannot leave a window where a late update sneaks a turn in.
+`endTurn()` is also reachable from the process `close` handler, which the same
+placement covers.
+
+## Failure reporting
+
+Grok answers a failed `session/prompt` with a JSON-RPC error, so the turn always
+ends — the composer does not hang on a provider failure. But the payload is
+split badly, verified against a live free-quota exhaustion on 1.0.0:
+
+```json
+{"code":-32003,"message":"Rate limited",
+ "data":"API error (status 429 ...): subscription:free-usage-exhausted: You've
+  used all the included free usage for model grok-4.5 ... tokens
+  (actual/limit): 513300/500000. Upgrade ... https://grok.com/supergrok"}
+```
+
+`message` alone is worthless; `data` holds the quota, the reset window, and the
+upgrade link. `grokRequestErrorMessage()` merges both and drops the summary when
+`data` already restates it.
+
+Grok also retries a failing call up to 15 times (`_x.ai/session_notification`
+→ `retry_state`) and writes the same tracing-formatted line to stderr on every
+attempt. One rate limit produced five stderr lines, each carrying ANSI colour
+codes and an RFC3339 timestamp. `grokStderrMessage()` strips both, and the
+bridge collapses an identical repeat inside a 30s window, so a rate limit is one
+chat row rather than five escape-sequence-littered ones.
+
+Two vendor turn-end signals exist and are deliberately unused, because the
+JSON-RPC response is authoritative and arrives last:
+`_x.ai/session/prompt_complete` (`{promptId, stopReason, agentResult}`) and
+`session_notification` → `turn_completed`.
+
 ## Follow-ups are queued locally
 
 Sending while a turn runs queues the message instead of failing. The queue lives

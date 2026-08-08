@@ -34,7 +34,8 @@ docs/AGENT-DO-NOT-READ.md
 
 # Local license/file backups
 .backup/
-
+docs/releasing.md
+AGENTS-CJ.md
 # Astro build cache (docs-website)
 .astro/
 docs-website/dist/
