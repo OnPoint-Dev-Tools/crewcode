@@ -1,10 +1,16 @@
-import { mkdtempSync, mkdirSync, readFileSync } from 'fs'
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync } from 'fs'
 import { join } from 'path'
-import { tmpdir } from 'os'
+import { tmpdir as osTmpdir } from 'os'
 import { afterEach, describe, expect, it } from 'vitest'
 import { CREWCODE_REMOTE_PROTOCOL_VERSION } from '../shared/remote-access-types'
 import { startRemoteAccessServer, type RunningRemoteAccessServer } from './remote-access-server'
 import WebSocket from 'ws'
+
+// The server realpaths every incoming path before checking it against the
+// allowed roots. On macOS os.tmpdir() is /var/folders/... which is a symlink to
+// /private/var/folders/..., so an unresolved root matches nothing and every
+// workspace call comes back 403 / "path escapes root". Resolve once, up front.
+const tmpdir = (): string => realpathSync.native(osTmpdir())
 
 let running: RunningRemoteAccessServer | null = null
 afterEach(async () => { await running?.close(); running = null })

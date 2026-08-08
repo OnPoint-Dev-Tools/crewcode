@@ -30,7 +30,7 @@ services/local-voice/**/*.pyc
 .pi
 docs/AGENT-DO-NOT-READ.md
 .worktrees/
-
+.crewcoder
 # Local license/file backups
 .backup/
 docs/releasing.md

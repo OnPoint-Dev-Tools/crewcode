@@ -2712,7 +2712,7 @@ export default function App() {
       case 'start-crew':       startCrewFromAnywhere(); return
       case 'start-canvas':     startCanvasFromAnywhere(); return
       case 'updates':          window.electronAPI?.updaterCheck?.(); return
-      case 'docs':             window.electronAPI?.openExternal?.('https://crewcode-docs.cortex-ai.icu'); return
+      case 'docs':             window.electronAPI?.openExternal?.('https://crewcode-docs.logixhub.icu'); return
     }
   }, [activeWs, tabs, setActiveTabId, handleNewTab, setPaletteOpen, setTweak, tweaks.showTerminal, startCanvasFromAnywhere, startCrewFromAnywhere])
 
