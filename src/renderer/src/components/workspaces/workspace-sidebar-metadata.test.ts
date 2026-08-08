@@ -24,7 +24,9 @@ describe('workspace sidebar metadata', () => {
   })
 
   it('adds the trailing hairline to every shared workspace section', () => {
-    expect(drawer).toContain('className="ws-sec ws-sec-btn ws-sec-rule"')
+    // The section button composes its class from a template literal (tone is
+    // appended), so match the rule classes rather than a fixed attribute string.
+    expect(drawer).toContain('ws-sec ws-sec-btn ws-sec-rule')
     expect(drawer).not.toContain('rule?:')
   })
 })

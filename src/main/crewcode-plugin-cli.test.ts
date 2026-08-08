@@ -20,7 +20,7 @@ describe('crewcode plugin CLI', () => {
     expect(result.id).toBe('my-panel')
     expect(manifest.id).toBe('my-panel')
     expect(manifest.name).toBe('My Panel')
-    expect(manifest.$schema).toBe('https://crewcode.cortex-ai.icu/schemas/crewcode.plugin.schema.json')
+    expect(manifest.$schema).toBe('https://crewcode-plugins.cortex-ai.icu/schemas/crewcode.plugin.schema.json')
     expect(existsSync(join(result.path, 'panel.html'))).toBe(true)
   })
 

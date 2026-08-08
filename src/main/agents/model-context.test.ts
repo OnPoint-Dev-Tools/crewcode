@@ -48,7 +48,7 @@ describe('contextWindowFor', () => {
     expect(contextWindowFor('claude-opus-4-8')).toBe(500_000)
     expect(contextWindowFor('Claude Opus 4.8 (latest)')).toBe(500_000)
     expect(contextWindowFor('anthropic/claude-opus-4.8')).toBe(500_000)
-    expect(contextWindowFor('claude-sonnet-4-6')).toBeUndefined()
+    expect(contextWindowFor('claude-sonnet-4-6')).toBe(500_000)
   })
 
   it('does not invent a window for unknown models', () => {
