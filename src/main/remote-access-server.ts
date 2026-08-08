@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'http'
-import { dirname, extname, join, normalize, sep } from 'path'
+import { dirname, extname, join, normalize, posix, sep } from 'path'
 import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'fs'
 import { spawnSync } from 'child_process'
 import { homedir } from 'os'
@@ -305,7 +305,9 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
         const target = normalize(join(directory, filename))
         if (!target.startsWith(normalize(directory) + sep)) throw new Error('attachment path escapes workspace')
         writeFileSync(target, data)
-        sendJson(response, 200, { rel: join('.crewcode', 'attachments', filename) })
+        // rel crosses the wire to a web client, so it must be POSIX on every
+        // host. Native join() would hand Windows clients ".crewcode\attachments\x".
+        sendJson(response, 200, { rel: posix.join('.crewcode', 'attachments', filename) })
         return
       }
       if (request.method === 'POST' && pathname === '/api/v1/rpc') {

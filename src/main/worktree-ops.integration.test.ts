@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { execFileSync } from 'child_process'
-import { mkdtempSync, rmSync, writeFileSync, readFileSync, existsSync } from 'fs'
+import { mkdtempSync, realpathSync, rmSync, writeFileSync, readFileSync, existsSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 
@@ -20,13 +20,22 @@ function git(cwd: string, ...args: string[]): string {
   return execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
 }
 
+// git reports paths with forward slashes on every platform, including Windows.
+// Comparing its output against a native path needs both sides in one form.
+function gitPath(p: string): string {
+  return p.replace(/\\/g, '/')
+}
+
 function commit(cwd: string, msg: string): void {
   git(cwd, 'add', '-A')
   git(cwd, 'commit', '--no-gpg-sign', '-m', msg)
 }
 
 beforeEach(() => {
-  repo = mkdtempSync(join(tmpdir(), 'crewcode-wt-'))
+  // realpath matters on two platforms: Windows tmpdir() hands back an 8.3 short
+  // name (RUNNER~1) and macOS /var is a symlink to /private/var. git resolves
+  // both, so the fixture has to as well or path comparisons never line up.
+  repo = realpathSync.native(mkdtempSync(join(tmpdir(), 'crewcode-wt-')))
   git(repo, 'init', '-q', '-b', 'main')
   git(repo, 'config', 'user.email', 'test@crewcode.cortex-ai.icu')
   git(repo, 'config', 'user.name', 'CrewCode Test')
@@ -122,10 +131,10 @@ describe('removeWorktree', () => {
   it('removes a worktree from the repo registration', () => {
     const r = addWorktree(repo, 'crew/abc/pi-1', { startPoint: 'main' })
     if (!('ok' in r)) throw new Error('provision failed')
-    expect(git(repo, 'worktree', 'list')).toContain(r.path)
+    expect(git(repo, 'worktree', 'list')).toContain(gitPath(r.path))
 
     const rm = removeWorktree(r.path)
     expect('ok' in rm && rm.ok).toBe(true)
-    expect(git(repo, 'worktree', 'list')).not.toContain(r.path)
+    expect(git(repo, 'worktree', 'list')).not.toContain(gitPath(r.path))
   })
 })

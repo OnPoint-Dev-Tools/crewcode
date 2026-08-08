@@ -44,6 +44,13 @@ jobs:
       - name: Install
         run: npm ci --legacy-peer-deps
 
+      # Several suites transitively import `electron`, and its index.js downloads
+      # the binary on first require. Parallel vitest workers racing that download
+      # corrupt the extract on macOS (EEXIST on the Electron Framework symlink),
+      # so do it once, serially, up front. Idempotent - exits early if present.
+      - name: Install Electron binary
+        run: npm run install-electron
+
       # package.json sets npmRebuild:false, so node-pty is NOT rebuilt for
       # Electron's ABI automatically. Without this the packaged app dies on
       # first terminal spawn.

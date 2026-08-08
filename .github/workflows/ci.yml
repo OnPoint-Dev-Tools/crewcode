@@ -7,7 +7,14 @@ on:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    name: verify (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Platform-specific failures are the whole point of this matrix, so one
+      # runner going red must not cancel the others - we want all three reports.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -15,5 +22,10 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci --legacy-peer-deps
+      # Several suites transitively import `electron`, and its index.js downloads
+      # the binary on first require. Parallel vitest workers racing that download
+      # corrupt the extract on macOS (EEXIST on the Electron Framework symlink),
+      # so do it once, serially, up front. Idempotent - exits early if present.
+      - run: npm run install-electron
       - run: npm run typecheck
       - run: npm test

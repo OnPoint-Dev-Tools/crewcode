@@ -77,15 +77,22 @@ describe('remote access server', () => {
     const socket = new WebSocket(server.url.replace(/^http/, 'ws') + '/api/v1/events', ['crewcode.v1', sessionToken])
     await new Promise<void>((resolve, reject) => { socket.once('open', resolve); socket.once('error', reject) })
     const output = new Promise<string>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('PTY output timeout')), 5_000)
+      // ConPTY can split even a short write across several data frames, so match
+      // on the accumulated stream instead of any single message. The buffer goes
+      // into the timeout message to make a CI-only failure diagnosable.
+      let seen = ''
+      const timeout = setTimeout(() => reject(new Error(`PTY output timeout (saw ${JSON.stringify(seen)})`)), 15_000)
       socket.on('message', raw => {
         const message = JSON.parse(raw.toString()) as { channel: string; event: { type: string; data?: string } }
-        if (message.channel === 'pty' && message.event.type === 'data' && message.event.data?.includes('remote-pty-ok')) {
-          clearTimeout(timeout); resolve(message.event.data)
+        if (message.channel === 'pty' && message.event.type === 'data') {
+          seen += message.event.data ?? ''
+          if (seen.includes('remote-pty-ok')) { clearTimeout(timeout); resolve(seen) }
         }
       })
     })
-    const create = await rpc('pty', 'pty.create', { paneId: 'web-test', cwd: root, shell: '/bin/sh', argv: ['-c', 'printf remote-pty-ok'] })
+    // /bin/sh does not exist on Windows. node is the one interpreter guaranteed
+    // to be present wherever this suite runs.
+    const create = await rpc('pty', 'pty.create', { paneId: 'web-test', cwd: root, shell: process.execPath, argv: ['-e', 'process.stdout.write("remote-pty-ok")'] })
     expect(create.status).toBe(200)
     await expect(output).resolves.toContain('remote-pty-ok')
     socket.close()

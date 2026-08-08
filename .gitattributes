@@ -1,0 +1,21 @@
+# Force LF for every text file, in the index and on checkout.
+#
+# GitHub's Windows runners default to core.autocrlf=true. A CRLF checkout gives
+# bin/*.mjs a "#!/usr/bin/env node\r" shebang, which Node's ESM loader rejects
+# with "SyntaxError: Invalid or unexpected token" - reproduced locally by
+# converting packages/crewcode-plugin-cli/bin/crewcode.mjs to CRLF.
+* text=auto eol=lf
+
+# Never line-ending-convert binary assets. build/ icons ship inside the
+# packaged app, so a corrupted byte here is a corrupted app icon.
+*.png binary
+*.ico binary
+*.icns binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary
+*.7z binary
+*.zip binary
+*.gz binary
+*.tsbuildinfo binary
