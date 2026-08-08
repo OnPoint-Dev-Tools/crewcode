@@ -111,6 +111,12 @@
             "portable"
          ]
       },
+      "nsis": {
+         "artifactName": "${productName}-${version}-${os}-${arch}-setup.${ext}"
+      },
+      "portable": {
+         "artifactName": "${productName}-${version}-${os}-${arch}-portable.${ext}"
+      },
       "publish": [
          {
             "provider": "github",
