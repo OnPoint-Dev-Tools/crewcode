@@ -21,6 +21,7 @@ services/local-voice/*.egg-info/
 services/local-voice/**/__pycache__/
 services/local-voice/**/*.pyc
 
+telemetry.md
 .design/
 .claude
 .claude/skills/
@@ -39,3 +40,4 @@ AGENTS-CJ.md
 .astro/
 docs-website/dist/
 docs-website/.astro/
+social-media-post.md

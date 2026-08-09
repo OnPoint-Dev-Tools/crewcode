@@ -16,6 +16,8 @@ CrewCode is a free, open-source desktop ACE for developers who already work repo
 
 Instead of juggling terminals, worktrees, PR pages, browser tabs, and chat threads across several tools, CrewCode keeps the full workflow in one place.
 
+> **Pair CrewCode with [CrewCoder](https://github.com/OnPoint-Dev-Tools/crewcoder)** for an integrated agentic development workflow. CrewCode includes first-class CrewCoder support through ACP, so you can run and supervise CrewCoder directly from the app and ask it to create custom CrewCode plugins tailored to your workflow. See the [CrewCoder provider guide](./docs/crewcoder-provider.md) for setup details and the [plugin guide](./docs/plugins.md) to learn more about CrewCode plugins.
+
 ## Why CrewCode
 
 As soon as you run more than one coding agent, the workflow gets messy fast:
@@ -27,6 +29,8 @@ As soon as you run more than one coding agent, the workflow gets messy fast:
 - not enough visibility into what each agent is doing
 
 CrewCode is built to make that workflow supervised, inspectable, and easier to land safely.
+
+It targets MacOS (I'd appreciate if someone can help with testing Mac), Linux, and Windows.
 
 ## What CrewCode does
 
