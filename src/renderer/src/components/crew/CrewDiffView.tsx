@@ -5,6 +5,7 @@ import { PierreDiff } from '../diff/PierreDiff'
 import { PROVIDER_IMAGES, providerImageClass } from '../composer/provider-meta'
 import type { AgentInfo, GitStatusFile } from '../../types'
 import type { CrewSession, CrewAgentLane } from '../../orchestrator/crew-session'
+import { analyzeCrewCollisions } from '../../orchestrator/crew-collision-analysis'
 
 interface CrewDiffViewProps {
   open:     boolean
@@ -20,9 +21,12 @@ interface LaneDiffState {
   error:   string | null
   /** path → unified diff text, lazily fetched on file click */
   diffs:   Record<string, string>
+  /** Current lane tip, so review records who owns the exact change. */
+  head:    string
+  subject: string
 }
 
-const EMPTY: LaneDiffState = { files: [], loading: true, error: null, diffs: {} }
+const EMPTY: LaneDiffState = { files: [], loading: true, error: null, diffs: {}, head: '', subject: '' }
 
 /**
  * Side-by-side comparison of every lane's worktree status. The point of running
@@ -60,15 +64,23 @@ export function CrewDiffView({ open, session, agents, onClose }: CrewDiffViewPro
         setByLane(prev => ({ ...prev, [lane.laneId]: { ...EMPTY, loading: false, error: 'lane has no worktree path' } }))
         return
       }
-      const r = await window.electronAPI?.gitChangesVsRef(lane.path, session.baseBranch)
+      const [r, log] = await Promise.all([
+        window.electronAPI?.gitChangesVsRef(lane.path, session.baseBranch),
+        window.electronAPI?.gitLog(lane.path, 1),
+      ])
       if (cancelled) return
       if (!r || r.error) {
         setByLane(prev => ({ ...prev, [lane.laneId]: { ...EMPTY, loading: false, error: r?.error ?? 'no git ipc' } }))
         return
       }
+      const tip = log?.commits?.[0]
       setByLane(prev => ({
         ...prev,
-        [lane.laneId]: { files: r.files ?? [], loading: false, error: null, diffs: prev[lane.laneId]?.diffs ?? {} },
+        [lane.laneId]: {
+          files: r.files ?? [], loading: false, error: null,
+          diffs: prev[lane.laneId]?.diffs ?? {},
+          head: tip?.hash ?? '', subject: tip?.message ?? '',
+        },
       }))
     })
     return () => { cancelled = true }
@@ -101,6 +113,12 @@ export function CrewDiffView({ open, session, agents, onClose }: CrewDiffViewPro
     })
   }, [lanes, byLane])
 
+  const collisions = useMemo(() => analyzeCrewCollisions(lanes.map(lane => ({
+    laneId: lane.laneId,
+    label: lane.roleName || agentName(lane.agentId),
+    files: (byLane[lane.laneId]?.files ?? []).map(file => file.path),
+  }))), [lanes, byLane, agentName])
+
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
@@ -132,6 +150,22 @@ export function CrewDiffView({ open, session, agents, onClose }: CrewDiffViewPro
           </div>
         </header>
 
+        <section className={`crew-collision-review ${collisions.length ? 'has-risks' : ''}`}>
+          <div className="crew-collision-review-head">
+            <Icon name={collisions.length ? 'alert' : 'check'} size={13} />
+            <strong>{collisions.length ? `${collisions.length} cross-lane review signal${collisions.length === 1 ? '' : 's'}` : 'no heuristic collisions found'}</strong>
+            <span>Git can merge cleanly and still break behavior.</span>
+          </div>
+          {collisions.map((finding, index) => (
+            <div className="crew-collision-finding" key={`${finding.kind}-${finding.laneIds.join('-')}-${index}`}>
+              <span className={`crew-collision-severity is-${finding.severity}`}>{finding.kind === 'file-overlap' ? 'overlap' : 'contract risk'}</span>
+              <span><b>{finding.laneLabels.join(' ↔ ')}</b> — {finding.reason}</span>
+              <span className="mono">{finding.files.join(', ')}</span>
+            </div>
+          ))}
+          <div className="crew-collision-evidence">Verification checks: <b>none recorded here</b>. Run the repository's typecheck/tests against the combined result before accepting it.</div>
+        </section>
+
         <div className="crew-diff-summary">
           {summary.map((s, i) => (
             <div
@@ -156,6 +190,9 @@ export function CrewDiffView({ open, session, agents, onClose }: CrewDiffViewPro
                 </span>
               </div>
               <span className="crew-diff-cell-branch mono">{s.lane.branch}</span>
+              <span className="crew-diff-cell-head mono" title={byLane[s.lane.laneId]?.subject || 'commit unavailable'}>
+                {byLane[s.lane.laneId]?.head ? byLane[s.lane.laneId].head.slice(0, 10) : 'uncommitted / unknown'} · {s.lane.status === 'running' ? 'executing' : 'not executing'}
+              </span>
             </div>
           ))}
         </div>

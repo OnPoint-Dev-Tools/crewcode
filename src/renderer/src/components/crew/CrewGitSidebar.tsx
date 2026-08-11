@@ -2,8 +2,9 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { Icon } from '../ui/Icon'
 import { useGitSidebar } from '../../hooks/useGitSidebar'
-import type { AgentInfo } from '../../types'
+import type { AgentInfo, CrewIntegrationRecord } from '../../types'
 import type { CrewSession } from '../../orchestrator/crew-session'
+import { analyzeCrewCollisions } from '../../orchestrator/crew-collision-analysis'
 
 interface CrewGitSidebarProps {
   open:        boolean
@@ -21,9 +22,11 @@ interface LaneGit {
   uncommitted: number   // staged + unstaged + untracked — NOT in the merge yet
   loading:     boolean
   error:       string | null
+  files:       string[]
+  head:        string
 }
 
-const EMPTY_LANE: LaneGit = { changed: 0, uncommitted: 0, loading: true, error: null }
+const EMPTY_LANE: LaneGit = { changed: 0, uncommitted: 0, loading: true, error: null, files: [], head: '' }
 
 /**
  * Dedicated git surface for an isolated crew: one row per lane worktree with a
@@ -52,6 +55,25 @@ export function CrewGitSidebar({
 
   const [byLane, setByLane] = useState<Record<string, LaneGit>>({})
   const [tick, setTick]     = useState(0)
+  const [baseHead, setBaseHead] = useState('')
+  const [integration, setIntegration] = useState<CrewIntegrationRecord | null>(null)
+  const [integrationError, setIntegrationError] = useState<string | null>(null)
+  const [integrationBusy, setIntegrationBusy] = useState(false)
+
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    void Promise.all([
+      window.electronAPI?.gitLog(session.basePath, 1),
+      window.electronAPI?.gitCrewIntegrationStatus(session.id),
+    ]).then(([log, status]) => {
+      if (cancelled) return
+      setBaseHead(log?.commits?.[0]?.hash ?? '')
+      setIntegration(status?.record ?? null)
+      setIntegrationError(status?.error ?? null)
+    })
+    return () => { cancelled = true }
+  }, [open, session.basePath, session.id, tick])
 
   const agentName = useCallback(
     (id: string) => agents.find(a => a.id === id)?.name ?? id,
@@ -63,12 +85,6 @@ export function CrewGitSidebar({
     () => session.lanes.filter(l => l.status !== 'pending' && l.path),
     [session.lanes],
   )
-
-  // The base checkout in the worktree list — merge target for every lane.
-  const baseId = useMemo(() => {
-    const main = git.state.worktrees.find(w => w.path === session.basePath)
-    return main?.id ?? git.state.worktrees[0]?.id ?? null
-  }, [git.state.worktrees, session.basePath])
 
   // Resolve a lane to its registered worktree by branch (ids are derived from the
   // path basename, which can differ from the lane's worktreeId — branch is stable).
@@ -90,9 +106,10 @@ export function CrewGitSidebar({
       // "changed" = files differing from base (committed work counts → what the
       // merge brings). "uncommitted" = working-tree changes not yet committed,
       // which a merge would leave behind — surfaced as the pre-merge warning.
-      const [vsBase, status] = await Promise.all([
+      const [vsBase, status, log] = await Promise.all([
         window.electronAPI?.gitChangesVsRef(lane.path, session.baseBranch),
         window.electronAPI?.gitStatus(lane.path),
+        window.electronAPI?.gitLog(lane.path, 1),
       ])
       if (cancelled) return
       if ((!vsBase || vsBase.error) && (!status || status.error)) {
@@ -103,20 +120,56 @@ export function CrewGitSidebar({
       const uncommitted = status && !status.error
         ? status.staged.length + status.unstaged.length + status.untracked.length
         : 0
-      setByLane(prev => ({ ...prev, [lane.laneId]: { changed, uncommitted, loading: false, error: null } }))
+      setByLane(prev => ({
+        ...prev,
+        [lane.laneId]: {
+          changed, uncommitted, loading: false, error: null,
+          files: (vsBase?.files ?? []).map(file => file.path),
+          head: log?.commits?.[0]?.hash ?? '',
+        },
+      }))
     })
     return () => { cancelled = true }
   }, [open, lanes, tick, session.baseBranch])
 
+  const collisionFindings = useMemo(() => analyzeCrewCollisions(lanes.map(lane => ({
+    laneId: lane.laneId,
+    label: lane.roleName || agentName(lane.agentId),
+    files: byLane[lane.laneId]?.files ?? [],
+  }))), [lanes, byLane, agentName])
+
   const refreshAll = useCallback(() => { setTick(t => t + 1); git.refresh() }, [git])
 
-  const mergeLane = useCallback((branch: string) => {
-    const wt = worktreeForLane(branch)
-    if (!wt || !baseId) return
-    git.handlers.onMergeWorktree?.({ from: wt.id, into: baseId })
-    // Lane statuses don't change on merge, but the base history does — bump both.
-    setTimeout(refreshAll, 400)
-  }, [worktreeForLane, baseId, git.handlers, refreshAll])
+  const verifyCombinedIntegration = useCallback(async () => {
+    const candidates = lanes.map(lane => ({
+      laneId: lane.laneId, label: lane.roleName || agentName(lane.agentId),
+      branch: lane.branch, head: byLane[lane.laneId]?.head ?? '',
+      worktreePath: lane.path, files: byLane[lane.laneId]?.files ?? [],
+    })).filter(lane => lane.head && (byLane[lane.laneId]?.changed ?? 0) > 0)
+    if (!baseHead || !candidates.length) return
+    setIntegrationError(null)
+    setIntegrationBusy(true)
+    try {
+      const result = await window.electronAPI?.gitVerifyCrewIntegration({
+        sessionId: session.id, repoPath: session.basePath,
+        baseBranch: session.baseBranch, baseHead, lanes: candidates,
+      })
+      setIntegration(result?.record ?? null)
+      setIntegrationError(result?.error ?? null)
+      setTick(value => value + 1)
+    } finally { setIntegrationBusy(false) }
+  }, [lanes, byLane, baseHead, session.id, session.basePath, session.baseBranch, agentName])
+
+  const applyCombinedIntegration = useCallback(async () => {
+    setIntegrationError(null)
+    setIntegrationBusy(true)
+    try {
+      const result = await window.electronAPI?.gitApplyCrewIntegration(session.id)
+      setIntegration(result?.record ?? null)
+      setIntegrationError(result?.error ?? null)
+      refreshAll()
+    } finally { setIntegrationBusy(false) }
+  }, [session.id, refreshAll])
 
   const discardLane = useCallback((branch: string) => {
     const wt = worktreeForLane(branch)
@@ -125,8 +178,8 @@ export function CrewGitSidebar({
     setTimeout(refreshAll, 400)
   }, [worktreeForLane, git.handlers, refreshAll])
 
-  // Pre-merge "hook": stage + commit a lane's uncommitted work so the next merge
-  // actually carries it. Auto-message keeps it one click; agents can amend later.
+  // Stage + commit a lane's uncommitted work so combined verification includes it.
+  // The automatic message keeps this one click; agents can amend later.
   const commitLane = useCallback(async (lanePath: string, agentId: string) => {
     await window.electronAPI?.gitStage(lanePath, ['.'])
     let c = await window.electronAPI?.gitCommit(lanePath, `crew: ${agentName(agentId)} lane work`)
@@ -147,7 +200,10 @@ export function CrewGitSidebar({
 
   const banner    = git.state.banner
   const conflicts = git.state.conflicts
-  const merging   = conflicts.length > 0
+  const integrationRunning = integrationBusy || integration?.status === 'running'
+  const candidateLaneCount = lanes.filter(lane => !!byLane[lane.laneId]?.head && (byLane[lane.laneId]?.changed ?? 0) > 0).length
+  const hasCandidateLanes = candidateLaneCount > 0
+  const merging   = conflicts.length > 0 || integrationRunning
 
   return (
     <div className="crew-git-backdrop" onClick={onClose}>
@@ -179,7 +235,7 @@ export function CrewGitSidebar({
           </div>
         )}
 
-        {merging && (
+        {conflicts.length > 0 && (
           <section className="crew-git-conflicts">
             <div className="crew-git-section-head">
               <Icon name="alert" size={12} />
@@ -203,6 +259,45 @@ export function CrewGitSidebar({
               <button type="button" className="crew-btn-ghost" onClick={() => git.handlers.onAbortMerge?.()}>abort merge</button>
               <button type="button" className="crew-btn-ghost" onClick={() => git.handlers.onContinueMerge?.()}>continue</button>
             </div>
+          </section>
+        )}
+
+        <section className={`crew-git-audit is-${integration?.status ?? 'idle'}`}>
+          <div><b>combined integration</b>{integration ? ` · ${integration.status} · ${integration.phase}` : ' · not verified'}</div>
+          <span>Builds every committed lane together in a disposable worktree; the base checkout stays unchanged until you apply the exact passing commit.</span>
+          {integration && (
+            <>
+              <span className="mono">base {integration.baseBranch}@{integration.baseHead.slice(0, 10)}</span>
+              {integration.lanes.map(lane => (
+                <span className="mono" key={lane.laneId}>owner {lane.label}: {lane.branch}@{lane.head.slice(0, 10)} · {lane.worktreePath} · {lane.files.join(', ') || 'no files recorded'}</span>
+              ))}
+              <span>Checks: {integration.checks.length ? integration.checks.map(check => `${check.label}: ${check.status}`).join(', ') : 'none discovered or not reached'}{integration.error ? ` · ${integration.error}` : ''}</span>
+            </>
+          )}
+          {integrationError && <span className="crew-git-err"><Icon name="alert" size={11} /> {integrationError}</span>}
+          <div className="crew-git-checks">
+            <button type="button" className="crew-btn-ghost" disabled={!baseHead || !hasCandidateLanes || merging} onClick={() => { void verifyCombinedIntegration() }}>
+              {integrationRunning ? 'verifying combined lanes…' : 'verify combined lanes'}
+            </button>
+            <button type="button" className="crew-git-merge" disabled={integration?.status !== 'passed' || merging} onClick={() => { void applyCombinedIntegration() }}>
+              apply checked integration → {session.baseBranch}
+            </button>
+          </div>
+        </section>
+
+        {collisionFindings.length > 0 && (
+          <section className="crew-git-risk-gate">
+            <div><Icon name="alert" size={12} /><b>{collisionFindings.length} behavioral review signal{collisionFindings.length === 1 ? '' : 's'}</b></div>
+            <span>These lanes overlap by file or contract even if Git reports a clean merge. Inspect Cross-lane Diff first.</span>
+            <ul className="crew-git-conflict-list">
+              {collisionFindings.map((finding, index) => (
+                <li key={`${finding.laneIds.join('-')}-${index}`} className="crew-git-conflict">
+                  <span><b>{finding.laneLabels.join(' ↔ ')}</b> · {finding.reason}</span>
+                  <span className="mono">{finding.files.join(', ')}</span>
+                </li>
+              ))}
+            </ul>
+            <span>The combined gate above must pass before any lane commit can update the base.</span>
           </section>
         )}
 
@@ -247,11 +342,10 @@ export function CrewGitSidebar({
                   <button
                     type="button"
                     className="crew-git-merge"
-                    disabled={!wt || !baseId || merging}
-                    title={!wt ? 'worktree not found in git' : merging ? 'finish the current merge first' : `merge ${lane.branch} into ${session.baseBranch}`}
-                    onClick={() => mergeLane(lane.branch)}
+                    disabled
+                    title="Crew lane commits are applied only through the durable combined integration above"
                   >
-                    <Icon name="gitMerge" size={12} /> merge → {session.baseBranch}
+                    <Icon name="gitMerge" size={12} /> {g.changed > 0 ? 'included in combined integration' : 'no committed change'}
                   </button>
                   <button
                     type="button"

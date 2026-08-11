@@ -13,6 +13,7 @@ import type {
 } from './bridge-types'
 import { buildUsage } from './model-context'
 import { enrichUsageContextWindow } from './openrouter-model-context'
+import { tripwireForToolCall } from './dangerous-command'
 
 // CrewCoder is an ACP agent. CrewCode is the client: it spawns `crewcoder acp`
 // and maps the newline-delimited JSON-RPC stream onto the shared BridgeEvent API.
@@ -308,7 +309,7 @@ export function crewCoderUsageFromPromptResult(result: unknown, model?: string):
   return explicitTotal === undefined ? usage : { ...usage, totalTokens: explicitTotal }
 }
 
-function writeBlocked(opts: Pick<BridgeStartOpts, 'mode' | 'toolPolicy'>): boolean {
+export function writeBlocked(opts: Pick<BridgeStartOpts, 'mode' | 'toolPolicy'>): boolean {
   return opts.toolPolicy === 'read-only' || opts.mode === 'ask' || opts.mode === 'plan'
 }
 
@@ -561,9 +562,18 @@ export async function createCrewCoderBridge(
 
   async function handlePermissionRequest(requestMessage: AcpRequestIn, params: Record<string, unknown>): Promise<void> {
     const rawOptions = crewCoderPermissionOptions(params)
-    if (opts.mode === 'full' && opts.toolPolicy !== 'read-only') {
+    const fullToolCall = record(params.toolCall)
+    const fullVerdict = tripwireForToolCall(typeof fullToolCall?.kind === 'string' ? fullToolCall.kind : undefined, fullToolCall?.rawInput)
+    if (opts.mode === 'full' && opts.toolPolicy !== 'read-only' && !fullVerdict.dangerous) {
+      // Full Access auto-approves — except denylisted catastrophic commands, which
+      // fall through to the confirmation prompt below (the Full Access tripwire).
       const optionId = rawOptions.find(option => option.id === 'allow_once')?.id ?? 'allow_once'
       send({ jsonrpc: '2.0', id: requestMessage.id, result: { outcome: { outcome: 'selected', optionId } } })
+      return
+    }
+    if (opts.mode === 'full' && fullVerdict.dangerous && !requestUser) {
+      // Tripwire tripped but no human to confirm — fail safe by refusing.
+      send({ jsonrpc: '2.0', id: requestMessage.id, result: { outcome: { outcome: 'cancelled' } } })
       return
     }
     if (writeBlocked(opts) || !requestUser) {
@@ -578,8 +588,8 @@ export async function createCrewCoderBridge(
       const response = await requestUser({
         kind: 'permission',
         turnId: currentTurnId ?? undefined,
-        title: typeof toolCall?.title === 'string' ? toolCall.title : 'Permission required',
-        message: typeof params.message === 'string' ? params.message : undefined,
+        title: fullVerdict.dangerous ? 'Full Access tripwire — confirm dangerous command' : (typeof toolCall?.title === 'string' ? toolCall.title : 'Permission required'),
+        message: fullVerdict.dangerous ? fullVerdict.reason : (typeof params.message === 'string' ? params.message : undefined),
         detail: JSON.stringify(toolCall ?? params, null, 2).slice(0, 1600),
         options: rawOptions,
         dangerous: !['read', 'search', 'fetch', 'think'].includes(kind),

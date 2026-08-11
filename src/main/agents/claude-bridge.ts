@@ -1,6 +1,7 @@
 import { query, resolveSettings, type CanUseTool, type PermissionMode, type PermissionResult, type Query, type SDKControlGetContextUsageResponse, type SDKMessage, type Settings } from '@anthropic-ai/claude-agent-sdk'
 import type { AgentBridge, AgentUserRequest, AgentUserResponse, BridgeStartOpts, ContextCategory, EmitFn, ModeLevel, PromptOptions, RequestUserFn, TurnUsage } from './bridge-types'
 import { buildUsage, contextWindowFor } from './model-context'
+import { tripwireForToolCall, extractShellCommand } from './dangerous-command'
 
 // Claude Code is driven through the official Agent SDK's `query()` rather than a
 // hand-spawned `claude -p` + stream-json parse. The SDK still runs the installed
@@ -59,7 +60,12 @@ export function getClaudeModeOptions(mode?: ModeLevel, toolPolicy?: BridgeStartO
       // user switches to Build mode in the composer, matching codex/hermes/pi.
       return { permissionMode: 'default', disallowedTools: PLAN_DISALLOWED_TOOLS }
     case 'full':
-      return { permissionMode: 'bypassPermissions', allowDangerouslySkipPermissions: true }
+      // Full Access stays autonomous, but we route through the SDK's canUseTool
+      // callback (permissionMode 'default') instead of the native bypassPermissions
+      // so the Full Access tripwire can see each command and pause catastrophic
+      // ones (rm -rf, force-push, curl|sh, ...). canUseTool auto-approves everything
+      // the denylist does not flag, so benign commands stay friction-free.
+      return { permissionMode: 'default' }
     case 'build':
     default:
       return { permissionMode: 'default' }
@@ -103,7 +109,12 @@ interface ClaudeAskUserQuestionRequest {
 }
 
 function isAskUserQuestionTool(toolName: string): boolean {
-  return toolName.replace(/[^a-z]/gi, '').toLowerCase() === 'askuserquestion'
+  // Claude normally reports the bare built-in name, but some bridge/SDK paths
+  // qualify tool names. Matching the last delimited segment keeps a real
+  // question out of the generic permission path, where Full Access would allow
+  // unanswered input and Claude would immediately report it as denied.
+  const segment = toolName.split(/[^a-z0-9]+/i).filter(Boolean).at(-1) ?? ''
+  return segment.toLowerCase() === 'askuserquestion'
 }
 
 function isExitPlanModeTool(toolName: string): boolean {
@@ -126,10 +137,25 @@ function normalizeClaudeQuestionOption(option: unknown, index: number, seen: Set
   }
 }
 
+function claudeQuestionRows(input: Record<string, unknown>): Record<string, unknown>[] {
+  // Current Claude SDKs send `questions: [...]`. Keep accepting the original
+  // single-question shape as well: older/resumed Claude sessions can still
+  // deliver `{ question, options, ... }`, and treating that as an ordinary
+  // permission leaves it unanswered (which Claude surfaces as an auto-denial).
+  const rawQuestions = Array.isArray(input.questions)
+    ? input.questions
+    : objectValue(input.questions)
+      ? [input.questions]
+      : stringValue(input.question)?.trim()
+        ? [input]
+        : []
+  return rawQuestions
+    .map(objectValue)
+    .filter((question): question is Record<string, unknown> => !!stringValue(question?.question)?.trim())
+}
+
 export function claudeAskUserQuestionRequest(input: Record<string, unknown>, index = 0): ClaudeAskUserQuestionRequest | null {
-  const questions = Array.isArray(input.questions)
-    ? input.questions.map(objectValue).filter((question): question is Record<string, unknown> => !!stringValue(question?.question)?.trim())
-    : []
+  const questions = claudeQuestionRows(input)
   const question = questions[index]
   if (!question) return null
 
@@ -523,8 +549,35 @@ export async function createClaudeBridge(
     }
 
     // Full Access must stay autonomous even when switching modes on an existing
-    // bridge; the SDK may still call canUseTool for older/resumed sessions.
-    if (opts.mode === 'full' && opts.toolPolicy !== 'read-only' && !isAskUserQuestionTool(toolName)) return allowClaudeToolInput(input)
+    // bridge — but a hard denylist of catastrophic commands still pauses for
+    // confirmation (the Full Access tripwire). Everything else auto-approves.
+    if (opts.mode === 'full' && opts.toolPolicy !== 'read-only' && !isAskUserQuestionTool(toolName)) {
+      const verdict = tripwireForToolCall(toolName, input)
+      if (!verdict.dangerous) return allowClaudeToolInput(input)
+      const command = extractShellCommand(toolName, input) ?? ''
+      if (!requestUser) {
+        // No human to ask (headless/detached) — fail safe by blocking.
+        emit({ type: 'tool_end', bridgeId: opts.bridgeId, turnId, toolCallId: toolUseID, result: `Full Access tripwire blocked: ${verdict.reason}`, isError: true })
+        return { behavior: 'deny', message: `Blocked by Full Access tripwire (${verdict.rule}): ${verdict.reason}` }
+      }
+      const response = await requestUser({
+        kind:      'permission',
+        turnId,
+        title:     'Full Access tripwire — confirm dangerous command',
+        message:   verdict.reason,
+        detail:    command,
+        options:   [
+          { id: 'allow_once', label: 'Run once', description: 'Execute this command this one time' },
+          { id: 'reject',     label: 'Block',    description: 'Do not run this command' },
+        ],
+        dangerous: true,
+        source:    'claude',
+      })
+      const approved = (response.action === 'accept' || response.action === 'accept_for_turn' || response.action === 'submit') && response.optionId !== 'reject'
+      if (approved) return allowClaudeToolInput(input)
+      emit({ type: 'tool_end', bridgeId: opts.bridgeId, turnId, toolCallId: toolUseID, result: `Blocked by Full Access tripwire: ${verdict.reason}`, isError: true })
+      return { behavior: 'deny', message: `User blocked this command at the Full Access tripwire (${verdict.rule}).` }
+    }
 
     if (!requestUser) return allowClaudeToolInput(input)
 
@@ -546,7 +599,7 @@ export async function createClaudeBridge(
           placeholder: questionRequest.placeholder,
           source:      'claude',
         })
-        if (response.action !== 'submit' && response.action !== 'accept') {
+        if (response.action === 'cancel' || response.action === 'decline') {
           return { behavior: 'deny', message: 'cancelled by user' }
         }
         updatedInput = answerClaudeAskUserQuestionInput(updatedInput, response, index)

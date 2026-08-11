@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { useVoiceSessionStore, voiceSession } from './voice-session-store'
+import {
+  isBackgroundVoicePlayback,
+  isVoiceSessionPresentedInScope,
+  useVoiceSessionStore,
+  voiceSession,
+} from './voice-session-store'
 
 const state = () => useVoiceSessionStore.getState()
 
@@ -41,6 +46,21 @@ describe('voice-session-store', () => {
       presenterScopeId: 'visible-chat',
       ownerKind: 'voice',
     })
+  })
+
+  it('keeps the overlay in the origin and identifies background reply playback', () => {
+    voiceSession.claim('origin')
+    voiceSession.detachPresenter('origin')
+    voiceSession.attachPresenter('visible-chat')
+    voiceSession.setPhase('origin', 'speaking', 'Speaking')
+
+    expect(isVoiceSessionPresentedInScope(state(), 'origin')).toBe(false)
+    expect(isVoiceSessionPresentedInScope(state(), 'visible-chat')).toBe(false)
+    expect(isBackgroundVoicePlayback(state())).toBe(true)
+
+    voiceSession.attachPresenter('origin')
+    expect(isVoiceSessionPresentedInScope(state(), 'origin')).toBe(true)
+    expect(isBackgroundVoicePlayback(state())).toBe(false)
   })
 
   it('records and clears an active transport failure', () => {

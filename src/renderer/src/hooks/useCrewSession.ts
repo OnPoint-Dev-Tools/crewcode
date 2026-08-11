@@ -10,7 +10,7 @@
  * down (the orphan-prevention the registry exists for).
  */
 
-import { useState, useRef, useMemo, useCallback } from 'react'
+import { useState, useRef, useMemo, useCallback, useEffect } from 'react'
 
 import {
   createSession,
@@ -51,14 +51,54 @@ export interface CrewLaneBinding {
 
 type CrewResult = { ok: true } | { error: string }
 
+const CREW_SESSIONS_STORAGE = 'crewcode:crewSessions:v1'
+
+/** Restore durable crew ownership after an app crash without pretending that a
+ * process from the previous renderer is still alive. Worktrees and commits stay
+ * attributable; runtime ids are process-local and are always cleared. */
+function loadSessions(): Record<string, CrewSession> {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(CREW_SESSIONS_STORAGE) ?? '{}')
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    const recovered: Record<string, CrewSession> = {}
+    for (const [tabId, raw] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!raw || typeof raw !== 'object') continue
+      const session = raw as CrewSession
+      if (!session.id || !Array.isArray(session.lanes) || !session.basePath || !session.hostTabId) continue
+      recovered[tabId] = {
+        ...session,
+        distribution: session.distribution === 'broadcast' ? 'broadcast' : 'split',
+        lanes: session.lanes.map(lane => ({
+          ...lane,
+          bridgeId: null,
+          paneId: null,
+          status: lane.status === 'running' ? 'ready' : lane.status,
+        })),
+        supervisor: {
+          ...session.supervisor,
+          bridgeId: null,
+          status: 'idle',
+        },
+      }
+    }
+    return recovered
+  } catch {
+    return {}
+  }
+}
+
 export function useCrewSession({ git, onReleaseLane }: UseCrewSessionOpts) {
   // One crew per host tab, keyed by that tab's id — a workspace can run several.
-  const [sessions, setSessions] = useState<Record<string, CrewSession>>({})
+  const [sessions, setSessions] = useState<Record<string, CrewSession>>(loadSessions)
 
   // Mirrors `sessions` synchronously so async effects (launch/archive) can read
   // the value at the moment they started, not a stale render closure.
   const sessionsRef = useRef<Record<string, CrewSession>>({})
   sessionsRef.current = sessions
+
+  useEffect(() => {
+    try { localStorage.setItem(CREW_SESSIONS_STORAGE, JSON.stringify(sessions)) } catch { /* quota/private mode: runtime still works */ }
+  }, [sessions])
 
   const dispatch = useCallback((tabId: string, action: CrewAction) => {
     setSessions(map => {

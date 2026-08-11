@@ -28,6 +28,7 @@ internal references).
 
 | Doc | What it covers |
 | --- | --- |
+| [security-model.md](./security-model.md) | Authority-boundary audit: untrusted content -> agent -> MCP/plugin -> exec -> Git/SSH, per-hop gates, tests, and residual risk |
 | [remote-ssh-workspaces.md](./remote-ssh-workspaces.md) | Opening projects over SSH: setup, auth, host pinning, what works remotely |
 | [canvas-mode.md](./canvas-mode.md) | Workbench: multiple chats and terminals side by side on one worktree _(nav label: "Workbench")_ |
 | [chat-archiving.md](./chat-archiving.md) | Right-click a chat to archive it; the Archive page, restoring, and retention flagging |
@@ -37,6 +38,7 @@ internal references).
 | Doc | What it covers |
 | --- | --- |
 | [git-workspace.md](./git-workspace.md) | The full-page Git tab and its relationship to the Git Sidebar |
+| [behavioral-merge-review.md](./behavioral-merge-review.md) | Cross-lane collision signals, merge review gate, provenance, and restart recovery |
 | [git-authentication.md](./git-authentication.md) | One-shot push credential prompts; nothing is persisted |
 | [git-commit-signing.md](./git-commit-signing.md) | Signing passphrase prompts for GPG/SSH-signed commits |
 

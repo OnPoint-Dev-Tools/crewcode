@@ -71,6 +71,8 @@ src/renderer/src/
 
 Always use the primary working directory (the worktree) for all file reads and edits. Never follow absolute paths from subagent results that point to the main repo.
 
+Crew merges must not equate a clean Git merge with behavioral correctness. Keep the cross-lane collision analysis explainable and advisory, preserve the explicit review gate, and persist source worktree/commit provenance before starting a merge. On restart, process-local runtime ids must be cleared and a still-running merge audit or verification check must become `interrupted`, never inferred successful. Verification IPC accepts only main-discovered `typecheck`/`test` ids, displays the exact command and package script before execution, and must never become arbitrary command execution. See `docs/behavioral-merge-review.md`.
+
 ## Cross-Platform Support
 
 Orca targets macOS, Linux, and Windows. Keep all platform-dependent behavior behind runtime checks:

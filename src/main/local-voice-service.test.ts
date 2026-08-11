@@ -98,6 +98,42 @@ describe('LocalVoiceService', () => {
     })
   })
 
+  it('restarts a crashed sidecar and retries the captured transcription once', async () => {
+    const firstChild = fakeChild()
+    const secondChild = fakeChild()
+    spawnMock.mockReturnValueOnce(firstChild).mockReturnValueOnce(secondChild)
+    let transcriptionAttempts = 0
+    const fetcher = vi.fn(async (url: string) => {
+      if (url.endsWith('/v1/transcriptions')) {
+        transcriptionAttempts += 1
+        if (transcriptionAttempts === 1) {
+          setTimeout(() => firstChild.emit('close', 134), 5)
+          throw new TypeError('fetch failed')
+        }
+        return new Response(JSON.stringify({ text: 'Recovered transcript.' }), { status: 200 })
+      }
+      if (url.includes('/v1/warmup')) {
+        return new Response(JSON.stringify({ parakeet_loaded: true, kokoro_loaded: true }), { status: 200 })
+      }
+      return new Response(JSON.stringify({ ok: true }), { status: 200 })
+    })
+    vi.stubGlobal('fetch', fetcher)
+    const service = new LocalVoiceService()
+    await service.start('/venv/bin/python')
+
+    const result = await service.transcribe(new Uint8Array([1, 2, 3]))
+
+    expect(result).toEqual({ ok: true, text: 'Recovered transcript.' })
+    expect(spawnMock).toHaveBeenCalledTimes(2)
+    expect(fetcher.mock.calls.filter(([url]) =>
+      String(url).endsWith('/v1/transcriptions'),
+    )).toHaveLength(2)
+    expect(fetcher).toHaveBeenCalledWith(
+      'http://127.0.0.1:17841/v1/warmup/transcription',
+      expect.objectContaining({ method: 'POST' }),
+    )
+  })
+
   it('rejects oversized audio before contacting the service', async () => {
     const service = new LocalVoiceService()
     const fetcher = vi.fn()

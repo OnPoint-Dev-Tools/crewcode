@@ -35,11 +35,12 @@ it.
 
 Voice mode survives chat and tab navigation during that turn. The persistent
 runtime remains pinned to the session where the user started it, so navigating
-cannot reroute the request or its result to another agent. Individual chat panes
-only present the runtime: when the originating pane unmounts, the next visible
-chat adopts the live overlay while the original transport, activity tracking,
-and eventual speech continue. A non-chat page may have no overlay host, but the
-voice turn continues and reappears when a chat surface is visible again.
+cannot reroute the request or its result to another agent. The full overlay
+belongs only to the originating chat and does not move into another workspace or
+chat. If the spoken reply begins while that chat is not visible, a compact
+animated voice notification identifies the originating chat for the duration of
+playback. Clicking it returns to that chat, and it dismisses itself when speech
+completes.
 
 The orb microphone can also be started with **Ctrl+Alt+V** and ended with
 **Ctrl+Alt+X**. Both shortcuts are editable under **Settings → Shortcuts** or
@@ -198,7 +199,7 @@ renderer transport; selection speech remains capped at 4,000 total characters.
   agent providers.
 - `voice-session-runtime.ts` owns the active transport and original agent target
   independently of chat-pane mounts, and holds tool calls for confirmation.
-- `useVoiceSessionController` attaches visible chat presenters to that runtime;
+- `useVoiceSessionController` presents that runtime only in its originating chat;
   unmounting it must never stop an active voice turn.
 - `voice-session-store.ts` owns high-frequency voice state outside `App.tsx`.
 - `ComposerDictationButton` and `one-shot-audio-capture.ts` own the
@@ -207,6 +208,10 @@ renderer transport; selection speech remains capped at 4,000 total characters.
   selection menu; it does not use voice-session or microphone state.
 - `FakeVoiceTransport` provides deterministic local lifecycle testing without a
   microphone, network, or paid request.
+
+## Audio capture implementation
+
+Microphone capture uses `AudioWorkletNode` for Local voice, one-shot dictation, and xAI Realtime. The shared worklet batches PCM frames off the renderer main thread and transfers them through a message port; a zero-gain sink keeps the graph active without microphone feedback. Do not reintroduce deprecated `ScriptProcessorNode` capture.
 
 ## Installing local voice
 

@@ -1100,6 +1100,18 @@ export default function App() {
     touchChatRecency(scopeId)
   }, [chatSessions, jumpToWorkspaceTab, restoreChatTabInWorkspace, sessionById, setActiveTabId, tabInfoById, touchChatRecency, workspaceByChatTabId, ws.workspaces])
 
+  const voiceNotificationSource = useCallback((scopeId: string): { chatName: string; workspaceName?: string } => {
+    const session = sessionById[scopeId]
+    const chatTabId = session?.tabId ?? (scopeId.includes('::') ? scopeId.split('::')[0] : scopeId)
+    const workspaceId = workspaceByChatTabId[chatTabId] ?? tabInfoById[chatTabId]?.wsId ?? activeWs
+    const workspace = ws.workspaces.find(w => w.id === workspaceId)
+    const chatName = session?.label?.trim() || tabInfoById[chatTabId]?.label || workspace?.name || 'Chat'
+    return {
+      chatName,
+      workspaceName: workspace?.name && workspace.name !== chatName ? workspace.name : undefined,
+    }
+  }, [activeWs, sessionById, tabInfoById, workspaceByChatTabId, ws.workspaces])
+
   const subscribeBridgeTurnEnd = bridges.subscribeTurnEnd
   const subscribeBridgeActivity = bridges.subscribeActivity
   const [agentDoneByScope, setAgentDoneByScope] = useState<Record<string, boolean>>({})
@@ -2949,7 +2961,10 @@ export default function App() {
         pluginMenuItems={pluginAddMenuItems}
         onPluginMenuItem={(item) => runPluginActionTarget(item.target, { source: 'plugin-menu' })}
       />
-      <NotificationBar />
+      <NotificationBar
+        onNavigateToChat={navigateToChatScope}
+        resolveChatSource={voiceNotificationSource}
+      />
       <TooltipHost />
       <GitAuthModal
         open={!!gitAuthRequest}

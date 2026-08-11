@@ -21,6 +21,19 @@ describe('naturalSpokenReply', () => {
     expect(reply).not.toContain('|')
   })
 
+  it('removes Markdown and Unicode asterisks without breaking natural phrasing', () => {
+    const reply = naturalSpokenReply([
+      '**Important:** restart CrewCode.',
+      'This is un**usual**, but it is *working* now.',
+      '＊Do not＊ read ⁎asterisk⁎ or \\*escaped stars\\* aloud.',
+    ].join('\n'))
+
+    expect(reply).toBe(
+      'Important: restart CrewCode. This is unusual, but it is working now. Do not read asterisk or escaped stars aloud.',
+    )
+    expect(reply).not.toMatch(/[＊*⁎∗✱]/u)
+  })
+
   it('keeps the complete prose response without sentence or character truncation', () => {
     const longSentence = `Details ${'remain audible '.repeat(60).trim()}.`
     expect(naturalSpokenReply(`One. Two. Three. Four. ${longSentence}`)).toBe(

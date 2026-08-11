@@ -6,7 +6,11 @@ import type {
   VoiceProviderId,
 } from '../../../shared/voice-types'
 import { useSettings } from './useSettings'
-import { useVoiceSessionStore, voiceSession } from '../stores/voice-session-store'
+import {
+  isVoiceSessionPresentedInScope,
+  useVoiceSessionStore,
+  voiceSession,
+} from '../stores/voice-session-store'
 import { createVoiceTransport } from '../voice/create-voice-transport'
 import { voiceRuntime } from '../voice/voice-session-runtime'
 
@@ -52,7 +56,7 @@ export function useVoiceSessionController({
   const [availability, setAvailability] = useState<VoiceProviderAvailabilityMap | null>(null)
 
   const provider = settings.voiceProvider
-  const active = globalVoice.presenterScopeId === scopeId && globalVoice.ownerKind === 'voice'
+  const active = isVoiceSessionPresentedInScope(globalVoice, scopeId)
   const microphoneBusy = globalVoice.activeScopeId !== null && !active
 
   const refreshAvailability = useCallback(async () => {

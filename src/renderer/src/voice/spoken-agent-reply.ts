@@ -27,7 +27,13 @@ export function naturalSpokenReply(raw: string): string {
     .replace(/https?:\/\/\S+/g, ' ')
     .replace(/`([^`\n]+)`/g, '$1')
     .replace(/^\s{0,3}#{1,6}\s*/gm, '')
-    .replace(/[*_~>#]/g, ' ')
+    // Strip Markdown emphasis delimiters rather than replacing them with spaces:
+    // `**important**` should be spoken as "important", not "asterisk" or as
+    // two artificially separated words. Include common Unicode asterisk forms
+    // because pasted/model-generated Markdown is not always ASCII.
+    .replace(/\\([*_~])/g, '$1')
+    .replace(/[＊*⁎∗✱✲✳✴✵✶✷✸✹✺✻✼✽✾❃❉❊❋]/gu, '')
+    .replace(/[_~>#]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
 

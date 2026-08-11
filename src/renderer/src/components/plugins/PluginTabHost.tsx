@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import type { Tab, Workspace } from '../../types'
-import { CREWCODE_PLUGIN_API_VERSION } from '../../../../shared/plugin-types'
+import { CREWCODE_PLUGIN_API_VERSION, PLUGIN_IFRAME_SANDBOX } from '../../../../shared/plugin-types'
 import type { PluginInvokeMethod, PluginResolveTabResult } from '../../../../shared/plugin-types'
 
 interface PluginTabHostProps {
@@ -157,7 +157,7 @@ export function PluginTabHost({ tab, workspace }: PluginTabHostProps) {
         title={resolved.title}
         name={iframeName}
         src={resolved.url}
-        sandbox="allow-scripts allow-same-origin allow-forms"
+        sandbox={PLUGIN_IFRAME_SANDBOX}
         referrerPolicy="no-referrer"
         onLoad={postContext}
         style={{ width: '100%', height: '100%', border: 0, display: 'block', background: '#0f120f' }}

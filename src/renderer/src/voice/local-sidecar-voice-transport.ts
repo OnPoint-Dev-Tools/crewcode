@@ -8,6 +8,7 @@ import {
   type LocalVoiceDevice,
 } from '../../../shared/voice-types'
 import { getCrewCodeClient } from '../runtime/crewcode-client'
+import { createAudioInputWorklet } from './audio-input-worklet'
 
 const TARGET_RATE = 16_000
 const SPEECH_THRESHOLD = 0.015
@@ -111,7 +112,8 @@ export class LocalSidecarVoiceTransport extends BaseVoiceTransport {
   private media: MediaStream | null = null
   private context: AudioContext | null = null
   private source: MediaStreamAudioSourceNode | null = null
-  private processor: ScriptProcessorNode | null = null
+  private processor: AudioWorkletNode | null = null
+  private processorDispose: (() => void) | null = null
   private sink: GainNode | null = null
   private chunks: Float32Array[] = []
   private preRoll: Float32Array[] = []
@@ -150,14 +152,13 @@ export class LocalSidecarVoiceTransport extends BaseVoiceTransport {
     this.context = audioContext
     const source = audioContext.createMediaStreamSource(media)
     this.source = source
-    // Kept behind the transport boundary until AudioWorklet can be bundled
-    // cross-platform; the zero-gain sink prevents microphone feedback.
-    const processor = audioContext.createScriptProcessor(4096, 1, 1)
+    const capture = await createAudioInputWorklet(audioContext, samples => this.consume(samples), 4096)
+    const processor = capture.node
     this.processor = processor
+    this.processorDispose = capture.dispose
     const sink = audioContext.createGain()
     sink.gain.value = 0
     this.sink = sink
-    processor.onaudioprocess = event => this.consume(event.inputBuffer.getChannelData(0))
     source.connect(processor)
     processor.connect(sink)
     sink.connect(audioContext.destination)
@@ -166,7 +167,7 @@ export class LocalSidecarVoiceTransport extends BaseVoiceTransport {
 
   async stop(): Promise<void> {
     this.stopPlayback()
-    this.processor?.disconnect()
+    this.processorDispose?.()
     this.source?.disconnect()
     this.sink?.disconnect()
     this.media?.getTracks().forEach(track => track.stop())
@@ -175,6 +176,7 @@ export class LocalSidecarVoiceTransport extends BaseVoiceTransport {
     this.context = null
     this.source = null
     this.processor = null
+    this.processorDispose = null
     this.sink = null
     this.resetCapture()
     this.emit({ type: 'phase', phase: 'idle', status: 'voice off' })

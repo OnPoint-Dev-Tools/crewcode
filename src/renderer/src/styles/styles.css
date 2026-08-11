@@ -734,6 +734,63 @@ body.light .wintab.pinned.on {
   line-height: 1.4;
   color: var(--foreground);
 }
+.voice-playback-notice {
+  min-height: 70px;
+  border-color: color-mix(in srgb, var(--crew-green-bright) 34%, var(--border));
+}
+.voice-notification-orb {
+  position: relative;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--crew-green-bright) 52%, var(--border));
+  background:
+    radial-gradient(circle at 34% 28%, color-mix(in srgb, var(--foreground) 22%, transparent), transparent 34%),
+    radial-gradient(circle, color-mix(in srgb, var(--crew-green-bright) 25%, transparent), var(--primary) 52%, color-mix(in srgb, var(--background) 86%, var(--primary)) 80%);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--crew-green-bright) 24%, transparent);
+}
+.voice-notification-core {
+  position: absolute;
+  z-index: 2;
+  inset: 29%;
+  border-radius: 50%;
+  background: radial-gradient(circle at 40% 35%, var(--foreground), var(--crew-green-bright) 30%, var(--primary) 76%);
+  animation: voice-core-speaking .38s ease-in-out infinite alternate;
+}
+.voice-notification-ring {
+  position: absolute;
+  inset: -1px;
+  border: 1px solid color-mix(in srgb, var(--crew-green-bright) 68%, transparent);
+  border-radius: 50%;
+  animation: voice-notification-pulse 1.35s ease-out infinite;
+}
+.voice-notification-ring.is-secondary { animation-delay: .62s; }
+.voice-notification-copy {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.voice-notification-copy strong {
+  font-family: var(--font-family-sans);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--foreground);
+}
+.voice-notification-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-family-mono);
+  font-size: 10.5px;
+  color: var(--muted-foreground);
+}
+@keyframes voice-notification-pulse {
+  0% { opacity: .8; transform: scale(.86); }
+  80%, 100% { opacity: 0; transform: scale(1.38); }
+}
 .notify-close {
   width: 28px;
   height: 28px;
@@ -1425,7 +1482,9 @@ body.light .wintab.pinned.on {
   .voice-orb-wave,
   .voice-orb-mesh,
   .voice-orb-spinner,
-  .voice-overlay-copy { animation: none !important; transition: none; }
+  .voice-overlay-copy,
+  .voice-notification-core,
+  .voice-notification-ring { animation: none !important; transition: none; }
 }
 
 /* Collapsed actions: single pill that opens a dropdown of the same tools. */

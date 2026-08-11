@@ -60,11 +60,10 @@ describe('claude bridge mode options', () => {
     expect(opts.disallowedTools).not.toContain('ExitPlanMode')
   })
 
-  it('only bypasses permissions for full sessions, gated by the dangerous flag', () => {
-    expect(getClaudeModeOptions('full')).toEqual({
-      permissionMode: 'bypassPermissions',
-      allowDangerouslySkipPermissions: true,
-    })
+  it('routes full sessions through canUseTool (default) so the tripwire can see commands', () => {
+    // Full Access no longer uses the SDK-native bypassPermissions; it auto-approves
+    // via canUseTool EXCEPT for denylisted catastrophic commands. No mode blindly bypasses.
+    expect(getClaudeModeOptions('full')).toEqual({ permissionMode: 'default' })
   })
 
   it('defaults to normal Claude permission prompts for build sessions', () => {
@@ -246,6 +245,59 @@ describe('claude bridge mode options', () => {
     })).toEqual({
       ...input,
       answers: { 'What should the branch be called?': 'feature/opencode-questions' },
+    })
+  })
+
+  it('keeps accepting the original single-question Claude input shape', () => {
+    const input = {
+      question: 'Which approach?',
+      header: 'Approach',
+      options: [{ label: 'Safe' }, { label: 'Fast' }],
+      multiSelect: false,
+    }
+
+    expect(claudeAskUserQuestionRequest(input)).toMatchObject({
+      kind: 'select',
+      title: 'Which approach?',
+      options: [{ id: 'Safe', label: 'Safe' }, { id: 'Fast', label: 'Fast' }],
+    })
+    expect(answerClaudeAskUserQuestionInput(input, {
+      requestId: 'r1', action: 'submit', optionId: 'Safe',
+    })).toEqual({
+      ...input,
+      answers: { 'Which approach?': 'Safe' },
+    })
+  })
+
+  it('answers every Claude question through canUseTool without a permission fallthrough', async () => {
+    const requestUser = vi.fn()
+      .mockResolvedValueOnce({ requestId: 'r1', action: 'submit', optionId: 'Safe' })
+      .mockResolvedValueOnce({ requestId: 'r2', action: 'submit', optionId: 'main' })
+    const bridge = await createClaudeBridge('/bin/claude', {
+      bridgeId: 'b1', provider: 'claude', cwd: '/repo', mode: 'full',
+    }, vi.fn(), requestUser)
+    await bridge.prompt('ask me')
+
+    const input = {
+      questions: [
+        { question: 'Which approach?', options: [{ label: 'Safe' }, { label: 'Fast' }] },
+        { question: 'Which branch?', options: [{ label: 'main' }, { label: 'next' }] },
+      ],
+    }
+    // A qualified tool name reproduces bridge paths that previously missed the
+    // exact-name check and auto-allowed an unanswered question in Full Access.
+    const result = await queryMock.mock.calls[0][0].options.canUseTool(
+      'builtin__AskUserQuestion', input, { toolUseID: 'question-1' },
+    )
+
+    expect(requestUser).toHaveBeenCalledTimes(2)
+    expect(requestUser.mock.calls.map(([request]) => request.kind)).toEqual(['select', 'select'])
+    expect(result).toEqual({
+      behavior: 'allow',
+      updatedInput: {
+        ...input,
+        answers: { 'Which approach?': 'Safe', 'Which branch?': 'main' },
+      },
     })
   })
 
@@ -532,8 +584,9 @@ describe('claude bridge mode options', () => {
     await bridge.prompt('second')
 
     expect(queryMock.mock.calls[0][0].options.permissionMode).toBe('default')
-    expect(queryMock.mock.calls[1][0].options.permissionMode).toBe('bypassPermissions')
-    expect(queryMock.mock.calls[1][0].options.allowDangerouslySkipPermissions).toBe(true)
+    // Full Access routes through canUseTool (default) for the tripwire, not native bypass.
+    expect(queryMock.mock.calls[1][0].options.permissionMode).toBe('default')
+    expect(queryMock.mock.calls[1][0].options.allowDangerouslySkipPermissions).toBeUndefined()
   })
 
   it('auto-allows non-question tool permissions in full mode', async () => {
@@ -546,6 +599,31 @@ describe('claude bridge mode options', () => {
 
     expect(result).toEqual({ behavior: 'allow', updatedInput: { command: 'npm test' } })
     expect(requestUser).not.toHaveBeenCalled()
+  })
+
+  it('pauses a denylisted command in full mode and blocks it when the user declines', async () => {
+    const requestUser = vi.fn().mockResolvedValue({ requestId: 'r', action: 'decline', optionId: 'reject' })
+    const opts: BridgeStartOpts = { bridgeId: 'b1', provider: 'claude', cwd: '/repo', mode: 'full' }
+    const bridge = await createClaudeBridge('/bin/claude', opts, vi.fn(), requestUser)
+
+    await bridge.prompt('clean up')
+    const result = await queryMock.mock.calls[0][0].options.canUseTool('Bash', { command: 'rm -rf /' }, { toolUseID: 'tool-1' })
+
+    expect(requestUser).toHaveBeenCalledTimes(1)
+    expect(requestUser.mock.calls[0][0]).toMatchObject({ dangerous: true, detail: 'rm -rf /' })
+    expect(result.behavior).toBe('deny')
+  })
+
+  it('runs a denylisted command in full mode when the user approves once', async () => {
+    const requestUser = vi.fn().mockResolvedValue({ requestId: 'r', action: 'accept', optionId: 'allow_once' })
+    const opts: BridgeStartOpts = { bridgeId: 'b1', provider: 'claude', cwd: '/repo', mode: 'full' }
+    const bridge = await createClaudeBridge('/bin/claude', opts, vi.fn(), requestUser)
+
+    await bridge.prompt('force it')
+    const result = await queryMock.mock.calls[0][0].options.canUseTool('Bash', { command: 'git push --force' }, { toolUseID: 'tool-2' })
+
+    expect(requestUser).toHaveBeenCalledTimes(1)
+    expect(result).toEqual({ behavior: 'allow', updatedInput: { command: 'git push --force' } })
   })
 
   it('uses Claude SDK context usage instead of aggregate billing tokens', async () => {

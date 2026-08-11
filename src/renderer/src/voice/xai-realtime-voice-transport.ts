@@ -4,6 +4,7 @@ import {
   voiceSessionInstructions,
   type VoiceTransportContext,
 } from './voice-agent-contract'
+import { createAudioInputWorklet } from './audio-input-worklet'
 
 const AUDIO_RATE = 24_000
 
@@ -30,8 +31,10 @@ export class XaiRealtimeVoiceTransport extends BaseVoiceTransport {
   private socket: WebSocket | null = null
   private media: MediaStream | null = null
   private audioContext: AudioContext | null = null
-  private processor: ScriptProcessorNode | null = null
+  private processor: AudioWorkletNode | null = null
+  private processorDispose: (() => void) | null = null
   private inputSource: MediaStreamAudioSourceNode | null = null
+  private inputSink: GainNode | null = null
   private scheduledAt = 0
   private playing = new Set<AudioBufferSourceNode>()
   private awaitingAgentResult = false
@@ -68,16 +71,19 @@ export class XaiRealtimeVoiceTransport extends BaseVoiceTransport {
     this.audioContext = audioContext
     const inputSource = audioContext.createMediaStreamSource(media)
     this.inputSource = inputSource
-    // ScriptProcessor is intentionally isolated here as a compatibility bridge;
-    // a future local transport can replace it with a bundled AudioWorklet.
-    const processor = audioContext.createScriptProcessor(2048, 1, 1)
-    this.processor = processor
-    processor.onaudioprocess = event => {
+    const capture = await createAudioInputWorklet(audioContext, samples => {
       if (socket.readyState !== WebSocket.OPEN) return
-      socket.send(floatToPcm16(event.inputBuffer.getChannelData(0)))
-    }
+      socket.send(floatToPcm16(samples))
+    }, 2048)
+    const processor = capture.node
+    this.processor = processor
+    this.processorDispose = capture.dispose
+    const inputSink = audioContext.createGain()
+    inputSink.gain.value = 0
+    this.inputSink = inputSink
     inputSource.connect(processor)
-    processor.connect(audioContext.destination)
+    processor.connect(inputSink)
+    inputSink.connect(audioContext.destination)
 
     await new Promise<void>((resolve, reject) => {
       socket.addEventListener('open', () => resolve(), { once: true })
@@ -109,8 +115,9 @@ export class XaiRealtimeVoiceTransport extends BaseVoiceTransport {
   async stop(): Promise<void> {
     this.playing.forEach(source => { try { source.stop() } catch { /* already stopped */ } })
     this.playing.clear()
-    this.processor?.disconnect()
+    this.processorDispose?.()
     this.inputSource?.disconnect()
+    this.inputSink?.disconnect()
     this.media?.getTracks().forEach(track => track.stop())
     this.socket?.close()
     await this.audioContext?.close()
@@ -118,7 +125,9 @@ export class XaiRealtimeVoiceTransport extends BaseVoiceTransport {
     this.media = null
     this.audioContext = null
     this.processor = null
+    this.processorDispose = null
     this.inputSource = null
+    this.inputSink = null
     this.awaitingAgentResult = false
     this.agentResultResponseDone = false
     this.emit({ type: 'phase', phase: 'idle', status: 'voice off' })

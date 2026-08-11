@@ -6,6 +6,7 @@ import { toAcpMcpServer } from '../../shared/mcp-types'
 import type { AgentBridge, BridgeStartOpts, EmitFn, ModeLevel, RequestUserFn, TurnUsage } from './bridge-types'
 import { buildUsage } from './model-context'
 import { enrichUsageContextWindow } from './openrouter-model-context'
+import { tripwireForToolCall } from './dangerous-command'
 
 // Hermes via ACP (Agent Client Protocol) — JSON-RPC 2.0 over stdio.
 // Spec: https://github.com/zed-industries/agent-client-protocol
@@ -63,7 +64,7 @@ interface AcpRequestIn {
 
 const WRITE_TOOL_NAMES = new Set(['write', 'edit', 'apply_patch', 'bash', 'shell', 'execute', 'run'])
 
-function isWriteToolBlocked(opts: Pick<BridgeStartOpts, 'mode' | 'toolPolicy'>, toolName: string | undefined): boolean {
+export function isWriteToolBlocked(opts: Pick<BridgeStartOpts, 'mode' | 'toolPolicy'>, toolName: string | undefined): boolean {
   if (opts.toolPolicy !== 'read-only' && opts.mode !== 'ask' && opts.mode !== 'plan') return false
   const lower = (toolName ?? '').toLowerCase()
   return WRITE_TOOL_NAMES.has(lower)
@@ -388,7 +389,21 @@ export async function createHermesBridge(
       if (req.method === 'session/request_permission') {
         // Composer mode can change without respawning the ACP session. Keep the
         // permission gate in sync with the current turn's mode.
-        if (opts.mode === 'full' || !requestUser) {
+        const toolCall = (params.toolCall && typeof params.toolCall === 'object') ? params.toolCall as Record<string, unknown> : undefined
+        const verdict = tripwireForToolCall(typeof toolCall?.kind === 'string' ? toolCall.kind : undefined, toolCall?.rawInput)
+        if (opts.mode === 'full') {
+          // Auto-approve in Full Access — except denylisted catastrophic commands,
+          // which fall through to the confirmation prompt (the Full Access tripwire).
+          if (!verdict.dangerous) {
+            send({ jsonrpc: '2.0', id: req.id, result: { outcome: { outcome: 'selected', optionId: 'allow_once' } } })
+            return
+          }
+          if (!requestUser) {
+            send({ jsonrpc: '2.0', id: req.id, result: { outcome: { outcome: 'cancelled' } } })
+            return
+          }
+          // dangerous + human available: fall through to the prompt below.
+        } else if (!requestUser) {
           send({ jsonrpc: '2.0', id: req.id, result: { outcome: { outcome: 'selected', optionId: 'allow_once' } } })
           return
         }
@@ -399,8 +414,8 @@ export async function createHermesBridge(
         const response = await requestUser({
           kind: 'permission',
           turnId: currentTurnId ?? undefined,
-          title: typeof params.title === 'string' ? params.title : 'permission required',
-          message: typeof params.message === 'string' ? params.message : typeof params.reason === 'string' ? params.reason : undefined,
+          title: verdict.dangerous ? 'Full Access tripwire — confirm dangerous command' : (typeof params.title === 'string' ? params.title : 'permission required'),
+          message: verdict.dangerous ? verdict.reason : (typeof params.message === 'string' ? params.message : typeof params.reason === 'string' ? params.reason : undefined),
           detail: JSON.stringify(params, null, 2).slice(0, 1200),
           options: permissionOptions(params),
           dangerous: true,

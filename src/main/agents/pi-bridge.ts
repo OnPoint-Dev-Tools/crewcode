@@ -73,7 +73,7 @@ export function usageFromPiEvent(ev: Record<string, unknown>, fallbackModel: str
   })
 }
 
-function isWriteToolBlocked(opts: Pick<BridgeStartOpts, 'mode' | 'toolPolicy'>, toolName: string | undefined): boolean {
+export function isWriteToolBlocked(opts: Pick<BridgeStartOpts, 'mode' | 'toolPolicy'>, toolName: string | undefined): boolean {
   if (opts.toolPolicy !== 'read-only' && opts.mode !== 'ask' && opts.mode !== 'plan') return false
   const lower = (toolName ?? '').toLowerCase()
   return WRITE_TOOL_NAMES.has(lower)

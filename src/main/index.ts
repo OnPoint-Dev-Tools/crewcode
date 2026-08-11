@@ -22,6 +22,7 @@ import { registerCustomCommandsIpc } from './customCommands'
 import { registerMcpConfigIpc } from './mcpConfig'
 import { registerKeybindsIpc } from './keybindsFile'
 import { PLUGIN_PROTOCOL, loadPluginRegistry, registerPluginIpc, registerPluginProtocol } from './plugins'
+import { APP_CSP, SECURE_WINDOW_WEB_PREFERENCES, isAllowedExternalScheme } from './security-config'
 import { registerSystemStatsIpc } from './systemStats'
 import { registerTranscriptIpc } from './transcript-store'
 import { browserGrabManager } from './browser/browser-grab-manager'
@@ -84,22 +85,8 @@ protocol.registerSchemesAsPrivileged([
 // `wasm-unsafe-eval` is required by shiki's oniguruma WASM; the sha256 hash whitelists
 // the one inline bootstrap script in index.html. Plugin assets (crewcode-plugin://)
 // ship their own stricter CSP and webview guests run in separate partitions, so
-// both are left untouched here.
-const APP_CSP = [
-  "default-src 'self'",
-  "script-src 'self' 'wasm-unsafe-eval' 'sha256-Dxhj1PJcnns94efqN0+8KN/rWrA9nBd+Xqz9tu6zLB4='",
-  // colors_and_type.css @imports Inter/JetBrains Mono from Google Fonts.
-  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-  "img-src 'self' data: blob:",
-  "font-src 'self' data: https://fonts.gstatic.com",
-  "connect-src 'self' data: blob:",
-  "media-src 'self' data: blob:",
-  "worker-src 'self' blob:",
-  "frame-src 'self' crewcode-plugin:",
-  "object-src 'none'",
-  "base-uri 'none'",
-].join('; ')
-
+// both are left untouched here. The directive list lives in ./security-config
+// (pure + test-guarded so it cannot be silently weakened).
 function applyContentSecurityPolicy(): void {
   if (isDev) return
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
@@ -135,8 +122,7 @@ function createWindow(): electron.BrowserWindow {
     icon: nativeImage.createFromPath(iconPath),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
+      ...SECURE_WINDOW_WEB_PREFERENCES,
       webviewTag: true,
     }
   })
@@ -144,7 +130,7 @@ function createWindow(): electron.BrowserWindow {
   win.webContents.setWindowOpenHandler(({ url }) => {
     try {
       const parsed = new URL(url)
-      if (parsed.protocol === 'http:' || parsed.protocol === 'https:' || parsed.protocol === 'mailto:') {
+      if (isAllowedExternalScheme(parsed.protocol)) {
         void shell.openExternal(url)
       }
     } catch { /* deny malformed popup URLs */ }
@@ -222,8 +208,7 @@ app.whenReady().then(async () => {
 app.on('web-contents-created', (_e, contents) => {
   contents.on('will-attach-webview', (_evt, webPreferences) => {
     delete webPreferences.preload
-    webPreferences.nodeIntegration = false
-    webPreferences.contextIsolation = true
+    Object.assign(webPreferences, SECURE_WINDOW_WEB_PREFERENCES)
   })
 })
 
@@ -579,7 +564,7 @@ ipcMain.handle('shell:openExternal', (_e, url: string) => {
   // able to invoke arbitrary protocol handlers (file://, custom app schemes).
   try {
     const { protocol: scheme } = new URL(url)
-    if (scheme !== 'http:' && scheme !== 'https:' && scheme !== 'mailto:') {
+    if (!isAllowedExternalScheme(scheme)) {
       return { ok: false, error: `refused to open scheme: ${scheme}` }
     }
   } catch {

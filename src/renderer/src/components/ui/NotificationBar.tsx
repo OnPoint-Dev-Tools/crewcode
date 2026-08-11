@@ -1,6 +1,8 @@
 import React, { useEffect, useState, useRef } from 'react'
 import { useNotifications, type Notice } from '../../hooks/useNotifications'
 import { PROVIDER_IMAGES, PROVIDER_META, providerImageClass } from '../composer/provider-meta'
+import { isBackgroundVoicePlayback, useVoiceSessionStore } from '../../stores/voice-session-store'
+import { voiceRuntime } from '../../voice/voice-session-runtime'
 import { Icon } from './Icon'
 
 function NotificationItem({ notice, dismiss }: { notice: Notice; dismiss: (id: string) => void }) {
@@ -145,9 +147,58 @@ function NotificationItem({ notice, dismiss }: { notice: Notice; dismiss: (id: s
   )
 }
 
-export function NotificationBar() {
+interface NotificationBarProps {
+  onNavigateToChat?: (scopeId: string) => void
+  resolveChatSource?: (scopeId: string) => { chatName: string; workspaceName?: string }
+}
+
+export function NotificationBar({ onNavigateToChat, resolveChatSource }: NotificationBarProps) {
   const { notices, dismiss } = useNotifications()
-  const displayNotices = notices.slice(0, 3)
+  const backgroundVoiceScopeId = useVoiceSessionStore(state =>
+    isBackgroundVoicePlayback(state) ? state.activeScopeId : null,
+  )
+  const backgroundVoiceSpeaking = backgroundVoiceScopeId !== null
+  const [voiceNoticeScopeId, setVoiceNoticeScopeId] = useState<string | null>(null)
+  const [voiceNoticeMounted, setVoiceNoticeMounted] = useState(false)
+  const [voiceNoticeVisible, setVoiceNoticeVisible] = useState(false)
+  const [voiceNoticeLeaving, setVoiceNoticeLeaving] = useState(false)
+
+  useEffect(() => {
+    let frame: number | null = null
+    let exitTimer: ReturnType<typeof setTimeout> | null = null
+    if (backgroundVoiceSpeaking) {
+      setVoiceNoticeScopeId(backgroundVoiceScopeId)
+      setVoiceNoticeMounted(true)
+      setVoiceNoticeLeaving(false)
+      frame = requestAnimationFrame(() => setVoiceNoticeVisible(true))
+    } else if (voiceNoticeMounted) {
+      setVoiceNoticeVisible(false)
+      setVoiceNoticeLeaving(true)
+      exitTimer = setTimeout(() => {
+        setVoiceNoticeMounted(false)
+        setVoiceNoticeLeaving(false)
+      }, 300)
+    }
+    return () => {
+      if (frame !== null) cancelAnimationFrame(frame)
+      if (exitTimer !== null) clearTimeout(exitTimer)
+    }
+  }, [backgroundVoiceScopeId, backgroundVoiceSpeaking, voiceNoticeMounted])
+
+  const voiceSource = voiceNoticeScopeId && resolveChatSource
+    ? resolveChatSource(voiceNoticeScopeId)
+    : { chatName: 'another chat' }
+  const canNavigateToVoiceChat = voiceNoticeScopeId !== null && onNavigateToChat !== undefined
+  const navigateToVoiceChat = (): void => {
+    if (voiceNoticeScopeId && onNavigateToChat) onNavigateToChat(voiceNoticeScopeId)
+  }
+  const handleVoiceNoticeKeyDown = (event: React.KeyboardEvent<HTMLDivElement>): void => {
+    if (!canNavigateToVoiceChat || (event.key !== 'Enter' && event.key !== ' ')) return
+    event.preventDefault()
+    navigateToVoiceChat()
+  }
+
+  const displayNotices = notices.slice(0, voiceNoticeMounted ? 2 : 3)
 
   useEffect(() => {
     if (displayNotices.length === 0) return
@@ -158,25 +209,68 @@ export function NotificationBar() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [displayNotices, dismiss])
 
-  if (notices.length === 0) return null
+  if (notices.length === 0 && !voiceNoticeMounted) return null
+
+  const stackStyle = (index: number): React.CSSProperties => ({
+    ['--stack-index' as string]: index,
+    ['--stack-offset' as string]: `${index * 8}px`,
+    ['--stack-scale' as string]: `${1 - index * 0.03}`,
+    zIndex: 1500 - index,
+  })
 
   return (
     <div className="notification-bar-container" aria-live="polite" aria-atomic="true">
       <div className="notification-stack">
-        {displayNotices.map((notice, i) => (
-          <div
-            key={notice.id}
-            className="notification-stack-item"
-            style={{
-              ['--stack-index' as string]: i,
-              ['--stack-offset' as string]: `${i * 8}px`,
-              ['--stack-scale' as string]: `${1 - i * 0.03}`,
-              zIndex: 1500 - i,
-            } as React.CSSProperties}
-          >
-            <NotificationItem notice={notice} dismiss={dismiss} />
+        {voiceNoticeMounted && (
+          <div className="notification-stack-item" style={stackStyle(0)}>
+            <div
+              className={`notification-item voice-playback-notice ${canNavigateToVoiceChat ? 'clickable' : ''} ${voiceNoticeVisible ? 'visible' : ''} ${voiceNoticeLeaving ? 'leaving' : ''}`}
+              role={canNavigateToVoiceChat ? 'button' : 'status'}
+              tabIndex={canNavigateToVoiceChat ? 0 : undefined}
+              onClick={navigateToVoiceChat}
+              onKeyDown={handleVoiceNoticeKeyDown}
+              aria-label={`Voice agent reply from ${voiceSource.chatName} is playing${canNavigateToVoiceChat ? '. Open chat' : ''}`}
+              style={{
+                '--notify-color': 'var(--crew-green-bright)',
+                '--notify-bg': 'color-mix(in srgb, var(--crew-green-bright) 10%, var(--card))',
+              } as React.CSSProperties}
+            >
+              <div className="notify-left-border" />
+              <div className="voice-notification-orb" aria-hidden="true">
+                <span className="voice-notification-core" />
+                <span className="voice-notification-ring" />
+                <span className="voice-notification-ring is-secondary" />
+              </div>
+              <div className="voice-notification-copy">
+                <strong>{voiceSource.chatName}</strong>
+                <span>
+                  Voice reply speaking
+                  {voiceSource.workspaceName ? ` · ${voiceSource.workspaceName}` : ''}
+                </span>
+              </div>
+              <button
+                className="notify-close"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  voiceRuntime.stop()
+                }}
+                onKeyDown={(event) => event.stopPropagation()}
+                aria-label="Stop voice reply"
+                title="Stop voice reply"
+              >
+                <Icon name="x" size={12} />
+              </button>
+            </div>
           </div>
-        ))}
+        )}
+        {displayNotices.map((notice, i) => {
+          const stackIndex = i + (voiceNoticeMounted ? 1 : 0)
+          return (
+            <div key={notice.id} className="notification-stack-item" style={stackStyle(stackIndex)}>
+              <NotificationItem notice={notice} dismiss={dismiss} />
+            </div>
+          )
+        })}
       </div>
     </div>
   )

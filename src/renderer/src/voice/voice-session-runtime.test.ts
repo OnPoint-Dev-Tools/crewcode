@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useMessagesStore } from '../stores/chat-messages-store'
-import { useVoiceSessionStore, voiceSession } from '../stores/voice-session-store'
+import {
+  isBackgroundVoicePlayback,
+  isVoiceSessionPresentedInScope,
+  useVoiceSessionStore,
+  voiceSession,
+} from '../stores/voice-session-store'
 import { FakeVoiceTransport } from './fake-voice-transport'
 import { voiceRuntime } from './voice-session-runtime'
 
@@ -31,6 +36,7 @@ describe('voice session runtime', () => {
     expect(voiceRuntime.activeScopeId()).toBe('origin-session')
     expect(transport.context).not.toBeNull()
     expect(useVoiceSessionStore.getState().presenterScopeId).toBe('visible-session')
+    expect(isVoiceSessionPresentedInScope(useVoiceSessionStore.getState(), 'visible-session')).toBe(false)
 
     transport.injectToolCall({
       callId: 'voice-call',
@@ -48,6 +54,7 @@ describe('voice session runtime', () => {
     }])
 
     expect(transport.agentResults).toEqual(['The voice tests pass.'])
+    expect(isBackgroundVoicePlayback(useVoiceSessionStore.getState())).toBe(true)
     await new Promise<void>(resolve => queueMicrotask(resolve))
     expect(voiceRuntime.activeScopeId()).toBeNull()
   })

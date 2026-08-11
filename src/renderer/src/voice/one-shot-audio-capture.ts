@@ -1,4 +1,5 @@
 import { encodeMonoWav } from './local-sidecar-voice-transport'
+import { createAudioInputWorklet } from './audio-input-worklet'
 
 const TARGET_RATE = 16_000
 const SPEECH_THRESHOLD = 0.015
@@ -43,7 +44,8 @@ export class OneShotAudioCapture {
   private media: MediaStream | null = null
   private context: AudioContext | null = null
   private source: MediaStreamAudioSourceNode | null = null
-  private processor: ScriptProcessorNode | null = null
+  private processor: AudioWorkletNode | null = null
+  private processorDispose: (() => void) | null = null
   private sink: GainNode | null = null
   private chunks: Float32Array[] = []
   private preRoll: Float32Array[] = []
@@ -95,12 +97,11 @@ export class OneShotAudioCapture {
       const context = new AudioContext()
       this.context = context
       this.source = context.createMediaStreamSource(this.media)
-      // A zero-gain sink keeps ScriptProcessor active without feeding the mic
-      // back through the user's speakers.
-      this.processor = context.createScriptProcessor(4096, 1, 1)
+      const capture = await createAudioInputWorklet(context, samples => this.consume(samples), 4096)
+      this.processor = capture.node
+      this.processorDispose = capture.dispose
       this.sink = context.createGain()
       this.sink.gain.value = 0
-      this.processor.onaudioprocess = event => this.consume(event.inputBuffer.getChannelData(0))
       this.source.connect(this.processor)
       this.processor.connect(this.sink)
       this.sink.connect(context.destination)
@@ -143,7 +144,7 @@ export class OneShotAudioCapture {
   }
 
   private async close(): Promise<void> {
-    this.processor?.disconnect()
+    this.processorDispose?.()
     this.source?.disconnect()
     this.sink?.disconnect()
     this.media?.getTracks().forEach(track => track.stop())
@@ -152,6 +153,7 @@ export class OneShotAudioCapture {
     this.context = null
     this.source = null
     this.processor = null
+    this.processorDispose = null
     this.sink = null
   }
 }

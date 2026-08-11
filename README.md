@@ -38,7 +38,7 @@ It targets MacOS (I'd appreciate if someone can help with testing Mac), Linux, a
 
 - Run **CrewCoder agent**, **Claude Code agent**, **Codex**, **OpenCode**, **pi**, **Ollama**, **Hermes**, **OpenRouter** and **Grok Build**from one app
 - Mix **structured agent bridges** and **PTY-backed terminals** depending on provider
-- Keep multiple chat **sessions per workspace**, each with its own agent, model, mode, and effort
+- Keep multiple chat tabs **sessions per workspace**, each with its own agent, model, mode, and effort
 - Resume persistent sessions instead of starting from scratch every time
 - Extend CrewCode with local plugins, custom panels, MCP servers, browser/git actions, and plugin-powered agent providers
 - Switch Providers Mid Session and it creates an hand-off Summary for new agent to continue work with out leaving chat and losing context
@@ -52,6 +52,8 @@ It targets MacOS (I'd appreciate if someone can help with testing Mac), Linux, a
 - Initialize new projects from scratch
 - Create, switch, merge, and remove **git worktrees** inside the app
 - Keep parallel work isolated without stashing or branch juggling
+- Surface exact file overlap and likely cross-file contract collisions before crew merges
+- Recover crew worktree/commit ownership and interrupted merge audit state after restart
 
 ### Crew orchestration
 

@@ -4,6 +4,14 @@
 export const CREWCODE_PLUGIN_MANIFEST = 'crewcode.plugin.json'
 export const CREWCODE_PLUGIN_API_VERSION = '0.1'
 
+// The exact sandbox token set for plugin iframes. `allow-same-origin` grants the
+// frame ONLY its own crewcode-plugin://<pluginId> origin (a distinct standard
+// scheme, cross-origin to the app renderer and to every other plugin), which it
+// needs to load its own assets — it cannot reach `parent`. Deliberately WITHOUT
+// allow-top-navigation, allow-popups, allow-modals, or allow-same-origin-to-parent.
+// Guarded by security-boundary-proof.test.ts so it cannot silently gain tokens.
+export const PLUGIN_IFRAME_SANDBOX = 'allow-scripts allow-same-origin allow-forms'
+
 export type PluginPermission =
   | 'workspace:read'
   | 'workspace:write'

@@ -402,6 +402,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('git:createBranch', cwd, name),
   gitMerge: (cwd: string, ref: string) =>
     ipcRenderer.invoke('git:merge', cwd, ref),
+  gitSuggestedCrewChecks: (cwd: string) =>
+    ipcRenderer.invoke('git:suggestedCrewChecks', cwd),
+  gitRunSuggestedCrewCheck: (cwd: string, id: string) =>
+    ipcRenderer.invoke('git:runSuggestedCrewCheck', cwd, id),
+  gitCrewIntegrationStatus: (sessionId: string) =>
+    ipcRenderer.invoke('git:crewIntegrationStatus', sessionId),
+  gitVerifyCrewIntegration: (request: unknown) =>
+    ipcRenderer.invoke('git:verifyCrewIntegration', request),
+  gitApplyCrewIntegration: (sessionId: string) =>
+    ipcRenderer.invoke('git:applyCrewIntegration', sessionId),
   gitMergeDelegated: (request: { worktreePath: string; repoPath: string; branch: string; base: string }) =>
     ipcRenderer.invoke('git:mergeDelegated', request),
   gitDiffDelegated: (worktreePath: string, base: string, branch: string) =>

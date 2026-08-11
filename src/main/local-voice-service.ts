@@ -174,21 +174,41 @@ export class LocalVoiceService {
     if (audio.byteLength === 0 || audio.byteLength > MAX_AUDIO_BYTES) {
       return { ok: false, error: 'Voice audio must be between 1 byte and 32 MB.' }
     }
-    try {
-      const body = Uint8Array.from(audio).buffer
-      const response = await this.request('/v1/transcriptions', {
-        method: 'POST',
-        headers: { 'Content-Type': 'audio/wav' },
-        body,
-      })
-      const payload = await response.json() as { text?: unknown; detail?: unknown }
-      if (!response.ok) return { ok: false, error: this.responseError(payload, response.status) }
-      return typeof payload.text === 'string' && payload.text.trim()
-        ? { ok: true, text: payload.text.trim() }
-        : { ok: false, error: 'Parakeet returned an empty transcription.' }
-    } catch (error) {
-      return { ok: false, error: this.requestFailure(error) }
+
+    const body = Uint8Array.from(audio).buffer
+    let firstFailure: unknown = null
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        const response = await this.request('/v1/transcriptions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'audio/wav' },
+          body,
+        })
+        const payload = await response.json() as { text?: unknown; detail?: unknown }
+        if (!response.ok) return { ok: false, error: this.responseError(payload, response.status) }
+        return typeof payload.text === 'string' && payload.text.trim()
+          ? { ok: true, text: payload.text.trim() }
+          : { ok: false, error: 'Parakeet returned an empty transcription.' }
+      } catch (error) {
+        firstFailure ??= error
+        const failedChild = this.child
+        if (attempt === 0 && failedChild) await this.waitForExit(failedChild)
+        const configuration = this.configuration
+        if (attempt > 0 || this.child || !configuration) {
+          return { ok: false, error: this.requestFailure(firstFailure) }
+        }
+
+        // CUDA faults terminate the native sidecar and can race with a pending
+        // transcription. Preserve the captured WAV and retry it once in a clean
+        // process instead of making the user record the utterance again.
+        const running = await this.ensureRunning(configuration.pythonPath, configuration.device)
+        if (!running.ready) return { ok: false, error: running.error ?? this.requestFailure(firstFailure) }
+        const warmed = await this.warmup('transcription')
+        if (!warmed.ready) return { ok: false, error: warmed.error ?? this.requestFailure(firstFailure) }
+      }
     }
+
+    return { ok: false, error: this.requestFailure(firstFailure) }
   }
 
   async synthesize(text: string, voice: string, speed = 1): Promise<LocalVoiceSpeechResult> {
@@ -281,6 +301,19 @@ export class LocalVoiceService {
         Authorization: `Bearer ${this.token}`,
       },
       signal: AbortSignal.timeout(timeoutMs),
+    })
+  }
+
+  private async waitForExit(child: ChildProcess): Promise<void> {
+    if (this.child !== child) return
+    await new Promise<void>(resolve => {
+      const finish = (): void => {
+        clearTimeout(timeout)
+        child.off('close', finish)
+        resolve()
+      }
+      const timeout = setTimeout(finish, 500)
+      child.once('close', finish)
     })
   }
 

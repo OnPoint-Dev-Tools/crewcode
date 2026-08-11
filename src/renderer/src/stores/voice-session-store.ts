@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { VoiceSessionPhase } from '../../../shared/voice-types'
 
-interface VoiceSessionState {
+export interface VoiceSessionState {
   activeScopeId: string | null
   presenterScopeId: string | null
   ownerKind: 'voice' | 'dictation' | null
@@ -20,6 +20,19 @@ export const useVoiceSessionStore = create<VoiceSessionState>(() => ({
   transcript: '',
   error: null,
 }))
+
+export function isVoiceSessionPresentedInScope(state: VoiceSessionState, scopeId: string): boolean {
+  return state.ownerKind === 'voice'
+    && state.activeScopeId === scopeId
+    && state.presenterScopeId === scopeId
+}
+
+export function isBackgroundVoicePlayback(state: VoiceSessionState): boolean {
+  return state.ownerKind === 'voice'
+    && state.phase === 'speaking'
+    && state.activeScopeId !== null
+    && state.presenterScopeId !== state.activeScopeId
+}
 
 const setState = useVoiceSessionStore.setState
 

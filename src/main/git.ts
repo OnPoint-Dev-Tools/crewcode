@@ -1,15 +1,34 @@
 import electron from 'electron'
 import { execFile } from 'child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'fs'
-import { join } from 'path'
+import { join, posix } from 'path'
 import os from 'os'
-import { isRemoteRoot, parseRemoteTarget } from './remote/ssh-target'
+import { formatRemoteRoot, isRemoteRoot, parseRemoteTarget } from './remote/ssh-target'
 import { execRemote } from './remote/ssh-pool'
 import { parseStatus, parseLog, isSigningFailure, isMergeConflictOutput, type GitStatusFile } from './git-porcelain-parse'
 import { mergeDelegatedBranch } from './delegated-merge'
 import { unstagePaths } from './git-unstage'
+import {
+  resolveSuggestedCrewCheck,
+  suggestedCrewChecks,
+  suggestedCrewChecksForScripts,
+  type SuggestedCrewCheck,
+} from './crew-verification'
+import {
+  applyCrewIntegration,
+  verifyCrewIntegration,
+  type CrewIntegrationRequest,
+  type IntegrationGitRunner,
+  type IntegrationLane,
+} from './crew-integration-verification'
+import { CrewMergeJournal, type CrewIntegrationJournalRecord } from './crew-merge-journal'
 
-const { ipcMain } = electron
+const { app, ipcMain } = electron
+let crewMergeJournal: CrewMergeJournal | null = null
+function mergeJournal(): CrewMergeJournal {
+  crewMergeJournal ??= new CrewMergeJournal(join(app.getPath('userData'), 'crew-merge-journal.json'))
+  return crewMergeJournal
+}
 
 // Single-quote an argument for safe interpolation into the remote git command.
 function shq(s: string): string {
@@ -129,6 +148,96 @@ async function gitSigningEnv(cwd: string, passphrase: string): Promise<{ configA
     env: { GIT_TERMINAL_PROMPT: '0' },
     cleanup,
   }
+}
+
+async function discoverCrewChecks(cwd: string): Promise<SuggestedCrewCheck[]> {
+  if (!isRemoteRoot(cwd)) return suggestedCrewChecks(cwd)
+  const target = parseRemoteTarget(cwd)
+  if (!target) return []
+  const command = `cd ${shq(target.path)} && if [ -f pnpm-lock.yaml ]; then printf 'pnpm\\n'; elif [ -f yarn.lock ]; then printf 'yarn\\n'; elif [ -f bun.lock ] || [ -f bun.lockb ]; then printf 'bun\\n'; else printf 'npm\\n'; fi && cat package.json`
+  const result = await execRemote(target, command)
+  if (result.code !== 0) return []
+  const newline = result.stdout.indexOf('\n')
+  if (newline < 0) return []
+  try {
+    const manager = result.stdout.slice(0, newline).trim()
+    const pkg = JSON.parse(result.stdout.slice(newline + 1)) as { scripts?: Record<string, unknown> }
+    return suggestedCrewChecksForScripts(pkg.scripts ?? {}, manager)
+  } catch { return [] }
+}
+
+async function runCrewCheck(cwd: string, check: SuggestedCrewCheck): Promise<{ code: number; output: string }> {
+  if (isRemoteRoot(cwd)) {
+    const target = parseRemoteTarget(cwd)
+    if (!target) return { code: 1, output: 'invalid remote root' }
+    const command = `cd ${shq(target.path)} && CI=1 ${[check.command, ...check.args].map(shq).join(' ')}`
+    const result = await execRemote(target, command)
+    return { code: result.code ?? 1, output: `${result.stdout}${result.stderr}`.slice(-20_000) }
+  }
+  return new Promise(resolve => {
+    execFile(check.command, check.args, {
+      cwd,
+      env: { ...process.env, CI: '1' },
+      timeout: 120_000,
+      maxBuffer: 10 * 1024 * 1024,
+    }, (error, stdout, stderr) => {
+      resolve({ code: error ? 1 : 0, output: `${stdout ?? ''}${stderr ?? ''}`.slice(-20_000) })
+    })
+  })
+}
+
+interface CrewIntegrationIpcRequest {
+  sessionId: string
+  repoPath: string
+  baseBranch: string
+  baseHead: string
+  lanes: IntegrationLane[]
+}
+
+const integrationGitRunner: IntegrationGitRunner = async (cwd, args) => {
+  try {
+    const result = await runGit(cwd, args)
+    return { code: 0, ...result }
+  } catch (error) {
+    const detail = error as Error & { stdout?: string; stderr?: string }
+    return { code: 1, stdout: detail.stdout ?? '', stderr: detail.stderr ?? detail.message }
+  }
+}
+
+function integrationLocations(repoPath: string, sessionId: string): { path: string; cwd: string; retentionRef: string } | null {
+  const slug = sessionId.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 80) || 'session'
+  const retentionRef = `refs/crewcode/integration/${slug}`
+  if (isRemoteRoot(repoPath)) {
+    const target = parseRemoteTarget(repoPath)
+    if (!target) return null
+    const path = posix.join(target.path, '.worktrees', `crew-integration-${slug}`)
+    return { path, cwd: formatRemoteRoot({ ...target, path }), retentionRef }
+  }
+  const path = join(repoPath, '.worktrees', `crew-integration-${slug}`)
+  return { path, cwd: path, retentionRef }
+}
+
+async function reconcileIntegrationRecord(record: CrewIntegrationJournalRecord): Promise<CrewIntegrationJournalRecord> {
+  if (record.status === 'running') return record
+  const journal = mergeJournal()
+  if (record.phase === 'applying' && record.integrationHead) {
+    const head = await integrationGitRunner(record.repoPath, ['rev-parse', record.baseBranch])
+    if (head.code === 0 && head.stdout.trim() === record.integrationHead) {
+      return journal.patch(record.id, { status: 'applied', phase: 'complete', updatedAt: Date.now(), finishedAt: Date.now(), error: undefined }) ?? record
+    }
+  }
+  if (record.status === 'passed' && record.integrationHead) {
+    const [base, retained, ...lanes] = await Promise.all([
+      integrationGitRunner(record.repoPath, ['rev-parse', record.baseBranch]),
+      integrationGitRunner(record.repoPath, ['rev-parse', record.retentionRef]),
+      ...record.lanes.map(lane => integrationGitRunner(record.repoPath, ['rev-parse', lane.branch])),
+    ])
+    const stale = base.code !== 0 || base.stdout.trim() !== record.baseHead
+      || retained.code !== 0 || retained.stdout.trim() !== record.integrationHead
+      || lanes.some((result, index) => result.code !== 0 || result.stdout.trim() !== record.lanes[index].head)
+    if (stale) return journal.patch(record.id, { status: 'stale', updatedAt: Date.now(), finishedAt: Date.now(), error: 'base, lane, or retained integration commit changed; verify again' }) ?? record
+  }
+  return record
 }
 
 export function registerGitIpc(): void {
@@ -397,6 +506,100 @@ export function registerGitIpc(): void {
       const e = err as Error & { stderr?: string }
       return { error: e.stderr?.trim() || e.message }
     }
+  })
+
+  ipcMain.handle('git:suggestedCrewChecks', async (_e, cwd: string) => {
+    try { return { ok: true, checks: await discoverCrewChecks(cwd) } }
+    catch (err: unknown) { return { error: (err as Error).message } }
+  })
+
+  ipcMain.handle('git:runSuggestedCrewCheck', async (_e, cwd: string, id: string) => {
+    try {
+      const checks = await discoverCrewChecks(cwd)
+      const check = checks.find(candidate => candidate.id === id)
+        ?? (!isRemoteRoot(cwd) ? resolveSuggestedCrewCheck(cwd, id) : null)
+      if (!check) return { error: 'verification check is not allowlisted for this project' }
+      const result = await runCrewCheck(cwd, check)
+      return result.code === 0
+        ? { ok: true, output: result.output }
+        : { error: `${check.label} failed`, output: result.output }
+    } catch (err: unknown) {
+      return { error: (err as Error).message }
+    }
+  })
+
+  ipcMain.handle('git:crewIntegrationStatus', async (_e, sessionId: string) => {
+    const record = mergeJournal().latest(sessionId)
+    return { ok: true, record: record ? await reconcileIntegrationRecord(record) : null }
+  })
+
+  ipcMain.handle('git:verifyCrewIntegration', async (_e, input: CrewIntegrationIpcRequest) => {
+    const locations = integrationLocations(input.repoPath, input.sessionId)
+    if (!locations) return { error: 'invalid integration repository path' }
+    if (!input.lanes.length || input.lanes.some(lane => !lane.branch || !lane.head)) return { error: 'every integration lane needs a branch and commit' }
+    const previous = mergeJournal().latest(input.sessionId)
+    if (previous?.status === 'running') return { error: 'integration verification is already running', record: previous }
+
+    const now = Date.now()
+    const record: CrewIntegrationJournalRecord = {
+      id: `integration-${now.toString(36)}`,
+      sessionId: input.sessionId, repoPath: input.repoPath,
+      baseBranch: input.baseBranch, baseHead: input.baseHead,
+      lanes: input.lanes, retentionRef: locations.retentionRef,
+      phase: 'preflight', status: 'running', checks: [], startedAt: now, updatedAt: now,
+    }
+    mergeJournal().put(record)
+    const request: CrewIntegrationRequest = {
+      repoPath: input.repoPath, integrationPath: locations.path, integrationCwd: locations.cwd,
+      baseBranch: input.baseBranch, baseHead: input.baseHead, lanes: input.lanes,
+      retentionRef: locations.retentionRef,
+    }
+    try {
+      const result = await verifyCrewIntegration(
+        request, integrationGitRunner, discoverCrewChecks, runCrewCheck,
+        phase => { mergeJournal().patch(record.id, { phase, updatedAt: Date.now() }) },
+        check => {
+          const current = mergeJournal().latest(input.sessionId)
+          const checks = [...(current?.checks ?? []).filter(item => item.id !== check.id), check]
+          mergeJournal().patch(record.id, { checks, updatedAt: Date.now() })
+        },
+      )
+      const finished = Date.now()
+      const status = result.ok ? 'passed'
+        : result.status === 'conflict' ? 'conflict'
+        : result.status === 'stale' ? 'stale'
+        : 'failed'
+      const checks = 'checks' in result ? result.checks : []
+      const updated = mergeJournal().patch(record.id, {
+        phase: result.ok ? 'ready' : (mergeJournal().latest(input.sessionId)?.phase ?? 'preflight'),
+        status, checks, updatedAt: finished, finishedAt: finished,
+        integrationHead: result.ok ? result.integrationHead : undefined,
+        error: result.ok ? undefined : result.error,
+      })
+      return { ...result, record: updated }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      const finished = Date.now()
+      const updated = mergeJournal().patch(record.id, { status: 'failed', updatedAt: finished, finishedAt: finished, error: message })
+      return { error: message, record: updated }
+    }
+  })
+
+  ipcMain.handle('git:applyCrewIntegration', async (_e, sessionId: string) => {
+    let record = mergeJournal().latest(sessionId)
+    if (!record) return { error: 'no verified integration candidate' }
+    record = await reconcileIntegrationRecord(record)
+    if (record.status !== 'passed' || !record.integrationHead) return { error: 'integration candidate is not ready; verify again', record }
+    mergeJournal().patch(record.id, { status: 'running', phase: 'applying', updatedAt: Date.now(), finishedAt: undefined })
+    const result = await applyCrewIntegration({
+      repoPath: record.repoPath, baseBranch: record.baseBranch, baseHead: record.baseHead,
+      lanes: record.lanes, retentionRef: record.retentionRef, integrationHead: record.integrationHead,
+    }, integrationGitRunner)
+    const finished = Date.now()
+    const updated = mergeJournal().patch(record.id, result.ok
+      ? { status: 'applied', phase: 'complete', updatedAt: finished, finishedAt: finished, error: undefined }
+      : { status: result.status === 'stale' ? 'stale' : 'failed', updatedAt: finished, finishedAt: finished, error: result.error })
+    return result.ok ? { ok: true, record: updated } : { error: result.error, record: updated }
   })
 
   ipcMain.handle('git:merge', async (_e, cwd: string, ref: string) => {

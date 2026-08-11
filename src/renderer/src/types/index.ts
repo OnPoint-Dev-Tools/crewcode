@@ -20,6 +20,33 @@ export type AgentProviderId = 'pi' | 'opencode' | 'codex' | 'claude' | 'hermes' 
 
 export type { CrewCodePluginManifest, InstalledPlugin, PluginRegistryError, PluginRegistrySnapshot } from '../../../shared/plugin-types'
 
+export interface CrewIntegrationLane { laneId: string; label: string; branch: string; head: string; worktreePath: string; files: string[] }
+export interface CrewIntegrationCheck { id: string; label: string; command: string; script: string; status: 'running' | 'passed' | 'failed' | 'interrupted'; output: string }
+export interface CrewIntegrationRecord {
+  id: string
+  sessionId: string
+  repoPath: string
+  baseBranch: string
+  baseHead: string
+  lanes: CrewIntegrationLane[]
+  retentionRef: string
+  integrationHead?: string
+  phase: 'preflight' | 'combining' | 'checking' | 'ready' | 'applying' | 'complete'
+  status: 'running' | 'passed' | 'failed' | 'conflict' | 'interrupted' | 'applied' | 'stale'
+  checks: CrewIntegrationCheck[]
+  startedAt: number
+  updatedAt: number
+  finishedAt?: number
+  error?: string
+}
+export interface CrewIntegrationRequest {
+  sessionId: string
+  repoPath: string
+  baseBranch: string
+  baseHead: string
+  lanes: CrewIntegrationLane[]
+}
+
 // ─── Tab ────────────────────────────────────────────────────────────────────
 
 export type BuiltinTabKind = 'chat' | 'crew' | 'canvas' | 'git' | 'code' | 'writer' | 'terminal' | 'browser' | 'settings' | 'plugins' | 'prompts' | 'mission' | 'archive'
@@ -789,6 +816,11 @@ declare global {
       gitCheckout: (cwd: string, branch: string) => Promise<{ ok?: boolean; error?: string }>
       gitCreateBranch:    (cwd: string, name: string) => Promise<{ ok?: boolean; error?: string }>
       gitMerge:           (cwd: string, ref: string) => Promise<{ ok?: boolean; conflicts?: boolean; output?: string; error?: string }>
+      gitSuggestedCrewChecks: (cwd: string) => Promise<{ ok?: boolean; checks?: { id: 'typecheck' | 'test'; label: string; command: string; args: string[]; script: string }[]; error?: string }>
+      gitRunSuggestedCrewCheck: (cwd: string, id: string) => Promise<{ ok?: boolean; output?: string; error?: string }>
+      gitCrewIntegrationStatus: (sessionId: string) => Promise<{ ok?: boolean; record?: CrewIntegrationRecord | null; error?: string }>
+      gitVerifyCrewIntegration: (request: CrewIntegrationRequest) => Promise<{ ok?: boolean; status?: string; record?: CrewIntegrationRecord | null; error?: string }>
+      gitApplyCrewIntegration: (sessionId: string) => Promise<{ ok?: boolean; record?: CrewIntegrationRecord | null; error?: string }>
       gitMergeDelegated: (request: { worktreePath: string; repoPath: string; branch: string; base: string }) => Promise<DelegatedMergeOutcome>
       gitDiffDelegated: (worktreePath: string, base: string, branch: string) => Promise<{ ok?: boolean; stat?: string; patch?: string; error?: string }>
       gitMergeAbort:      (cwd: string) => Promise<{ ok?: boolean; error?: string }>
