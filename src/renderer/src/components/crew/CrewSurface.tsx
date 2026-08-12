@@ -28,6 +28,7 @@ interface CrewSurfaceProps {
   onSetLaneEffort:  (laneId: string, effort: CrewLaneEffort) => void
   onRestartLane:    (laneId: string) => void
   onToggleLaneMute: (laneId: string) => void
+  onSetLaneNextAction: (laneId: string, nextAction: string) => void
   onAbortAll:       () => void
   onAbortSupervisor: () => void
   onSendToSupervisor: (text: string) => void
@@ -53,7 +54,7 @@ const STATE_COPY: Record<CrewSession['state'], string> = {
 export function CrewSurface({
   session, agents, messagesByTab, ptyPanes,
   onSendToLane, onBroadcast, onClosePane, onEdit, onArchive, onReset, onShowDiff, onShowGit, onSaveTemplate,
-  onSetLaneModel, onSetLaneEffort, onRestartLane, onToggleLaneMute, onAbortAll, onAbortSupervisor, onSendToSupervisor,
+  onSetLaneModel, onSetLaneEffort, onRestartLane, onToggleLaneMute, onSetLaneNextAction, onAbortAll, onAbortSupervisor, onSendToSupervisor,
   onSetDistribution,
   userRequestsByTab,
   onAgentRequestResponse,
@@ -220,6 +221,7 @@ export function CrewSurface({
             onSetLaneEffort={onSetLaneEffort}
             onRestartLane={onRestartLane}
             onToggleLaneMute={onToggleLaneMute}
+            onSetLaneNextAction={onSetLaneNextAction}
             userRequestsByTab={userRequestsByTab}
             onAgentRequestResponse={onAgentRequestResponse}
             hideComposer={supervisorOwnsInput}
@@ -236,6 +238,7 @@ export function CrewSurface({
             onSetLaneEffort={onSetLaneEffort}
             onRestartLane={onRestartLane}
             onToggleLaneMute={onToggleLaneMute}
+            onSetLaneNextAction={onSetLaneNextAction}
             userRequestsByTab={userRequestsByTab}
             onAgentRequestResponse={onAgentRequestResponse}
             hideComposer={supervisorOwnsInput}

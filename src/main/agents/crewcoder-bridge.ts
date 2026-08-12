@@ -195,6 +195,24 @@ export function crewCoderEventsFromUpdate(
 ): BridgeEvent[] {
   const kind = update.sessionUpdate
   if (kind === 'user_message_chunk') return []
+  if (kind === '_crewcoder/compaction_update') {
+    const status = update.status
+    if (status !== 'started' && status !== 'completed' && status !== 'failed') return []
+    const message = typeof update.message === 'string' ? update.message : undefined
+    const percent = finiteNumber(update.percent)
+    const automatic = typeof update.automatic === 'boolean' ? update.automatic : true
+    return [{
+      type: 'compaction_event',
+      bridgeId,
+      turnId,
+      status,
+      automatic,
+      message,
+      percent,
+      provider: 'crewcoder',
+      ...(status === 'completed' ? { resetContext: true } : {}),
+    }]
+  }
   if (kind === 'agent_message_chunk' || kind === 'agent_thought_chunk') {
     const delta = contentText(update.content)
     if (!delta) return []

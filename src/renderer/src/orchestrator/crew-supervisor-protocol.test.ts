@@ -293,14 +293,16 @@ describe('formatters', () => {
     expect(distributionDirective({ ...s, distribution: 'broadcast' })).toContain('"to": "all"')
   })
 
-  it('builds a per-lane status snapshot with reply tails', () => {
+  it('builds a per-lane status snapshot with reply tails and paused checkpoints', () => {
     const s = sessionWithLanes()
-    const hiddenCodex = { ...s.lanes[1], muted: true }
-    const snap = buildStatusSnapshot({ ...s, lanes: [s.lanes[0], hiddenCodex] }, { [s.lanes[0].laneId]: 'done — all green' })
+    const pausedCodex = { ...s.lanes[1], muted: true, nextAction: 're-run migration tests' }
+    const snap = buildStatusSnapshot({ ...s, lanes: [s.lanes[0], pausedCodex] }, { [s.lanes[0].laneId]: 'done — all green' })
     expect(snap).toContain('[crew status]')
     expect(snap).toContain('done — all green')
-    expect(snap).not.toContain('codex')
-    expect(snap.split('\n')).toHaveLength(2)  // header + visible lane
+    expect(snap).toContain('codex')
+    expect(snap).toContain('paused')
+    expect(snap).toContain('next action: "re-run migration tests"')
+    expect(snap.split('\n')).toHaveLength(3)  // header + both owned lanes
   })
 
   it('formats worker replies for feedback', () => {

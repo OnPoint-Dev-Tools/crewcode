@@ -215,6 +215,56 @@ describe('crew-session — guards and invariants', () => {
   })
 })
 
+describe('crew-session — durable lane pause checkpoints', () => {
+  function activeLane(): CrewSession {
+    return run(base(), [
+      { type: 'set_mode', mode: 'shared' },
+      { type: 'add_lane', agentId: 'pi' },
+      { type: 'provision' },
+      { type: 'activate' },
+    ])
+  }
+
+  it('pauses a live runtime without losing its worktree or next action', () => {
+    let s = activeLane()
+    const laneId = s.lanes[0].laneId
+    s = crewReducer(s, {
+      type: 'lane_status', laneId, status: 'running',
+      tabId: 'crew/lane-1', bridgeId: 'bridge-1',
+    })
+    s = crewReducer(s, { type: 'set_lane_next_action', laneId, nextAction: 'finish auth tests' })
+    s = crewReducer(s, { type: 'toggle_lane_mute', laneId })
+
+    expect(s.lanes[0]).toMatchObject({
+      muted: true,
+      nextAction: 'finish auth tests',
+      status: 'ready',
+      bridgeId: null,
+      path: '/repo',
+      branch: 'main',
+    })
+  })
+
+  it('resumes ready with the checkpoint intact', () => {
+    let s = activeLane()
+    const laneId = s.lanes[0].laneId
+    s = crewReducer(s, { type: 'set_lane_next_action', laneId, nextAction: 'inspect migration output' })
+    s = crewReducer(s, { type: 'toggle_lane_mute', laneId })
+    s = crewReducer(s, { type: 'toggle_lane_mute', laneId })
+
+    expect(s.lanes[0].muted).toBe(false)
+    expect(s.lanes[0].status).toBe('ready')
+    expect(s.lanes[0].nextAction).toBe('inspect migration output')
+  })
+
+  it('bounds checkpoint text stored with a session', () => {
+    let s = activeLane()
+    const laneId = s.lanes[0].laneId
+    s = crewReducer(s, { type: 'set_lane_next_action', laneId, nextAction: 'x'.repeat(700) })
+    expect(s.lanes[0].nextAction).toHaveLength(500)
+  })
+})
+
 describe('crew-session — task distribution', () => {
   it('defaults new sessions to split', () => {
     expect(base().distribution).toBe('split')

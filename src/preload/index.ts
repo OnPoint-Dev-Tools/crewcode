@@ -182,6 +182,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   bridgeSetMode: (bridgeId: string, mode: 'ask' | 'plan' | 'build' | 'full'): void =>
     ipcRenderer.send('bridge:setMode', { bridgeId, mode }),
 
+  // Execution custody: explicit human reauthorization after an invariant
+  // tripped, and the read-only state behind the halt banner.
+  bridgeReauthorize: (args: { bridgeId?: string; scopeKey?: string }) =>
+    ipcRenderer.invoke('bridge:reauthorize', args),
+
+  bridgeCustodyState: (args: { sessionKey?: string | null; bridgeId?: string }) =>
+    ipcRenderer.invoke('bridge:custodyState', args),
+
   bridgeAbort: (bridgeId: string): void =>
     ipcRenderer.send('bridge:abort', bridgeId),
 

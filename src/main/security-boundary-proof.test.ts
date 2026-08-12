@@ -16,6 +16,8 @@ import { isWriteToolBlocked as piWriteBlocked } from './agents/pi-bridge'
 import { writeBlocked as crewcoderWriteBlocked } from './agents/crewcoder-bridge'
 import { grokPermissionMode } from './agents/grok-bridge'
 import { PLUGIN_IFRAME_SANDBOX } from '../shared/plugin-types'
+import { authorityDriftViolation, decideModeChange, normalizeAuthority, refusalMessage } from './agents/custody-invariants'
+import { CustodyJournal } from './agents/custody-journal'
 
 const CLAUDE_MUTATING_TOOLS = ['Bash', 'Edit', 'MultiEdit', 'Write', 'NotebookEdit']
 
@@ -257,5 +259,79 @@ describe('E — SSH trust-on-first-use pinning refuses a changed key', () => {
     expect(verify(original)).toBe(true)   // same key: still trusted
     expect(verify(attacker)).toBe(false)  // changed key: REFUSED (possible MITM)
     expect(mismatched).toBe('example.com:22')
+  })
+})
+
+// ─── F. Execution custody: authority can be WITHDRAWN after it was granted ─────
+// Groups C–E prove authority cannot cross a boundary it was never granted. This
+// group proves the other half of the lifecycle: once a grant is live, CrewCode
+// can notice it stopped being knowable, refuse further privileged actions, and
+// require an explicit human reauthorization. Nothing here infers success from
+// silence. See docs/execution-custody.md.
+describe('F — execution custody withdraws authority once it is no longer knowable', () => {
+  it('REFUSES an authority escalation requested underneath a running turn', () => {
+    // Build -> Full while a turn is executing must not land on that turn.
+    const midTurn = decideModeChange('build', 'full', true)
+    expect(midTurn.apply).toBe(false)
+    expect(midTurn.deferred).toBe(true)
+    // Between turns the same change is ordinary and applies immediately.
+    expect(decideModeChange('build', 'full', false)).toEqual({ apply: true })
+  })
+
+  it('DETECTS authority that changed outside the sanctioned path and names it exactly', () => {
+    const granted = normalizeAuthority({ provider: 'claude', cwd: '/repo', mode: 'build' })
+    const live    = normalizeAuthority({ provider: 'claude', cwd: '/repo', mode: 'full', mcpServers: ['filesystem'] })
+    const trip = authorityDriftViolation(granted, live, { bridgeId: 'br-1', provider: 'claude', cwd: '/repo', turnId: 't1' })
+    expect(trip?.invariant).toBe('authority-drift')
+    expect(trip?.halts).toBe(true)
+    expect(trip?.detail).toContain('mode: recorded "build", now "full"')
+    expect(trip?.detail).toContain('mcpServers: recorded "(none)", now "filesystem"')
+  })
+
+  it('RECOVERS an interrupted turn as halted, never as a completed one', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'crewcode-custody-'))
+    const path = join(dir, 'custody-journal.json')
+    const authority = normalizeAuthority({ provider: 'claude', cwd: '/repo', mode: 'full' })
+
+    // A turn is in flight when the process dies. Nothing writes an outcome.
+    new CustodyJournal(path, 100).open({
+      bridgeId: 'br-tab1-claude-abc', sessionKey: 'tab1:claude', authority,
+      pid: 4242, status: 'running', startedAt: 100, updatedAt: 100, turnId: 'turn-1',
+    })
+
+    // Next launch: the missing outcome is recorded as unknown, not as success.
+    // What matters is that the record GATES — the status name is secondary, so
+    // the gate itself is asserted rather than the spelling of the status.
+    const recovered = new CustodyJournal(path, 500)
+    expect(recovered.get('br-tab1-claude-abc')?.status).toBe('interrupted')
+    expect(recovered.get('br-tab1-claude-abc')?.status).not.toBe('ended')
+    expect(recovered.activeHalt('tab1:claude')?.invariant).toBe('restart-recovery')
+
+    // The halt is keyed to the thread, so a brand-new bridge id inherits it —
+    // it cannot be shaken off by restarting the process that tripped it.
+    expect(recovered.activeHalt('tab1:claude')).not.toBeNull()
+
+    // Privileged actions are refused while the halt stands, and the refusal
+    // states the failed invariant rather than a generic error.
+    const halt = recovered.activeHalt('tab1:claude')!
+    expect(refusalMessage('prompt', halt)).toContain('turn interrupted by restart')
+
+    // Only an explicit reauthorization clears it, and the evidence survives.
+    expect(recovered.reauthorize('tab1:claude', 600)).toBe(1)
+    expect(recovered.activeHalt('tab1:claude')).toBeNull()
+    expect(recovered.forScope('tab1:claude')[0].halt?.invariant).toBe('restart-recovery')
+  })
+
+  it('does NOT halt on a known-good end — an idle bridge stopping is not lost custody', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'crewcode-custody-'))
+    const path = join(dir, 'custody-journal.json')
+    new CustodyJournal(path, 100).open({
+      bridgeId: 'br-1', sessionKey: 'tab1:claude',
+      authority: normalizeAuthority({ provider: 'claude', cwd: '/repo', mode: 'build' }),
+      pid: 1, status: 'idle', startedAt: 100, updatedAt: 100,
+    })
+    const restarted = new CustodyJournal(path, 500)
+    expect(restarted.get('br-1')?.status).toBe('ended')
+    expect(restarted.activeHalt('tab1:claude')).toBeNull()
   })
 })

@@ -15,6 +15,9 @@ import type { LanguageServerMessageEvent, LanguageServerStartResult, LanguageSer
 import type { WriterBinaryFormat, WriterDocumentExportResult, WriterDocumentImportResult } from '../../../shared/writer-document-types'
 import type { AppBuildInfo, UpdaterConfig, UpdaterEvent } from '../../../shared/updater-types'
 import type { DelegatedMergeOutcome, DelegationCredentials, DelegationRendererRequest, DelegationResult } from '../../../shared/delegation-types'
+import type { CustodyHaltPayload, CustodyViolation } from '../../../shared/custody-types'
+
+export type { CustodyHaltPayload, CustodyInvariantId, CustodyViolation } from '../../../shared/custody-types'
 
 export type AgentProviderId = 'pi' | 'opencode' | 'codex' | 'claude' | 'hermes' | 'crewcoder' | 'grok' | 'ollama' | 'openrouter' | `plugin:${string}`
 
@@ -322,7 +325,7 @@ export type BridgeEvent =
   | { type: 'tool_end';       bridgeId: string; turnId: string; toolCallId: string; result: unknown; isError: boolean; args?: unknown; title?: string }
   | { type: 'usage_update';   bridgeId: string; turnId: string; usage: TurnUsage }
   | { type: 'turn_end';       bridgeId: string; turnId: string; usage?: TurnUsage }
-  | { type: 'compaction_event'; bridgeId: string; turnId?: string; status: 'started' | 'completed' | 'failed' | 'detected'; automatic: boolean; message?: string; beforeTokens?: number; afterTokens?: number; percent?: number; provider?: string }
+  | { type: 'compaction_event'; bridgeId: string; turnId?: string; status: 'started' | 'completed' | 'failed' | 'detected'; automatic: boolean; message?: string; beforeTokens?: number; afterTokens?: number; percent?: number; provider?: string; resetContext?: boolean }
   | { type: 'handoff_summary'; bridgeId: string; summary: string; fromProvider?: string; toProvider?: string; reason?: 'handoff' | 'compact' }
   | { type: 'user_request';   request: AgentUserRequest }
   | { type: 'user_request_resolved'; bridgeId: string; requestId: string }
@@ -336,6 +339,12 @@ export type BridgeEvent =
   // Idle sweep stopped a long-idle bridge to free its process; the renderer
   // forgets the bridge silently and resumes it on the next prompt.
   | { type: 'idle_stopped';   bridgeId: string }
+  // An execution-custody invariant tripped: the thread refuses privileged
+  // actions until the user explicitly reauthorizes. See shared/custody-types.
+  | { type: 'custody_halt';    bridgeId: string; halt: CustodyHaltPayload }
+  | { type: 'custody_cleared'; bridgeId: string; scopeKey: string }
+  // An authority mutation was refused mid-turn and deferred to the next turn.
+  | { type: 'custody_deferred'; bridgeId: string; message: string }
 
 // ─── Session ─────────────────────────────────────────────────────────────────
 
@@ -692,12 +701,24 @@ declare global {
         freshSession?: boolean
         mcpServers?: McpServerConfig[]
         suppressProviderHistoryReplay?: boolean
-      }) => Promise<{ ok?: boolean; error?: string }>
+        // A start refused because an execution-custody halt is still in force
+        // for the thread returns the halt alongside the error, so the caller
+        // can surface the banner without relying on event routing.
+      }) => Promise<{ ok?: boolean; error?: string; custodyHalt?: CustodyHaltPayload }>
       bridgePrompt: (bridgeId: string, text: string, options?: ChatPromptOptions) => Promise<{ ok: boolean; error?: string }>
       bridgeCompact: (bridgeId: string) => Promise<{ ok: boolean; error?: string; unsupported?: boolean }>
       bridgeRemoveFollowUp: (bridgeId: string, followUpId: string) => Promise<{ ok: boolean; error?: string }>
       bridgeRespondUserRequest: (response: AgentUserResponse) => Promise<{ ok?: boolean; error?: string }>
       bridgeSetMode: (bridgeId: string, mode: ModeLevel) => void
+      // Execution custody — explicit reauthorization after a tripped invariant,
+      // plus the read-only record behind the halt banner.
+      bridgeReauthorize: (args: { bridgeId?: string; scopeKey?: string }) => Promise<{ ok: boolean; error?: string; cleared?: number }>
+      bridgeCustodyState: (args: { sessionKey?: string | null; bridgeId?: string }) => Promise<{
+        ok: boolean
+        scopeKey: string
+        halt: CustodyViolation | null
+        record: { interruptedPrompt?: string; interruptedPartial?: string } | null
+      }>
       bridgeAbort:  (bridgeId: string) => void
       bridgeStop:   (bridgeId: string) => void
       bridgeResetSession: (sessionKey: string, conversationScopeKey?: string) => Promise<{ ok?: boolean; error?: string }>

@@ -5,6 +5,10 @@
 > each hop states the boundary, where it is enforced, and the test that guards it.
 > It also states residual risk plainly. "Runs locally" is **not** treated as
 > equivalent to "safely bounded."
+>
+> This document covers **granting** authority. Its companion,
+> [`execution-custody.md`](execution-custody.md), covers **withdrawing** it once
+> granted — the tripwire, halt, and reauthorization lifecycle.
 
 ## Threat model in one picture
 
@@ -95,6 +99,41 @@ per-request or opt-in decision, never a default that untrusted input can flip.
 
 **Tests:** `security-boundary-proof.test.ts` (group E), `remote-access-server.test.ts`.
 
+## Hop 5 — after the gate: withdrawing authority that was already granted
+
+**Boundary:** a grant stops being valid the moment CrewCode can no longer say
+what it covers. Hops 1–4 decide whether authority may cross the *next* boundary;
+they are stateless and only run when something asks. Agent runs are long-lived,
+so the dangerous state is not "the attacker got in" — it is *the system no longer
+knows whether its previously granted authority is still lawful, and continued
+anyway.*
+
+**Enforcement:** a persisted custody record per bridge execution, and a tripwire
+that refuses, contains, preserves, reports, and requires explicit human
+reauthorization. Five invariants: `restart-recovery`, `execution-custody-lost`,
+`authority-drift`, `scope-unknown`, `orphaned-authorization`.
+
+The governing rule, binding on all new work via `AGENTS.md`:
+
+```
+silence != success · timeout != success · lost telemetry != success
+missing process state != success · clean Git state != behavioral correctness
+```
+
+An outcome that was never observed is recorded as unknown. It is never
+back-filled by inference. A mode change requested underneath a running turn is
+refused and deferred to the next turn rather than applied mid-flight.
+
+**Coverage, stated honestly:** the desktop bridge coordinator is fully covered.
+The remote-access transport defers mid-turn mode changes and cancels orphaned
+permission requests, but does not yet persist custody records. Terminal panes,
+plugin capability sessions, and mid-session SSH host-key changes are **not yet
+covered**. Crew merges have their own equivalent journal.
+
+**Tests:** `security-boundary-proof.test.ts` (group F), `custody-invariants.test.ts`,
+`custody-journal.test.ts`, `custody.test.ts`. Full detail:
+[`execution-custody.md`](execution-custody.md).
+
 ## Supply chain / plugin install
 
 - Install is Git-first, pinned to a reviewed commit. The installer runs **no** build
@@ -116,13 +155,21 @@ npx vitest run src/main/security-boundary-proof.test.ts
 # Renderer-boundary regression guards: CSP, isolation flags, external-URL allowlist
 npx vitest run src/main/security-config.test.ts
 
-# Full security-relevant suite (112 tests)
+# Execution custody: invariant detection, journal recovery, halt/reauthorize
+npx vitest run src/main/agents/custody-invariants.test.ts \
+               src/main/agents/custody-journal.test.ts \
+               src/main/agents/custody.test.ts
+
+# Full security-relevant suite
 npx vitest run src/main/security-boundary-proof.test.ts \
                src/main/security-config.test.ts \
                src/main/plugin-contract.test.ts \
                src/main/plugin-git-install.test.ts \
                src/main/remote-access-server.test.ts \
-               src/main/agents/codex-bridge.test.ts
+               src/main/agents/codex-bridge.test.ts \
+               src/main/agents/custody-invariants.test.ts \
+               src/main/agents/custody-journal.test.ts \
+               src/main/agents/custody.test.ts
 
 # Live checks in the running app (DevTools console):
 #   main window:  require            -> ReferenceError
@@ -133,6 +180,14 @@ npx vitest run src/main/security-boundary-proof.test.ts \
 
 Split into what has been **hardened** and what is **inherent** (true of every tool in
 this class — the honest move is to frame it, not fake a patch).
+
+**A caution about the word "inherent."** A failure mode can be inherent to a
+component without its *consequence* being inherent to the system. Prompt injection
+inherently influences an agent; an MCP server inherently runs with user privilege.
+That bounds what those components can be trusted to do — it does not license
+CrewCode to keep executing once one of those risks stops being hypothetical. Hop 5
+above exists because of exactly that distinction: the items below describe what
+cannot be prevented, not what cannot be *contained after the fact*.
 
 ### Hardened (regression-guarded so it cannot silently weaken)
 
@@ -153,21 +208,33 @@ this class — the honest move is to frame it, not fake a patch).
    test that read-only/ask/plan block writes and that `full`/bypass is reachable only by
    explicit opt-in. Ollama and OpenRouter expose **no** tool surface at all (pure chat
    streamers), so they cannot write or exec regardless of mode.
+4. **Authority can be withdrawn after it was granted.** Previously CrewCode could only
+   deny the *next* action; a grant already in flight was good until the session ended,
+   and an execution whose outcome was never observed left no trace. Now a persisted
+   custody journal records every bridge execution, an interrupted turn is recovered as
+   halted rather than assumed complete, mid-turn authority mutations are refused and
+   deferred, and a tripped invariant refuses privileged actions until a human explicitly
+   reauthorizes — reporting the exact failed invariant and affected scope, with the
+   interrupted prompt and partial response preserved. See hop 5 and
+   [`execution-custody.md`](execution-custody.md). Coverage gaps (remote transport, PTY,
+   plugin sessions) are named there rather than implied away.
 
 ### Inherent (cannot be "fixed" by anyone — framed honestly)
 
-4. **Prompt injection at hop 1.** Mitigated by downstream gates, not eliminated. An agent
+5. **Prompt injection at hop 1.** Mitigated by downstream gates, not eliminated. An agent
    can still be socially engineered into *proposing* bad actions; the defense is that
    *acting* on them requires clearing the hop 3/4 gates above. No agent tool on the market
-   eliminates this; claiming otherwise is a red flag.
-5. **User-enabled Full Access — now backstopped by a hard tripwire.** `full` mode
+   eliminates this; claiming otherwise is a red flag. What is *not* inherent is continuing
+   afterwards: if an injected action leaves execution in a state CrewCode can no longer
+   account for, hop 5 halts the thread rather than carrying the grant forward.
+6. **User-enabled Full Access — now backstopped by a hard tripwire.** `full` mode
    deliberately removes the per-action gate; it is a user opt-in, never the default
    (default is `build`, pinned by test). On top of that, a **hard denylist tripwire**
    (`agents/dangerous-command.ts`) forces a confirmation prompt for catastrophic shell
    commands *even in Full Access* — `rm -rf`, `git push --force`, `curl|sh`, `dd`/`mkfs`,
    `sudo`, fork bombs, `chmod -R 777 /`, `terraform destroy`, etc. Benign commands stay
    friction-free (verified it does not flag `npm install`, `git push`, `chmod +x`, ...).
-   This directly limits the compound risk of prompt-injection (#4) + Full Access.
+   This directly limits the compound risk of prompt-injection (#5) + Full Access.
 
    **Per-agent coverage (stated honestly):**
    - **Claude** — full coverage. Full Access routes through `canUseTool` (no more native
@@ -181,9 +248,11 @@ this class — the honest move is to frame it, not fake a patch).
    - **Grok, pi** — **not yet covered**; their Full Access uses engine-native bypass / a
      confirmation channel that does not carry the command string. Tracked as follow-up.
    - **Ollama, OpenRouter** — N/A (no tool surface; cannot exec).
-6. **MCP servers run with user privilege.** A user-configured MCP server is trusted code on
+7. **MCP servers run with user privilege.** A user-configured MCP server is trusted code on
    the host; CrewCode gates *which* sessions may use it, not what the server binary itself
-   can do — the same trust model as installing any CLI tool.
+   can do — the same trust model as installing any CLI tool. What CrewCode does control is
+   its own record of which servers a live grant covers: an MCP server appearing or
+   disappearing under a running execution is `authority-drift` and halts the thread.
 
 ## What "complete" means here
 

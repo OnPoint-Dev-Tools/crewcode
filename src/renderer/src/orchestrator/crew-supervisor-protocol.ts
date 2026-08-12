@@ -349,11 +349,14 @@ export function validateDirectivePolicy(session: CrewSession, directives: CrewDi
 
 /** A live, one-line-per-lane status snapshot the Supervisor reads to report up. */
 export function buildStatusSnapshot(session: CrewSession, lastByLane: Record<string, string>): string {
-  const lines = session.lanes.filter(l => !l.muted).map(l => {
+  const lines = session.lanes.map(l => {
     const tail = lastByLane[l.laneId]?.trim()
     const preview = tail ? tail.replace(/\s+/g, ' ').slice(0, 500) : ''
     const tailStr = preview ? ` — latest reply preview: "${preview}${tail && tail.length > preview.length ? '…' : ''}"` : ''
-    return `- ${l.laneId} (${l.agentId}, ${l.roleName.trim() || 'no role'}): ${l.status}${tailStr}`
+    const nextAction = l.nextAction?.trim().replace(/\s+/g, ' ').slice(0, 500)
+    const checkpoint = nextAction ? ` — next action: ${JSON.stringify(nextAction)}` : ''
+    const status = l.muted ? 'paused' : l.status
+    return `- ${l.laneId} (${l.agentId}, ${l.roleName.trim() || 'no role'}): ${status}${checkpoint}${tailStr}`
   })
   return `[crew status]\n${lines.join('\n')}`
 }

@@ -59,11 +59,20 @@ describe('addWorktree — isolated lane provisioning', () => {
     expect(git(r.path, 'rev-parse', 'HEAD')).toBe(git(repo, 'rev-parse', 'main'))
   })
 
-  it('adds .worktrees/ to .gitignore so lane dirs stay untracked', () => {
+  it('privately excludes .worktrees/ without dirtying the project checkout', () => {
     addWorktree(repo, 'crew/abc/pi-1', { startPoint: 'main' })
-    expect(readFileSync(join(repo, '.gitignore'), 'utf8')).toMatch(/^\.worktrees\/$/m)
-    // The repo root must not see the worktree dir as an untracked change.
-    expect(git(repo, 'status', '--porcelain')).not.toMatch(/\.worktrees/)
+    const exclude = git(repo, 'rev-parse', '--git-path', 'info/exclude')
+    const excludePath = join(repo, exclude)
+    expect(readFileSync(excludePath, 'utf8')).toMatch(/^\.worktrees\/$/m)
+    expect(existsSync(join(repo, '.gitignore'))).toBe(false)
+    expect(git(repo, 'status', '--porcelain')).toBe('')
+  })
+
+  it('migrates the exact legacy generated .gitignore without discarding project ignores', () => {
+    writeFileSync(join(repo, '.gitignore'), '.worktrees/\n')
+    addWorktree(repo, 'crew/abc/pi-1', { startPoint: 'main' })
+    expect(existsSync(join(repo, '.gitignore'))).toBe(false)
+    expect(git(repo, 'status', '--porcelain')).toBe('')
   })
 
   it('refuses to create a worktree in a repo with no commits', () => {
@@ -121,9 +130,9 @@ describe('lane → base merge-back', () => {
     expect(git(repo, 'status', '--porcelain')).toMatch(/^UU /m)
 
     git(repo, 'merge', '--abort')
-    // Abort clears the conflict; the only remaining entry is the untracked
-    // .gitignore addWorktree created (never committed in this fixture).
-    expect(git(repo, 'status', '--porcelain')).not.toMatch(/^UU /m)
+    // Abort clears the conflict and worktree provisioning left no housekeeping
+    // change in the user's checkout.
+    expect(git(repo, 'status', '--porcelain')).toBe('')
   })
 })
 

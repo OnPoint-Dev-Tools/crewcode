@@ -91,10 +91,10 @@ export type AutoCompactionSignal = 'native' | 'usage' | 'none'
 export function autoCompactionSignalForProvider(provider: string): AutoCompactionSignal {
   switch (provider.toLowerCase()) {
     case 'claude':
+    case 'crewcoder':
       return 'native'
     case 'codex':
     case 'opencode':
-    case 'crewcoder':
       return 'usage'
     default:
       return 'none'

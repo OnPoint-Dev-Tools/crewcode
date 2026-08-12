@@ -17,7 +17,7 @@
  */
 
 import { create } from 'zustand'
-import type { AgentUserRequest } from '../types'
+import type { AgentUserRequest, CustodyHaltPayload } from '../types'
 
 export interface QueuedFollowUp {
   id: string
@@ -33,6 +33,10 @@ interface BridgeActivityState {
   statusByBridge:    Record<string, string>
   followUpsByBridge: Record<string, QueuedFollowUp[]>
   userRequestsByTab: Record<string, AgentUserRequest[]>
+  // A tripped execution-custody invariant, per tab. Deliberately NOT cleared by
+  // bridge teardown: the halt outlives the process that raised it and only a
+  // successful reauthorization removes it.
+  custodyHaltsByTab: Record<string, CustodyHaltPayload>
 }
 
 export const useBridgeActivityStore = create<BridgeActivityState>(() => ({
@@ -40,6 +44,7 @@ export const useBridgeActivityStore = create<BridgeActivityState>(() => ({
   statusByBridge:    {},
   followUpsByBridge: {},
   userRequestsByTab: {},
+  custodyHaltsByTab: {},
 }))
 
 const setState = useBridgeActivityStore.setState
@@ -202,6 +207,31 @@ export const bridgeActivity = {
     })
   },
 
+  /** Record a tripped custody invariant for a tab. Overwrites any earlier halt:
+   *  the newest failed invariant is the one the user has to answer for. */
+  setCustodyHalt(tabId: string, halt: CustodyHaltPayload): void {
+    setState((s) => ({ custodyHaltsByTab: { ...s.custodyHaltsByTab, [tabId]: halt } }))
+  },
+
+  /** Clear after explicit reauthorization. Never called on bridge teardown. */
+  clearCustodyHalt(tabId: string): void {
+    setState((s) => {
+      const next = withoutKeys(s.custodyHaltsByTab, [tabId])
+      return next ? { custodyHaltsByTab: next } : s
+    })
+  },
+
+  /** Clear every halt sharing a custody scope (reauthorization is scope-wide). */
+  clearCustodyHaltsForScope(scopeKey: string): void {
+    setState((s) => {
+      const drop = Object.entries(s.custodyHaltsByTab)
+        .filter(([, halt]) => halt.scopeKey === scopeKey)
+        .map(([tabId]) => tabId)
+      const next = withoutKeys(s.custodyHaltsByTab, drop)
+      return next ? { custodyHaltsByTab: next } : s
+    })
+  },
+
   /** Non-reactive snapshot for callbacks that must not subscribe. */
   snapshot(): BridgeActivityState {
     return getState()
@@ -209,7 +239,7 @@ export const bridgeActivity = {
 
   /** Test-only. */
   reset(): void {
-    setState({ runningByBridge: {}, statusByBridge: {}, followUpsByBridge: {}, userRequestsByTab: {} })
+    setState({ runningByBridge: {}, statusByBridge: {}, followUpsByBridge: {}, userRequestsByTab: {}, custodyHaltsByTab: {} })
   },
 }
 
@@ -241,4 +271,8 @@ export function useUserRequestsByTab(): Record<string, AgentUserRequest[]> {
 
 export function useRunningByBridge(): Record<string, boolean> {
   return useBridgeActivityStore((s) => s.runningByBridge)
+}
+
+export function useCustodyHalt(tabId: string): CustodyHaltPayload | null {
+  return useBridgeActivityStore((s) => s.custodyHaltsByTab[tabId] ?? null)
 }

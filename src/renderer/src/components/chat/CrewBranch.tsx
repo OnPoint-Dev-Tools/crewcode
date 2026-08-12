@@ -34,6 +34,7 @@ export interface CrewBranchProps {
   onSetLaneEffort: (laneId: string, eff: CrewLaneEffort) => void
   onRestartLane: (laneId: string) => void
   onToggleLaneMute: (laneId: string) => void
+  onSetLaneNextAction: (laneId: string, nextAction: string) => void
   onAbortAll: () => void
   onAbortSupervisor: () => void
   onSendToSupervisor: (text: string) => void
@@ -52,7 +53,7 @@ export function CrewBranch(props: CrewBranchProps) {
     onEnterEditing, onExitEditing, setCrewDiffTab, setCrewGitTab, setRebuildConfirmOpen,
     onApplyTemplate, onDeleteTemplate, onSaveTemplate,
     onSetLaneRole, roles, onSaveRole, onUpdateRole, onDeleteRole,
-    onSetLaneModel, onSetLaneEffort, onRestartLane, onToggleLaneMute,
+    onSetLaneModel, onSetLaneEffort, onRestartLane, onToggleLaneMute, onSetLaneNextAction,
     onAbortAll, onAbortSupervisor, onSendToSupervisor,
     onSetSupervisorEnabled, onSetSupervisorAgent, onSetSupervisorModel,
     userRequestsByTab, onAgentRequestResponse,
@@ -108,6 +109,7 @@ export function CrewBranch(props: CrewBranchProps) {
       onSetLaneEffort={onSetLaneEffort}
       onRestartLane={onRestartLane}
       onToggleLaneMute={onToggleLaneMute}
+      onSetLaneNextAction={onSetLaneNextAction}
       onAbortAll={onAbortAll}
       onAbortSupervisor={onAbortSupervisor}
       onSendToSupervisor={onSendToSupervisor}

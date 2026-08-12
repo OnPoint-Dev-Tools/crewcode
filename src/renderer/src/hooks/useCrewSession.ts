@@ -56,32 +56,38 @@ const CREW_SESSIONS_STORAGE = 'crewcode:crewSessions:v1'
 /** Restore durable crew ownership after an app crash without pretending that a
  * process from the previous renderer is still alive. Worktrees and commits stay
  * attributable; runtime ids are process-local and are always cleared. */
+export function recoverCrewSessions(parsed: unknown): Record<string, CrewSession> {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+  const recovered: Record<string, CrewSession> = {}
+  for (const [tabId, raw] of Object.entries(parsed as Record<string, unknown>)) {
+    if (!raw || typeof raw !== 'object') continue
+    const session = raw as CrewSession
+    if (!session.id || !Array.isArray(session.lanes) || !session.basePath || !session.hostTabId) continue
+    recovered[tabId] = {
+      ...session,
+      distribution: session.distribution === 'broadcast' ? 'broadcast' : 'split',
+      lanes: session.lanes.map(lane => ({
+        ...lane,
+        bridgeId: null,
+        paneId: null,
+        status: lane.status === 'running' ? 'ready' : lane.status,
+        // Older stored sessions predate durable lane checkpoints and pause.
+        muted: lane.muted === true,
+        nextAction: typeof lane.nextAction === 'string' ? lane.nextAction : '',
+      })),
+      supervisor: {
+        ...session.supervisor,
+        bridgeId: null,
+        status: 'idle',
+      },
+    }
+  }
+  return recovered
+}
+
 function loadSessions(): Record<string, CrewSession> {
   try {
-    const parsed: unknown = JSON.parse(localStorage.getItem(CREW_SESSIONS_STORAGE) ?? '{}')
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
-    const recovered: Record<string, CrewSession> = {}
-    for (const [tabId, raw] of Object.entries(parsed as Record<string, unknown>)) {
-      if (!raw || typeof raw !== 'object') continue
-      const session = raw as CrewSession
-      if (!session.id || !Array.isArray(session.lanes) || !session.basePath || !session.hostTabId) continue
-      recovered[tabId] = {
-        ...session,
-        distribution: session.distribution === 'broadcast' ? 'broadcast' : 'split',
-        lanes: session.lanes.map(lane => ({
-          ...lane,
-          bridgeId: null,
-          paneId: null,
-          status: lane.status === 'running' ? 'ready' : lane.status,
-        })),
-        supervisor: {
-          ...session.supervisor,
-          bridgeId: null,
-          status: 'idle',
-        },
-      }
-    }
-    return recovered
+    return recoverCrewSessions(JSON.parse(localStorage.getItem(CREW_SESSIONS_STORAGE) ?? '{}'))
   } catch {
     return {}
   }
@@ -173,9 +179,18 @@ export function useCrewSession({ git, onReleaseLane }: UseCrewSessionOpts) {
     (tabId: string, laneId: string, effort: CrewLaneEffort) =>
       dispatch(tabId, { type: 'set_lane_effort', laneId, effort }), [dispatch])
 
-  const toggleLaneMute = useCallback(
-    (tabId: string, laneId: string) =>
-      dispatch(tabId, { type: 'toggle_lane_mute', laneId }), [dispatch])
+  const toggleLaneMute = useCallback((tabId: string, laneId: string) => {
+    const lane = sessionsRef.current[tabId]?.lanes.find(candidate => candidate.laneId === laneId)
+    if (!lane) return
+    // Pausing is a real runtime boundary, not just a fan-out filter. Stop the
+    // process first, then retain its worktree, transcript, and next-action note.
+    if (!lane.muted && onReleaseLane) onReleaseLane(lane)
+    dispatch(tabId, { type: 'toggle_lane_mute', laneId })
+  }, [dispatch, onReleaseLane])
+
+  const setLaneNextAction = useCallback(
+    (tabId: string, laneId: string, nextAction: string) =>
+      dispatch(tabId, { type: 'set_lane_next_action', laneId, nextAction }), [dispatch])
 
   const addLaneUsage = useCallback(
     (tabId: string, laneId: string, delta: { tokensIn?: number; tokensOut?: number; elapsedMs?: number }) =>
@@ -336,6 +351,7 @@ export function useCrewSession({ git, onReleaseLane }: UseCrewSessionOpts) {
     setLaneModel,
     setLaneEffort,
     toggleLaneMute,
+    setLaneNextAction,
     addLaneUsage,
     restartLane,
     launch,

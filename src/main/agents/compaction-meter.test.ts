@@ -33,9 +33,9 @@ describe('compactionStrategy', () => {
 describe('autoCompactionSignalForProvider', () => {
   it.each([
     ['claude', 'native'],
+    ['crewcoder', 'native'],
     ['codex', 'usage'],
     ['opencode', 'usage'],
-    ['crewcoder', 'usage'],
     ['pi', 'none'],
     ['hermes', 'none'],
     ['ollama', 'none'],

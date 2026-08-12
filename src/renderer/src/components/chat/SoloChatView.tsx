@@ -6,11 +6,12 @@ import { MarkdownEditor } from '../editor/MarkdownEditor'
 import { workspaceFilePathFromHref } from './workspace-link-targets'
 import { ActiveSkillsStrip } from '../promptBuilder/ActiveSkillsStrip'
 import { AgentActivityOverlay } from '../thread/AgentActivityOverlay'
+import { CustodyHaltBanner } from './CustodyHaltBanner'
 import { latestTodoActivity } from '../thread/todo-from-toolcall'
 import { useIsDark } from '../../hooks/useIsDark'
 import logoDark from '../../assets/icon-logo-dark.png'
 import logoLight from '../../assets/icon-logo-light.png'
-import type { AgentInfo, AgentUserRequest, AgentUserResponse, ChatAttachment, GitHubStatus, Message, ToolCallMessage, Workspace } from '../../types'
+import type { AgentInfo, AgentUserRequest, AgentUserResponse, ChatAttachment, CustodyHaltPayload, GitHubStatus, Message, ToolCallMessage, Workspace } from '../../types'
 import type { RegisteredPluginChatHeaderItem } from '../../../../shared/plugin-types'
 import type { GitBranchRef, GitSidebarHandlers } from '../git/git-state'
 import type { CustomCommand, Prompt, Skill } from '../../types/prompts'
@@ -71,6 +72,9 @@ export interface SoloChatViewProps {
   loadingStatus?: string | null
   onStop?: () => void
   agentRequest?: AgentUserRequest | null
+  /** A tripped execution-custody invariant: this thread refuses prompts until reauthorized. */
+  custodyHalt?: CustodyHaltPayload | null
+  onReauthorizeCustody?: () => void | Promise<void>
   onAgentRequestResponse?: (response: AgentUserResponse) => void | Promise<{ ok?: boolean; error?: string }>
   agents: AgentInfo[]
   activeAgentId: string
@@ -138,7 +142,7 @@ export function SoloChatView(props: SoloChatViewProps) {
     hideHeader = false,
     agentLabel, modelLabel, voiceControl,
     gitOpen, setGitOpen, github, dirtyCount = 0, changesOpen, changesCount, toggleChangesOpen, onStartCrew, onOpenCanvas, onOpenTerminal,
-    composerMode, setComposerMode, composer, setComposer, onSend, onRunCommand, onQueueFollowUp, queuedFollowUps = [], onRemoveQueuedFollowUp, isRunning, loadingStatus = null, onStop, agentRequest, onAgentRequestResponse,
+    composerMode, setComposerMode, composer, setComposer, onSend, onRunCommand, onQueueFollowUp, queuedFollowUps = [], onRemoveQueuedFollowUp, isRunning, loadingStatus = null, onStop, agentRequest, custodyHalt, onReauthorizeCustody, onAgentRequestResponse,
     agents, activeAgentId, setActiveAgentId, model, setModel, effort, setEffort,
     mcpEnabled, mcpServers, selectedMcpIds, onToggleMcp,
     shortcutOverrides, onOpenFile, editorInitialFile, onThreadContextMenu, onOpenPrompts, onOpenBrowser,
@@ -365,6 +369,9 @@ export function SoloChatView(props: SoloChatViewProps) {
               deliveredIds={deliveredSkillIds ?? []}
               onToggleEnabled={(id) => onToggleSkillEnabled?.(id)}
             />
+          )}
+          {custodyHalt && onReauthorizeCustody && (
+            <CustodyHaltBanner halt={custodyHalt} onReauthorize={onReauthorizeCustody} />
           )}
           {(agentRequest || todoActivity) && (
             <div className="composer-activity-shell">

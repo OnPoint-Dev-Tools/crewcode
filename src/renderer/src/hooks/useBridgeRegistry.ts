@@ -104,6 +104,15 @@ export function useBridgeRegistry({ setMessagesForTab }: UseBridgeRegistryOpts) 
       setBridgeToMode(prev => { if (!(bridgeId in prev)) return prev; const n = { ...prev }; delete n[bridgeId]; return n })
       bridgeActivity.clearBridges([bridgeId])
     },
+    // An execution-custody invariant tripped. Main already contained the
+    // process and preserved the evidence; the halt is recorded here so the
+    // chat pane can refuse to look like nothing happened.
+    onCustodyHalt: (tabId, _bridgeId, halt) => {
+      bridgeActivity.setCustodyHalt(tabId, halt)
+    },
+    onCustodyCleared: (_tabId, scopeKey) => {
+      bridgeActivity.clearCustodyHaltsForScope(scopeKey)
+    },
   })
 
   const respondUserRequest = useCallback(async (response: AgentUserResponse) => {
@@ -171,6 +180,9 @@ export function useBridgeRegistry({ setMessagesForTab }: UseBridgeRegistryOpts) 
     // is session-scoped so switching providers can continue the same thread.
     const r = await bridge.start(bridgeId, provider, cwd, model, mode, effort, toolPolicy, key, tabId, mcpServers, freshSession, externalDirectories)
     startingBridgeIdsRef.current.delete(bridgeId)
+    // A halt in force refuses the start outright, so no process was spawned.
+    // Record it here, where the tab is known synchronously.
+    if (r.custodyHalt) bridgeActivity.setCustodyHalt(tabId, r.custodyHalt)
     if (r.error) {
       setBridgesByKey(prev => { const n = { ...prev }; delete n[key]; return n })
       setBridgeToTab(prev => { const n = { ...prev }; delete n[bridgeId]; return n })

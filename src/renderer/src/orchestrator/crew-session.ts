@@ -100,7 +100,10 @@ export interface CrewAgentLane {
   tabId:      string | null       // chat tab bound to this lane, once active
   bridgeId:   string | null       // running agent bridge, if transport=bridge
   paneId:     string | null       // running pty pane, if transport=pty
-  muted:      boolean             // skipped for run fan-out (broadcasts + supervisor)
+  /** Persisted pause flag. The legacy name is retained for stored-session compatibility. */
+  muted:      boolean             // paused: excluded from fan-out until explicitly resumed
+  /** Operator-owned checkpoint, automatically seeded from the latest assigned task. */
+  nextAction?: string
   usage:      CrewLaneUsage
   error:      string | null
 }
@@ -175,6 +178,7 @@ export type CrewAction =
   | { type: 'set_lane_model';   laneId: string; model: string }
   | { type: 'set_lane_effort';  laneId: string; effort: CrewLaneEffort }
   | { type: 'toggle_lane_mute'; laneId: string }
+  | { type: 'set_lane_next_action'; laneId: string; nextAction: string }
   | { type: 'lane_usage';       laneId: string; tokensIn?: number; tokensOut?: number; elapsedMs?: number }
   | { type: 'lane_reset_runtime'; laneId: string }
   | { type: 'provision' }
@@ -305,6 +309,7 @@ function addLane(
     bridgeId:   null,
     paneId:     null,
     muted:      false,
+    nextAction: '',
     usage:      { tokensIn: 0, tokensOut: 0, elapsedMs: 0 },
     error:      null,
   }
@@ -423,8 +428,19 @@ export function crewReducer(session: CrewSession, action: CrewAction): CrewSessi
     case 'toggle_lane_mute': {
       const lane = session.lanes.find(l => l.laneId === action.laneId)
       if (!lane) return session
-      return patchLane(session, action.laneId, { muted: !lane.muted })
+      const pausing = !lane.muted
+      return patchLane(session, action.laneId, {
+        muted: pausing,
+        // A paused lane owns its worktree and checkpoint, never a supposedly-live
+        // process. Resuming leaves it ready so the next prompt respawns safely.
+        ...(pausing ? { bridgeId: null, paneId: null, status: 'ready' as const } : {}),
+      })
     }
+
+    case 'set_lane_next_action':
+      // Preserve in-progress spaces for the controlled editor; presentation and
+      // supervisor snapshots normalize the note when they consume it.
+      return patchLane(session, action.laneId, { nextAction: action.nextAction.slice(0, 500) })
 
     case 'lane_usage': {
       const lane = session.lanes.find(l => l.laneId === action.laneId)

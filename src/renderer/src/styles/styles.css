@@ -5140,6 +5140,102 @@ body.light .ncp-start svg { color: #285a48; }
   padding: 0 14px;
 }
 .composer-activity-shell .agent-activity { max-width: none; width: 100%; }
+
+/* Execution-custody halt banner — shown above the composer when an invariant
+   tripped and the thread refuses privileged actions until reauthorized. */
+.custody-halt {
+  width: 55%;
+  margin: 0 auto 8px;
+  padding: 11px 13px;
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--destructive, #d66);
+  border-radius: 10px;
+  background: var(--card);
+  color: var(--foreground);
+  font-size: 12.5px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.custody-halt-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.custody-halt-title { font-weight: 600; }
+.custody-halt-id {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+.custody-halt-detail { margin: 0; line-height: 1.5; }
+.custody-halt-scope {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted-foreground);
+}
+.custody-halt-scope b { color: var(--foreground); font-weight: 500; }
+.custody-halt-note {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+.custody-halt-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--muted-foreground);
+  font: inherit;
+  font-size: 11.5px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.custody-halt-link:hover { color: var(--foreground); }
+.custody-halt-evidence { display: flex; flex-direction: column; gap: 6px; }
+.custody-halt-quote { display: flex; flex-direction: column; gap: 3px; }
+.custody-halt-quote-label {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--muted-foreground);
+}
+.custody-halt-quote pre {
+  margin: 0;
+  padding: 7px 9px;
+  max-height: 140px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--background);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.custody-halt-error {
+  margin: 0;
+  color: var(--destructive, #d66);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+.custody-halt-actions { display: flex; justify-content: flex-end; }
+.custody-halt-btn {
+  padding: 5px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--foreground);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.custody-halt-btn:hover:not(:disabled) { background: var(--secondary); }
+.custody-halt-btn:disabled { opacity: 0.6; cursor: default; }
 .composer-queue {
   margin-bottom: 8px;
   padding: 10px 12px;

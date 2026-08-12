@@ -12,6 +12,7 @@ import { getSessionId, setSessionId } from './sessionStore'
 import { loadConversation, saveConversation } from './conversation-store'
 import { isRemoteRoot } from '../remote/ssh-target'
 import { TurnPermissionGrantStore } from './turn-permission-grants'
+import { decideModeChange } from './custody-invariants'
 import {
   API_KEY_PROVIDERS,
   HTTP_ONLY_PROVIDERS,
@@ -36,6 +37,10 @@ interface BridgeEntry {
   pendingPrompts: string[]
   promptByTurn: Record<string, string>
   responseByTurn: Record<string, string>
+  // Execution custody: a turn in flight must not have its authority changed
+  // underneath it. See docs/execution-custody.md.
+  running: boolean
+  pendingMode?: BridgeStartOpts['mode']
 }
 
 /**
@@ -78,9 +83,24 @@ export class AgentBridgeService {
     const opts = { ...rawOpts, apiKey, resumeSessionId }
     const emit = (event: BridgeEvent): void => {
       const entry = this.bridges.get(rawOpts.bridgeId)
-      if (event.type === 'turn_start') this.turnPermissionGrants.clearBridge(rawOpts.bridgeId)
-      else if (event.type === 'turn_end') this.turnPermissionGrants.clearTurn(rawOpts.bridgeId, event.turnId)
-      else if (event.type === 'error' || event.type === 'closed') this.turnPermissionGrants.clearBridge(rawOpts.bridgeId)
+      if (event.type === 'turn_start') {
+        this.turnPermissionGrants.clearBridge(rawOpts.bridgeId)
+        if (entry) {
+          entry.running = true
+          // Land the mode change that was refused mid-turn, now that the next
+          // turn is starting under it.
+          if (entry.pendingMode) { entry.opts.mode = entry.pendingMode; entry.pendingMode = undefined }
+        }
+      } else if (event.type === 'turn_end') {
+        this.turnPermissionGrants.clearTurn(rawOpts.bridgeId, event.turnId)
+        if (entry) entry.running = false
+      } else if (event.type === 'error' || event.type === 'closed') {
+        this.turnPermissionGrants.clearBridge(rawOpts.bridgeId)
+        if (entry) entry.running = false
+        // A dead bridge's permission cards can never be answered by anyone;
+        // leaving them pending is authority stuck in limbo.
+        this.cancelPendingRequests(rawOpts.bridgeId)
+      }
       if (event.type === 'session_id' && opts.conversationKey) setSessionId(opts.conversationKey, event.sessionId)
       if (entry && opts.conversationKey && event.type === 'turn_start') {
         entry.promptByTurn[event.turnId] = entry.pendingPrompts.shift() ?? ''
@@ -102,7 +122,7 @@ export class AgentBridgeService {
     const requestUser: RequestUserFn = request => this.requestUser(opts.bridgeId, request)
     try {
       const bridge = await this.create(path, opts, emit, requestUser)
-      this.bridges.set(opts.bridgeId, { bridge, opts, pendingPrompts: [], promptByTurn: {}, responseByTurn: {} })
+      this.bridges.set(opts.bridgeId, { bridge, opts, pendingPrompts: [], promptByTurn: {}, responseByTurn: {}, running: false })
       return { ok: true }
     } catch (error) {
       return { error: (error as Error).message }
@@ -111,14 +131,23 @@ export class AgentBridgeService {
 
   async prompt(bridgeId: string, text: string, options?: PromptOptions): Promise<{ ok: boolean; error?: string }> {
     const entry = this.bridges.get(bridgeId)
-    if (!entry) return { ok: false, error: 'bridge not found' }
-    entry.pendingPrompts.push(text)
-    const result = await entry.bridge.prompt(text, options)
-    if (!result.ok) {
-      const index = entry.pendingPrompts.indexOf(text)
-      if (index >= 0) entry.pendingPrompts.splice(index, 1)
-    }
-    return result
+        if (!entry) return { ok: false, error: 'bridge not found' }
+        const queueingFollowUp = entry.running && options?.streamingBehavior === 'followUp'
+        // Apply a deferred mode before the provider serializes the next request.
+        // turn_start is only the fallback for provider-internal queued follow-ups.
+        if (!queueingFollowUp && entry.pendingMode) {
+          entry.opts.mode = entry.pendingMode
+          entry.pendingMode = undefined
+        }
+        if (!queueingFollowUp) entry.running = true
+        entry.pendingPrompts.push(text)
+        const result = await entry.bridge.prompt(text, options)
+        if (!result.ok) {
+          const index = entry.pendingPrompts.indexOf(text)
+          if (index >= 0) entry.pendingPrompts.splice(index, 1)
+          if (!queueingFollowUp) entry.running = false
+        }
+        return result
   }
 
   compact(bridgeId: string): Promise<{ ok: boolean; error?: string; unsupported?: boolean }> {
@@ -168,19 +197,36 @@ export class AgentBridgeService {
     return { ok: true }
   }
 
-  setMode(bridgeId: string, mode: BridgeStartOpts['mode']): void {
+  /**
+   * Authority must not change underneath a turn that is already executing. A
+   * mid-turn change is refused and deferred to the next turn_start rather than
+   * applied or used to kill in-progress work.
+   */
+  setMode(bridgeId: string, mode: BridgeStartOpts['mode']): { ok: boolean; deferred?: boolean; reason?: string } {
     const entry = this.bridges.get(bridgeId)
-    if (entry) entry.opts.mode = mode
+    if (!entry || !mode) return { ok: false }
+    const decision = decideModeChange(entry.opts.mode, mode, entry.running)
+    if (!decision.apply) {
+      entry.pendingMode = mode
+      return { ok: true, deferred: true, reason: decision.reason }
+    }
+    entry.opts.mode = mode
+    entry.pendingMode = undefined
+    return { ok: true }
   }
 
   async abort(bridgeId: string): Promise<{ ok: boolean }> {
     this.turnPermissionGrants.clearBridge(bridgeId)
-    await this.bridges.get(bridgeId)?.bridge.abort().catch(() => {})
+    this.cancelPendingRequests(bridgeId)
+    const entry = this.bridges.get(bridgeId)
+    if (entry) entry.running = false
+    await entry?.bridge.abort().catch(() => {})
     return { ok: true }
   }
 
   async stop(bridgeId: string): Promise<{ ok: boolean }> {
     this.turnPermissionGrants.clearBridge(bridgeId)
+    this.cancelPendingRequests(bridgeId)
     const entry = this.bridges.get(bridgeId)
     if (entry) await entry.bridge.stop().catch(() => {})
     this.bridges.delete(bridgeId)
@@ -188,10 +234,25 @@ export class AgentBridgeService {
   }
 
   async stopAll(): Promise<void> {
+    for (const bridgeId of [...this.bridges.keys()]) this.cancelPendingRequests(bridgeId)
     await Promise.all([...this.bridges.values()].map(entry => entry.bridge.stop().catch(() => {})))
     this.bridges.clear()
     this.pendingRequests.clear()
     this.turnPermissionGrants.clear()
+  }
+
+  /**
+   * Settle every permission request still waiting on a bridge that is going
+   * away. Cancel is the only honest answer: the process behind the request can
+   * no longer act on an approval, and an unresolved promise would hang forever.
+   */
+  private cancelPendingRequests(bridgeId: string): void {
+    for (const [requestId, pending] of [...this.pendingRequests]) {
+      if (pending.bridgeId !== bridgeId) continue
+      this.pendingRequests.delete(requestId)
+      pending.resolve({ requestId, action: 'cancel' })
+      for (const listener of this.listeners) listener({ type: 'user_request_resolved', bridgeId, requestId })
+    }
   }
 
   private requestUser(bridgeId: string, request: Omit<AgentUserRequest, 'requestId' | 'bridgeId'>): Promise<AgentUserResponse> {

@@ -8,6 +8,7 @@ import { latestTodoActivity } from '../thread/todo-from-toolcall'
 import { LaneComposer } from './LaneComposer'
 import { LaneModelButton } from './LaneModelButton'
 import { LaneRunSwitch } from './LaneRunSwitch'
+import { LaneNextAction } from './LaneNextAction'
 import { LaneEffortButton } from './LaneEffortButton'
 import { shortModel } from './model-label'
 import { formatTokens, formatElapsed } from './lane-usage-format'
@@ -28,6 +29,7 @@ interface LaneColumnProps {
   onSetEffort: (effort: CrewLaneEffort) => void
   onRestart:   () => void
   onToggleMute:() => void
+  onSetNextAction: (nextAction: string) => void
   agentRequest?: AgentUserRequest | null
   onAgentRequestResponse?: (response: AgentUserResponse) => void
   /** Hide the per-lane composer — set when the Supervisor owns the crew's input. */
@@ -44,7 +46,7 @@ interface LaneColumnProps {
 export function LaneColumn({
   index = 0,
   lane, agent, messages, ptyPane,
-  onSend, onClosePane, onSetModel, onSetEffort, onRestart, onToggleMute,
+  onSend, onClosePane, onSetModel, onSetEffort, onRestart, onToggleMute, onSetNextAction,
   agentRequest = null, onAgentRequestResponse,
   hideComposer = false,
 }: LaneColumnProps) {
@@ -88,7 +90,7 @@ export function LaneColumn({
           </button>
           <span
             className={`crew-status-dot status-${lane.status}`}
-            title={lane.muted ? `${lane.status} · skipped for this run` : lane.status}
+            title={lane.muted ? 'paused · worktree and next action retained' : lane.status}
           />
         </div>
         <div className="lane-head-row lane-head-meta">
@@ -101,6 +103,11 @@ export function LaneColumn({
           <LaneRunSwitch enabled={!lane.muted} onToggle={onToggleMute} />
           <LaneEffortButton provider={lane.agentId} effort={lane.effort} onPick={onSetEffort} />
         </div>
+        <LaneNextAction
+          value={lane.nextAction ?? ''}
+          paused={lane.muted}
+          onChange={onSetNextAction}
+        />
         {(usage.tokensIn > 0 || usage.tokensOut > 0 || usage.elapsedMs > 0) && (
           <div className="lane-usage" title={`in ${usage.tokensIn} · out ${usage.tokensOut} · ${usage.elapsedMs}ms`}>
             <span className="lane-usage-cell"><Icon name="arrowDown" size={10} />{formatTokens(usage.tokensIn)}</span>
@@ -123,7 +130,7 @@ export function LaneColumn({
         {offline ? (
           <div className="lane-empty">{lane.agentId} is unavailable</div>
         ) : lane.muted ? (
-          <div className="lane-empty">enable this model to include {name} in the next run</div>
+          <div className="lane-empty">paused — resume when ready; this worktree and its next action are retained</div>
         ) : isPty ? (
           ptyPane
             ? <XTermPane
@@ -154,7 +161,8 @@ export function LaneColumn({
 
       {!hideComposer && (
         <LaneComposer
-          placeholder={lane.muted ? `enable ${name} to message this model` : `message ${name}`}
+          workspacePath={lane.path}
+          placeholder={lane.muted ? `resume ${name} before sending` : `message ${name} · use @ to add files`}
           disabled={offline || lane.muted}
           running={live}
           onStop={onRestart}

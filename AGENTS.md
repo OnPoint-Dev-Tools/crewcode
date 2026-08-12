@@ -71,6 +71,54 @@ src/renderer/src/
 
 Always use the primary working directory (the worktree) for all file reads and edits. Never follow absolute paths from subagent results that point to the main repo.
 
+## GOVERNING DOCTRINE: Execution Custody
+
+Binding on every privileged surface in this repository, current and future. Full
+rationale and implementation map in `docs/execution-custody.md`.
+
+Granting authority is decided at the gates in `docs/security-model.md`. This
+doctrine governs the other half of the lifecycle: **withdrawing authority once it
+has already been granted.**
+
+When **authority / identity / scope / provenance / execution custody** becomes
+unknown, stale, contradictory, or changes unexpectedly:
+
+```
+-> refuse new privileged actions on the affected scope
+-> contain or terminate owned execution where safe
+-> preserve evidence and current workspace state
+-> report the exact failed invariant and affected scope
+-> require explicit human reauthorization before resuming
+```
+
+Never, under any circumstance, infer a successful outcome from the absence of a
+failure signal:
+
+```
+silence               != success
+timeout               != success
+lost telemetry        != success
+missing process state != success
+clean Git state       != behavioral correctness
+```
+
+Rules for new code:
+
+- An operation whose outcome was never observed is recorded as `interrupted` or
+  `halted`. It is never back-filled as complete, and never on restart.
+- Long-lived executions carry a persisted custody record. Process-local runtime
+  ids are cleared on restart; in-flight work becomes `interrupted`, not success.
+- Authority must not change underneath an execution that is already running.
+  Refuse and defer the mutation; do not apply it mid-flight.
+- Every sanctioned authority mutation is written to the custody record. An
+  unrecorded divergence is drift and must trip.
+- Reports name the exact failed invariant and the exact affected scope. Never a
+  generic error.
+- A halt is cleared only by explicit human reauthorization. Halted records are
+  stamped, never deleted — resuming work must not erase why it stopped.
+- Read-only inspection of custody state is never gated by a halt. A halt must
+  not hide the evidence it was raised to preserve.
+
 Crew merges must not equate a clean Git merge with behavioral correctness. Keep the cross-lane collision analysis explainable and advisory, preserve the explicit review gate, and persist source worktree/commit provenance before starting a merge. On restart, process-local runtime ids must be cleared and a still-running merge audit or verification check must become `interrupted`, never inferred successful. Verification IPC accepts only main-discovered `typecheck`/`test` ids, displays the exact command and package script before execution, and must never become arbitrary command execution. See `docs/behavioral-merge-review.md`.
 
 ## Cross-Platform Support

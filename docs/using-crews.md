@@ -55,7 +55,10 @@ A live header toggle, separate from workspace mode — you can flip it mid-run:
   compare-the-answers runs.
 
 Without a supervisor in shared mode, each worker gets its own composer in the
-timeline — you address lanes directly.
+timeline — you address lanes directly. Lane composers support `@` file search
+against that lane's effective workspace (its isolated worktree, or the shared
+base path). Their textareas grow with multi-line assignments up to a bounded
+height, then scroll instead of staying fixed at one line or taking over the lane.
 
 ## How the supervisor works
 
@@ -91,13 +94,21 @@ Stop controls are scoped on purpose:
 | --- | --- |
 | **stop all** (crew header) | aborts every runtime in the crew |
 | Supervisor composer stop | aborts only the supervisor's turn |
-| Lane composer stop | restarts only that lane |
+| Lane composer stop | stops only that runtime; its next prompt respawns it |
+| Lane **enabled / paused** switch | stops that runtime and excludes the lane from delegation while retaining its worktree, transcript, and editable **next action** checkpoint |
+
+Each assignment automatically seeds the lane's next-action checkpoint. You can
+edit it before switching attention. Pause/resume state and the checkpoint are
+stored with the crew session, so restart recovery keeps the handoff while
+honestly restoring the runtime itself as stopped. Resuming never auto-sends the
+checkpoint; the operator or supervisor decides when to continue.
 
 After a stop, sending a message resumes orchestration cleanly.
 
 ## Finishing up
 
-In isolated mode, review each lane's branch in the git sidebar or the
-[Git Workspace](./git-workspace.md), merge what you want, then archive the
-crew — worktrees are torn down after agents are released. In shared mode the
-work is already on your branch; review the diff and commit as usual.
+In isolated mode, review lane ownership and collision signals in Cross-lane
+Diff, then use the merge sidebar to verify all selected lane commits together
+before applying the exact checked integration. Archive the crew afterward;
+worktrees are torn down only after agents are released. In shared mode the work
+is already on your branch; review the diff and commit as usual.

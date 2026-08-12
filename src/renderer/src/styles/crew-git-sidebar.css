@@ -20,7 +20,7 @@
 @keyframes crew-git-fade { from { opacity: 0; } to { opacity: 1; } }
 
 .crew-git-sidebar {
-  width: 360px;
+  width: 430px;
   max-width: 92vw;
   height: 100%;
   display: flex;
@@ -82,26 +82,97 @@
 .crew-git-conflict-actions { display: flex; gap: 3px; flex-shrink: 0; }
 .crew-git-conflict-foot { display: flex; gap: 6px; margin-top: 8px; }
 
-/* ---------- durable merge audit ---------- */
-.crew-git-audit {
+/* ---------- combined integration safety gate ---------- */
+.crew-integration-card {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 8px 12px;
+  gap: 10px;
+  padding: 12px;
   border-bottom: 1px solid var(--border);
-  background: var(--crew-green-soft);
-  font-size: 10px;
+  border-left: 3px solid var(--border);
+  background: rgba(255, 255, 255, 0.012);
   color: var(--muted-foreground);
+  font-size: 10.5px;
   overflow-wrap: anywhere;
 }
-.crew-git-audit > div { color: var(--foreground); }
-.crew-git-checks { display: flex; flex-direction: column; gap: 5px; padding-top: 3px; }
-.crew-git-check { display: flex; align-items: center; gap: 6px; }
-.crew-git-check > span { flex: 1; min-width: 0; font-size: 9px; overflow-wrap: anywhere; }
-.crew-git-checks .crew-git-mini { color: var(--foreground); flex-shrink: 0; }
-.crew-git-audit.is-failed,
-.crew-git-audit.is-interrupted { background: rgba(140, 40, 40, 0.15); }
-.crew-git-audit.is-conflict { background: rgba(150, 120, 40, 0.14); }
+.crew-integration-card.is-running { border-left-color: var(--crs-accent-bright); background: var(--crew-green-soft); }
+.crew-integration-card.is-ready,
+.crew-integration-card.is-applied { border-left-color: #57b87a; background: rgba(52, 130, 80, 0.1); }
+.crew-integration-card.is-rejected { border-left-color: #c65b5b; background: rgba(140, 40, 40, 0.1); }
+.crew-integration-card.is-attention { border-left-color: #d0a64e; background: rgba(150, 120, 40, 0.1); }
+
+.crew-integration-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.crew-integration-card-head h3 { margin: 2px 0 0; color: var(--foreground); font-size: 13px; line-height: 1.25; }
+.crew-integration-eyebrow { display: block; color: var(--muted-foreground); font-size: 9px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.crew-integration-badge {
+  flex-shrink: 0;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted-foreground);
+  background: var(--background);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.crew-integration-badge.is-running { color: var(--crs-accent-fg); border-color: var(--crs-accent-bright); }
+.crew-integration-badge.is-ready,
+.crew-integration-badge.is-applied { color: #9ce2b4; border-color: #43895d; }
+.crew-integration-badge.is-rejected { color: #f0b6b6; border-color: #8c3d3d; }
+.crew-integration-badge.is-attention { color: #e8d199; border-color: #806b32; }
+
+.crew-integration-summary { margin: 0; line-height: 1.45; color: var(--foreground); }
+.crew-integration-progress { display: flex; align-items: center; gap: 6px; color: var(--crs-accent-fg); font-weight: 600; }
+.crew-integration-progress > svg { animation: crew-git-spin 1s linear infinite; }
+.crew-integration-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 7px 8px;
+  border: 1px solid rgba(198, 91, 91, 0.35);
+  border-radius: 4px;
+  background: rgba(140, 40, 40, 0.12);
+  color: #f0b6b6;
+}
+.crew-integration-error > svg { flex-shrink: 0; margin-top: 1px; }
+.crew-integration-error > div { display: flex; flex-direction: column; gap: 2px; }
+.crew-integration-error b { color: var(--foreground); }
+
+.crew-integration-evidence { display: flex; flex-direction: column; gap: 6px; }
+.crew-integration-section-title { color: var(--foreground); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
+.crew-integration-check { padding: 7px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--background); }
+.crew-integration-check-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--foreground); }
+.crew-integration-check-status { font-size: 9px; font-weight: 700; text-transform: uppercase; }
+.crew-integration-check-status.is-passed { color: #9ce2b4; }
+.crew-integration-check-status.is-failed,
+.crew-integration-check-status.is-interrupted { color: #f0b6b6; }
+.crew-integration-check-status.is-running { color: var(--crs-accent-fg); }
+.crew-integration-command { display: block; margin-top: 4px; color: var(--muted-foreground); font-size: 9px; }
+.crew-integration-empty { color: var(--muted-foreground); font-style: italic; }
+.crew-integration-output { margin-top: 6px; border-top: 1px solid var(--border); padding-top: 5px; }
+.crew-integration-output summary,
+.crew-integration-inputs summary { color: var(--foreground); cursor: pointer; font-weight: 600; }
+.crew-integration-output pre {
+  max-height: 180px;
+  margin: 6px 0 0;
+  padding: 7px;
+  overflow: auto;
+  white-space: pre-wrap;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.24);
+  color: #f0b6b6;
+  font: 9px/1.45 var(--font-mono, monospace);
+}
+
+.crew-integration-inputs { border-top: 1px solid var(--border); padding-top: 8px; }
+.crew-integration-base { margin-top: 7px; color: var(--crs-accent-fg); }
+.crew-integration-owner { display: flex; flex-direction: column; gap: 2px; margin-top: 7px; padding-left: 8px; border-left: 1px solid var(--border); }
+.crew-integration-owner b { color: var(--foreground); }
+.crew-integration-owner span { font-size: 9px; }
+.crew-integration-next { display: flex; flex-direction: column; gap: 2px; padding: 7px 8px; border-radius: 4px; background: rgba(255, 255, 255, 0.035); }
+.crew-integration-next b { color: var(--foreground); }
+.crew-integration-actions { display: flex; gap: 6px; align-items: stretch; }
+.crew-integration-actions > button { flex: 1; min-width: 0; white-space: normal; }
 
 /* ---------- behavioral review gate ---------- */
 .crew-git-risk-gate {

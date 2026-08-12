@@ -1,6 +1,6 @@
-import { basename, resolve } from 'path'
+import { basename, isAbsolute, resolve } from 'path'
 import { spawnSync } from 'child_process'
-import { existsSync, readFileSync, appendFileSync } from 'fs'
+import { existsSync, readFileSync, appendFileSync, unlinkSync } from 'fs'
 import os from 'os'
 
 /** Expand a leading `~` to the user's home directory. */
@@ -20,7 +20,8 @@ export type WorktreeOpResult = { ok: true; path: string } | { error: string }
  *     sessions pass their base branch as `startPoint` so every isolated lane
  *     forks from the same base rather than from whatever HEAD happens to be.
  *   - Exit 128 means the branch already exists → re-add without `-b`.
- *   - Ensure `.worktrees/` is gitignored so lane dirs don't show as untracked.
+ *   - Exclude `.worktrees/` through Git's private info/exclude file so creating
+ *     a lane never dirties the user's project checkout.
  */
 export function addWorktree(
   repoPath: string,
@@ -56,19 +57,32 @@ export function addWorktree(
 
   if (result.status !== 0) return { error: result.stderr?.trim() || 'git worktree add failed' }
 
-  ensureWorktreesIgnored(cwd)
+  ensureWorktreesExcluded(cwd)
   return { ok: true, path: resolvedTarget }
 }
 
-/** Append `.worktrees/` to .gitignore if absent so lane dirs stay untracked. */
-function ensureWorktreesIgnored(cwd: string): void {
-  const gitignorePath = resolve(cwd, '.gitignore')
+/**
+ * Keep Crew worktrees out of status without editing a project-owned file. Older
+ * builds created an untracked `.gitignore` containing only this entry; migrate
+ * that exact generated file into the repository-private exclude on sight.
+ */
+export function ensureWorktreesExcluded(repoPath: string): void {
+  const cwd = expandHome(repoPath)
   const entry = '.worktrees/'
   try {
-    const existing = existsSync(gitignorePath) ? readFileSync(gitignorePath, 'utf8') : ''
-    if (!existing.split('\n').some(l => l.trim() === entry)) {
-      appendFileSync(gitignorePath, existing.endsWith('\n') || existing === '' ? `${entry}\n` : `\n${entry}\n`)
+    const resolved = spawnSync('git', ['rev-parse', '--git-path', 'info/exclude'], { cwd, encoding: 'utf8' })
+    if (resolved.status !== 0) return
+    const value = resolved.stdout.trim()
+    const excludePath = isAbsolute(value) ? value : resolve(cwd, value)
+    const existing = existsSync(excludePath) ? readFileSync(excludePath, 'utf8') : ''
+    if (!existing.split('\n').some(line => line.trim() === entry)) {
+      appendFileSync(excludePath, existing.endsWith('\n') || existing === '' ? `${entry}\n` : `\n${entry}\n`)
     }
+
+    const legacyPath = resolve(cwd, '.gitignore')
+    if (!existsSync(legacyPath) || readFileSync(legacyPath, 'utf8').trim() !== entry) return
+    const tracked = spawnSync('git', ['ls-files', '--error-unmatch', '--', '.gitignore'], { cwd, encoding: 'utf8' })
+    if (tracked.status !== 0) unlinkSync(legacyPath)
   } catch { /* non-fatal — ignore */ }
 }
 

@@ -5,6 +5,8 @@ import { useGitSidebar } from '../../hooks/useGitSidebar'
 import type { AgentInfo, CrewIntegrationRecord } from '../../types'
 import type { CrewSession } from '../../orchestrator/crew-session'
 import { analyzeCrewCollisions } from '../../orchestrator/crew-collision-analysis'
+import { presentCrewIntegration } from '../../orchestrator/crew-integration-presentation'
+import { crewReviewFingerprint } from '../../orchestrator/crew-review-fingerprint'
 
 interface CrewGitSidebarProps {
   open:        boolean
@@ -70,7 +72,7 @@ export function CrewGitSidebar({
       if (cancelled) return
       setBaseHead(log?.commits?.[0]?.hash ?? '')
       setIntegration(status?.record ?? null)
-      setIntegrationError(status?.error ?? null)
+      setIntegrationError(status?.record ? null : status?.error ?? null)
     })
     return () => { cancelled = true }
   }, [open, session.basePath, session.id, tick])
@@ -88,6 +90,8 @@ export function CrewGitSidebar({
 
   // Resolve a lane to its registered worktree by branch (ids are derived from the
   // path basename, which can differ from the lane's worktreeId — branch is stable).
+  const reviewFingerprint = crewReviewFingerprint(lanes)
+
   const worktreeForLane = useCallback(
     (branch: string) => git.state.worktrees.find(w => w.branch === branch) ?? null,
     [git.state.worktrees],
@@ -130,7 +134,9 @@ export function CrewGitSidebar({
       }))
     })
     return () => { cancelled = true }
-  }, [open, lanes, tick, session.baseBranch])
+  // Runtime status/usage updates must not clear loaded lane evidence. Refresh
+  // only when Git ownership changes, the operator asks, or the panel reopens.
+  }, [open, reviewFingerprint, tick, session.baseBranch])
 
   const collisionFindings = useMemo(() => analyzeCrewCollisions(lanes.map(lane => ({
     laneId: lane.laneId,
@@ -155,7 +161,7 @@ export function CrewGitSidebar({
         baseBranch: session.baseBranch, baseHead, lanes: candidates,
       })
       setIntegration(result?.record ?? null)
-      setIntegrationError(result?.error ?? null)
+      setIntegrationError(result?.record ? null : result?.error ?? null)
       setTick(value => value + 1)
     } finally { setIntegrationBusy(false) }
   }, [lanes, byLane, baseHead, session.id, session.basePath, session.baseBranch, agentName])
@@ -166,7 +172,7 @@ export function CrewGitSidebar({
     try {
       const result = await window.electronAPI?.gitApplyCrewIntegration(session.id)
       setIntegration(result?.record ?? null)
-      setIntegrationError(result?.error ?? null)
+      setIntegrationError(result?.record ? null : result?.error ?? null)
       refreshAll()
     } finally { setIntegrationBusy(false) }
   }, [session.id, refreshAll])
@@ -204,6 +210,7 @@ export function CrewGitSidebar({
   const candidateLaneCount = lanes.filter(lane => !!byLane[lane.laneId]?.head && (byLane[lane.laneId]?.changed ?? 0) > 0).length
   const hasCandidateLanes = candidateLaneCount > 0
   const merging   = conflicts.length > 0 || integrationRunning
+  const integrationView = presentCrewIntegration(integration)
 
   return (
     <div className="crew-git-backdrop" onClick={onClose}>
@@ -262,25 +269,88 @@ export function CrewGitSidebar({
           </section>
         )}
 
-        <section className={`crew-git-audit is-${integration?.status ?? 'idle'}`}>
-          <div><b>combined integration</b>{integration ? ` · ${integration.status} · ${integration.phase}` : ' · not verified'}</div>
-          <span>Builds every committed lane together in a disposable worktree; the base checkout stays unchanged until you apply the exact passing commit.</span>
-          {integration && (
-            <>
-              <span className="mono">base {integration.baseBranch}@{integration.baseHead.slice(0, 10)}</span>
-              {integration.lanes.map(lane => (
-                <span className="mono" key={lane.laneId}>owner {lane.label}: {lane.branch}@{lane.head.slice(0, 10)} · {lane.worktreePath} · {lane.files.join(', ') || 'no files recorded'}</span>
-              ))}
-              <span>Checks: {integration.checks.length ? integration.checks.map(check => `${check.label}: ${check.status}`).join(', ') : 'none discovered or not reached'}{integration.error ? ` · ${integration.error}` : ''}</span>
-            </>
+        <section className={`crew-integration-card is-${integrationView.tone}`} aria-live="polite">
+          <header className="crew-integration-card-head">
+            <div>
+              <span className="crew-integration-eyebrow">combined safety gate</span>
+              <h3>{integrationView.heading}</h3>
+            </div>
+            <span className={`crew-integration-badge is-${integrationView.tone}`}>{integrationView.badge}</span>
+          </header>
+
+          <p className="crew-integration-summary">{integrationView.summary}</p>
+          {integrationView.progress && (
+            <div className="crew-integration-progress">
+              {integrationRunning && <Icon name="refresh" size={11} />}
+              <span>{integrationView.progress}</span>
+            </div>
           )}
-          {integrationError && <span className="crew-git-err"><Icon name="alert" size={11} /> {integrationError}</span>}
-          <div className="crew-git-checks">
-            <button type="button" className="crew-btn-ghost" disabled={!baseHead || !hasCandidateLanes || merging} onClick={() => { void verifyCombinedIntegration() }}>
-              {integrationRunning ? 'verifying combined lanes…' : 'verify combined lanes'}
+
+          {(integration?.error || integrationError) && (
+            <div className="crew-integration-error">
+              <Icon name="alert" size={12} />
+              <div><b>Why this stopped</b><span>{integration?.error ?? integrationError}</span></div>
+            </div>
+          )}
+
+          <div className="crew-integration-evidence">
+            <div className="crew-integration-section-title">Project checks</div>
+            {integration?.checks.length ? integration.checks.map(check => (
+              <div className="crew-integration-check" key={check.id}>
+                <div className="crew-integration-check-head">
+                  <b>{check.label}</b>
+                  <span className={`crew-integration-check-status is-${check.status}`}>{check.status}</span>
+                </div>
+                <span className="mono crew-integration-command">{check.command} → {check.script}</span>
+                {check.output?.trim() && (
+                  <details className="crew-integration-output" open={check.status === 'failed' || check.status === 'interrupted'}>
+                    <summary>Check output</summary>
+                    <pre>{check.output.trim()}</pre>
+                  </details>
+                )}
+              </div>
+            )) : (
+              <span className="crew-integration-empty">
+                {!integration ? 'Results will appear after verification.'
+                  : integration.status === 'passed' ? 'No allowlisted typecheck or test script was discovered; only Git combination was verified.'
+                    : integration.phase === 'checking' && integrationRunning ? 'Discovering project checks…'
+                      : 'No project check completed.'}
+              </span>
+            )}
+          </div>
+
+          {integration && (
+            <details className="crew-integration-inputs">
+              <summary>Candidate ownership · {integration.lanes.length} lane{integration.lanes.length === 1 ? '' : 's'}</summary>
+              <div className="crew-integration-base mono">base {integration.baseBranch}@{integration.baseHead.slice(0, 10)}</div>
+              {integration.lanes.map(lane => (
+                <div className="crew-integration-owner" key={lane.laneId}>
+                  <b>{lane.label}</b>
+                  <span className="mono">{lane.branch}@{lane.head.slice(0, 10)}</span>
+                  <span className="mono">{lane.worktreePath}</span>
+                  <span className="mono">{lane.files.join(', ') || 'no files recorded'}</span>
+                </div>
+              ))}
+            </details>
+          )}
+
+          <div className="crew-integration-next">
+            <b>Next step</b>
+            <span>{integrationView.nextStep}</span>
+          </div>
+
+          <div className="crew-integration-actions">
+            <button
+              type="button"
+              className="crew-btn-ghost"
+              disabled={!baseHead || !hasCandidateLanes || merging}
+              title={!baseHead ? 'base commit is still loading' : !hasCandidateLanes ? 'no committed lane changes found' : integrationView.nextStep}
+              onClick={() => { void verifyCombinedIntegration() }}
+            >
+              {integrationView.verifyLabel}
             </button>
             <button type="button" className="crew-git-merge" disabled={integration?.status !== 'passed' || merging} onClick={() => { void applyCombinedIntegration() }}>
-              apply checked integration → {session.baseBranch}
+              apply verified commit → {session.baseBranch}
             </button>
           </div>
         </section>

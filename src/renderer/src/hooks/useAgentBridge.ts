@@ -1,9 +1,10 @@
 import { useEffect, useRef, useCallback } from 'react'
-import type { AgentProviderId, BridgeEvent, ChatPromptOptions, Message, TurnFileChange, ModeLevel } from '../types'
+import type { AgentProviderId, BridgeEvent, ChatPromptOptions, CustodyHaltPayload, Message, TurnFileChange, ModeLevel } from '../types'
 import type { McpServerConfig } from './useSettings'
 import { extractFilePathsFromToolArgs, buildUnifiedDiff, extractProviderPatchChanges, isFileEditTool, resultHasPatchSignal, collectTouchedPaths } from './turn-file-edit-detect'
 import { appendStreamChunk } from '../streaming/stream-chunks'
 import { useNotifications } from './useNotifications'
+import { clearLatestContextUsage } from './compaction-context'
 
 type BridgeToolPolicy = 'default' | 'read-only'
 
@@ -95,9 +96,17 @@ interface UseAgentBridgeOpts {
    * the thread is untouched.
    */
   onReleased?:        (bridgeId: string) => void
+  /**
+   * An execution-custody invariant tripped: authority granted to this thread is
+   * no longer knowable, so privileged actions are refused until the user
+   * reauthorizes. Carries the exact failed invariant and the preserved evidence.
+   */
+  onCustodyHalt?:     (tabId: string, bridgeId: string, halt: CustodyHaltPayload) => void
+  /** The user reauthorized the thread; the halt banner clears. */
+  onCustodyCleared?:  (tabId: string, scopeKey: string) => void
 }
 
-export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, bridgeToMode, onRunningChange, onTurnEnd, onActivity, onStatus, onUserRequest, onUserRequestResolved, onFollowUpQueued, onFollowUpRemoved, onReleased }: UseAgentBridgeOpts) {
+export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, bridgeToMode, onRunningChange, onTurnEnd, onActivity, onStatus, onUserRequest, onUserRequestResolved, onFollowUpQueued, onFollowUpRemoved, onReleased, onCustodyHalt, onCustodyCleared }: UseAgentBridgeOpts) {
   const { show } = useNotifications()
   const stateRef      = useRef<Record<string, BridgeState>>({})        // per bridgeId
   const streamBuffersRef = useRef<Record<string, PendingStreamDelta>>({})
@@ -125,6 +134,10 @@ export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, br
   onFollowUpRemovedRef.current = onFollowUpRemoved
   const onReleasedRef = useRef(onReleased)
   onReleasedRef.current = onReleased
+  const onCustodyHaltRef = useRef(onCustodyHalt)
+  onCustodyHaltRef.current = onCustodyHalt
+  const onCustodyClearedRef = useRef(onCustodyCleared)
+  onCustodyClearedRef.current = onCustodyCleared
 
   function getState(bridgeId: string): BridgeState {
     let s = stateRef.current[bridgeId]
@@ -313,6 +326,29 @@ export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, br
 
       const closeThinkingSegment = (turnId: string): void => {
         delete st.activeThinkingByTurn[turnId]
+      }
+      // A bridge that exits mid-turn never sends turn_end, so nothing else
+      // clears the streaming flag: the spinner keeps running on a dead process
+      // and silence reads as work in progress. Settle every in-flight bubble.
+      const settleStreamingMessages = (): void => {
+        // Tabs may host more than one agent. Settle only turns owned by this
+        // bridge; clearing every streaming bubble would make a healthy sibling
+        // agent look finished when this bridge exits.
+        const turnIds = new Set([
+          ...Object.keys(st.agentBubbleByTurn),
+          ...Object.keys(st.activeThinkingByTurn),
+          ...Object.keys(st.turnStartTimes),
+        ])
+        if (!turnIds.size) return
+        setMessagesForTab(tabId, m => {
+          let changed = false
+          const next = m.map(msg => {
+            if ((msg.kind !== 'agent' && msg.kind !== 'thinking') || !msg.streaming || !msg.turnId || !turnIds.has(msg.turnId)) return msg
+            changed = true
+            return { ...msg, streaming: false }
+          })
+          return changed ? next : m
+        })
       }
       const closeAgentSegment = (turnId: string): void => {
         delete st.agentBubbleByTurn[turnId]
@@ -596,10 +632,11 @@ export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, br
           const noticeType = ev.status === 'failed' ? 'error' : ev.automatic ? 'warning' : ev.status === 'completed' ? 'success' : 'info'
           show({ type: noticeType, message, duration: ev.status === 'started' ? 3000 : 6000 })
           setMessagesForTab(tabId, m => {
-            const activeIdx = [...m].reverse().findIndex(msg => msg.kind === 'compaction' && msg.bridgeId === bridgeId && msg.status === 'started')
-            const idx = activeIdx === -1 ? -1 : m.length - 1 - activeIdx
+            const base = ev.resetContext ? clearLatestContextUsage(m) : m
+            const activeIdx = [...base].reverse().findIndex(msg => msg.kind === 'compaction' && msg.bridgeId === bridgeId && msg.status === 'started')
+            const idx = activeIdx === -1 ? -1 : base.length - 1 - activeIdx
             if (idx !== -1) {
-              const next = m.slice()
+              const next = base.slice()
               next[idx] = {
                 kind: 'compaction',
                 bridgeId,
@@ -612,7 +649,7 @@ export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, br
               }
               return next
             }
-            return [...m, {
+            return [...base, {
               kind: 'compaction',
               bridgeId,
               time: nowTime(),
@@ -693,6 +730,7 @@ export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, br
           delete st.pendingPromptStartedAt
           onStatusRef.current?.(ev.bridgeId, null)
           onRunningChange?.(ev.bridgeId, false)
+          settleStreamingMessages()
           setMessagesForTab(tabId, m => [...m, { kind: 'system', tone: 'error', text: ev.message, time: nowTime() }])
           onTurnEndRef.current?.(ev.bridgeId, tabId)
           return
@@ -703,8 +741,38 @@ export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, br
           delete st.pendingPromptStartedAt
           onStatusRef.current?.(ev.bridgeId, null)
           onRunningChange?.(ev.bridgeId, false)
+          settleStreamingMessages()
           setMessagesForTab(tabId, m => [...m, { kind: 'system', tone: 'info', text: `agent exited (${ev.code ?? 'unknown'})`, time: nowTime() }])
           onTurnEndRef.current?.(ev.bridgeId, tabId)
+          return
+        }
+
+        // ─── Execution custody ────────────────────────────────────────────
+        // An invariant tripped. The thread refuses privileged actions until the
+        // user reauthorizes; main has already contained and preserved. All the
+        // renderer does is report it loudly and stop pretending work continues.
+        case 'custody_halt': {
+          st.turnStartTimes = {}
+          delete st.pendingPromptStartedAt
+          onStatusRef.current?.(ev.bridgeId, null)
+          onRunningChange?.(ev.bridgeId, false)
+          settleStreamingMessages()
+          onCustodyHaltRef.current?.(tabId, ev.bridgeId, ev.halt)
+          onTurnEndRef.current?.(ev.bridgeId, tabId)
+          // Main tore the process down as containment; drop the dead bridge id
+          // so a reauthorized prompt starts a fresh one instead of retrying it.
+          onReleasedRef.current?.(ev.bridgeId)
+          delete stateRef.current[ev.bridgeId]
+          return
+        }
+
+        case 'custody_cleared': {
+          onCustodyClearedRef.current?.(tabId, ev.scopeKey)
+          return
+        }
+
+        case 'custody_deferred': {
+          setMessagesForTab(tabId, m => [...m, { kind: 'system', tone: 'info', text: ev.message, time: nowTime() }])
           return
         }
 

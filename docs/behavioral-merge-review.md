@@ -29,13 +29,17 @@ A passing candidate is retained by an internal Git ref. **Apply checked integrat
 
 Only then does CrewCode use `git merge --ff-only` to apply the checked commit. A changed input makes the candidate stale and requires another verification.
 
+The sidebar reports the result as a **candidate decision**, not as whether CrewCode itself worked. **Candidate rejected** means the safety gate ran and prevented an incompatible or otherwise failing combination from reaching the base. **Ready to apply** means the combined candidate passed the discovered checks. Failed check output is expanded beneath the check so the rejection reason is visible without opening developer tools.
+
 ## Restart recovery and evidence
 
 The main process atomically persists a merge journal under CrewCode's user-data directory before combination begins and at every phase transition. Each record contains the session, base branch/SHA, lane label, branch, worktree path, owned files and SHA, current phase, discovered check commands, outputs, status, and timestamps.
 
 After restart, an in-flight operation is shown as `interrupted` instead of implying that its process survived. Any running check is likewise marked interrupted. A candidate that had already passed is reconciled against Git; moved base/lane/ref inputs make it stale. If CrewCode stopped while applying but the base now equals the retained integration SHA, reconciliation records the operation as applied. The base is never inferred to be updated merely because a subprocess had started.
 
-Crew session ownership is also persisted locally. Process-local bridge and terminal IDs are cleared on recovery, and lanes that previously said `running` recover as `ready`; the UI never claims an agent process survived without evidence.
+Crew session ownership is also persisted locally. Each lane has an explicit **enabled / paused** switch and an editable **next action** checkpoint, automatically seeded from its latest assignment. Pausing stops the lane runtime but retains its worktree, transcript, and checkpoint; resuming does not auto-submit work. Process-local bridge and terminal IDs are cleared on recovery, lanes that previously said `running` recover as `ready`, and persisted pause/checkpoint state remains visible. The UI never claims an agent process survived without evidence.
+
+Compare and Merge cache their loaded Git evidence by stable lane ownership (lane ID, branch, and path). Runtime status, usage-timer, pause, and checkpoint updates therefore no longer reset those surfaces to a loading state or replay their entry UI while they are open.
 
 ## Limits
 

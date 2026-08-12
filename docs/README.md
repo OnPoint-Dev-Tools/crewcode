@@ -29,6 +29,7 @@ internal references).
 | Doc | What it covers |
 | --- | --- |
 | [security-model.md](./security-model.md) | Authority-boundary audit: untrusted content -> agent -> MCP/plugin -> exec -> Git/SSH, per-hop gates, tests, and residual risk |
+| [execution-custody.md](./execution-custody.md) | Withdrawing authority after it was granted: invariant tripwire, custody journal, halt/contain/preserve/report, explicit reauthorization |
 | [remote-ssh-workspaces.md](./remote-ssh-workspaces.md) | Opening projects over SSH: setup, auth, host pinning, what works remotely |
 | [canvas-mode.md](./canvas-mode.md) | Workbench: multiple chats and terminals side by side on one worktree _(nav label: "Workbench")_ |
 | [chat-archiving.md](./chat-archiving.md) | Right-click a chat to archive it; the Archive page, restoring, and retention flagging |

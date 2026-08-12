@@ -270,7 +270,9 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
     ['bridge.compact', params => agentService.compact(String(params.bridgeId ?? ''))],
     ['bridge.removeFollowUp', params => agentService.removeFollowUp(String(params.bridgeId ?? ''), String(params.followUpId ?? ''))],
     ['bridge.respondUserRequest', params => agentService.respond(params.response as Parameters<AgentBridgeService['respond']>[0])],
-    ['bridge.setMode', params => { agentService.setMode(String(params.bridgeId ?? ''), params.mode as BridgeStartOpts['mode']); return { ok: true } }],
+    // Returns { deferred, reason } when the change was refused mid-turn, so a
+    // remote client can show that its request lands on the next turn.
+    ['bridge.setMode', params => agentService.setMode(String(params.bridgeId ?? ''), params.mode as BridgeStartOpts['mode'])],
     ['bridge.abort', params => agentService.abort(String(params.bridgeId ?? ''))],
     ['bridge.stop', params => agentService.stop(String(params.bridgeId ?? ''))],
   ])

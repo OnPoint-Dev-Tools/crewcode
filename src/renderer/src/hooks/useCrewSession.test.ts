@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
 
 import { renderHook, act } from './hook-test-host'
-import { useCrewSession } from './useCrewSession'
+import { recoverCrewSessions, useCrewSession } from './useCrewSession'
+import { createSession, crewReducer } from '../orchestrator/crew-session'
 import type { CrewGitDriver, CrewAgentLane } from '../orchestrator/crew-session'
 
 const TAB = 'tab1'
@@ -137,6 +138,69 @@ describe('useCrewSession — archive & orphan prevention', () => {
 
     expect(h.result.current.sessions[TAB]).toBeUndefined()
     expect(git.archiveLane).toHaveBeenCalledTimes(1)
+    h.unmount()
+  })
+})
+
+describe('useCrewSession — durable pause', () => {
+  it('recovers pause and next-action state without claiming the runtime survived', () => {
+    let session = createSession({
+      wsId: 'ws1', hostTabId: TAB, basePath: '/repo', baseBranch: 'main', mode: 'shared',
+    })
+    session = crewReducer(session, { type: 'add_lane', agentId: 'pi' })
+    session = crewReducer(session, { type: 'provision' })
+    session = crewReducer(session, { type: 'activate' })
+    const laneId = session.lanes[0].laneId
+    session = crewReducer(session, {
+      type: 'lane_status', laneId, status: 'running', tabId: 'crew/lane-1', bridgeId: 'bridge-1',
+    })
+    session = crewReducer(session, { type: 'set_lane_next_action', laneId, nextAction: 'continue auth review' })
+    // Simulate an older persisted process snapshot with a pause marker.
+    session = { ...session, lanes: [{ ...session.lanes[0], muted: true }] }
+
+    const recovered = recoverCrewSessions({ [TAB]: session })[TAB]
+    expect(recovered.lanes[0]).toMatchObject({
+      muted: true,
+      nextAction: 'continue auth review',
+      status: 'ready',
+      bridgeId: null,
+      paneId: null,
+    })
+  })
+
+  it('migrates a legacy lane without a checkpoint to an empty durable note', () => {
+    const session = createSession({ wsId: 'ws1', hostTabId: TAB, basePath: '/repo', baseBranch: 'main' })
+    const withLane = crewReducer(session, { type: 'add_lane', agentId: 'pi' })
+    const legacyLane = { ...withLane.lanes[0] } as CrewAgentLane
+    delete legacyLane.nextAction
+    const recovered = recoverCrewSessions({ [TAB]: { ...withLane, lanes: [legacyLane] } })[TAB]
+    expect(recovered.lanes[0].nextAction).toBe('')
+    expect(recovered.lanes[0].muted).toBe(false)
+  })
+
+  it('stops a live runtime and retains its checkpoint when paused', async () => {
+    const released: CrewAgentLane[] = []
+    const h = mount(okGit(), lane => released.push(lane))
+    await act(async () => {
+      h.result.current.begin({ wsId: 'ws1', hostTabId: TAB, basePath: '/repo', baseBranch: 'main', mode: 'shared' })
+      h.result.current.addLane(TAB, 'pi')
+    })
+    await act(async () => { await h.result.current.launch(TAB) })
+    const laneId = h.result.current.sessions[TAB].lanes[0].laneId
+    await act(async () => {
+      h.result.current.bindLane(TAB, laneId, { status: 'running', tabId: 'crew/lane-1', bridgeId: 'bridge-1' })
+      h.result.current.setLaneNextAction(TAB, laneId, 'finish the test suite')
+    })
+    await act(async () => { h.result.current.toggleLaneMute(TAB, laneId) })
+
+    expect(released).toHaveLength(1)
+    expect(released[0].bridgeId).toBe('bridge-1')
+    expect(h.result.current.sessions[TAB].lanes[0]).toMatchObject({
+      muted: true,
+      nextAction: 'finish the test suite',
+      status: 'ready',
+      bridgeId: null,
+    })
     h.unmount()
   })
 })

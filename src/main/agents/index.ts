@@ -12,7 +12,7 @@ import { createOpenrouterBridge } from './openrouter-bridge'
 import { createOpenCodeGoCompletionBridge } from './opencode-go-completion'
 import { completionText } from './completion-text'
 import { getAgentKey } from './agent-keys'
-import { getSessionId, setSessionId, clearSessionId, getUsageSnapshot, setUsageSnapshot } from './sessionStore'
+import { getSessionId, setSessionId, clearSessionId, getUsageSnapshot, setUsageSnapshot, clearUsageSnapshot } from './sessionStore'
 import { clearConversation, loadConversation, saveConversation, type StoredMessage } from './conversation-store'
 import { isRemoteRoot } from '../remote/ssh-target'
 import { loadPluginRegistry, recordPluginDebug } from '../plugins'
@@ -22,6 +22,16 @@ import type { AgentBridge, AgentUserRequest, AgentUserResponse, BridgeEvent, Bri
 import { HTTP_ONLY_PROVIDERS, API_KEY_PROVIDERS } from './bridge-types'
 import { autoCompactionSignalForProvider, detectAutoCompaction, normalizeContextUsage, compactionStrategy } from './compaction-meter'
 import { TurnPermissionGrantStore } from './turn-permission-grants'
+import { authorityOf, custodyJournal, scopeKeyFor, scopeViolation } from './custody'
+import {
+  authorityDriftViolation,
+  decideModeChange,
+  refusalMessage,
+  violation as custodyViolation,
+  type CustodyViolation,
+  type PrivilegedAction,
+} from './custody-invariants'
+import type { ModeLevel } from '../../shared/mode-types'
 import type { AgentCompletionRequest, AgentCompletionResult, CompletionProviderId } from '../../shared/agent-completion-types'
 
 const { ipcMain, BrowserWindow, webContents } = electron
@@ -66,6 +76,15 @@ interface BridgeEntry {
   // True while a summary-reset compaction is in flight: the agent is producing a
   // structured summary that turn_end collapses into a fresh, small session.
   pendingSummaryReset: boolean
+  // Stable custody scope ("tabId:agentId", or "bridge:<id>" when this bridge has
+  // no thread key). Halts are keyed by this, not by the timestamped bridgeId, so
+  // they survive the restart that raised them.
+  custodyScopeKey: string
+  // Set by bridge:stop / bridge:abort so a 'closed' event that the user asked
+  // for is recorded as a clean end instead of tripping the custody tripwire.
+  userInitiatedStop: boolean
+  // A mode change requested mid-turn: refused now, applied at the next turn_start.
+  pendingMode?: ModeLevel
 }
 
 // A live agent-bridge process as seen by the system monitor's daemon panel.
@@ -92,6 +111,11 @@ export function listBridgeDaemons(): BridgeDaemon[] {
 export async function stopBridgeDaemon(bridgeId: string): Promise<{ ok: boolean }> {
   const entry = bridges.get(bridgeId)
   if (!entry) return { ok: false }
+  // Stopping from the daemon panel is user-initiated, so the resulting exit is
+  // known state and must not trip the custody tripwire on the next launch.
+  entry.userInitiatedStop = true
+  custodyJournal().patch(bridgeId, { status: 'ended', endedAt: Date.now(), turnId: undefined, activePrompt: undefined })
+  cancelPendingUserRequests(bridgeId, 'stopped from system monitor')
   await entry.bridge.stop().catch(() => {})
   bridges.delete(bridgeId)
   turnPermissionGrants.clearBridge(bridgeId)
@@ -126,6 +150,149 @@ function threadConversationKey(sessionKey: string): string {
 
 function isNativeResumeProvider(provider: string): boolean {
   return NATIVE_RESUME_PROVIDERS.has(provider)
+}
+
+// ─── Execution custody ──────────────────────────────────────────────────────
+// Granting authority is decided at the gates in the security model. This block
+// is the other half: withdrawing it coherently once execution has begun. See
+// docs/execution-custody.md.
+
+function sendToClient(entry: Pick<BridgeEntry, 'webContentsId'>, event: BridgeEvent): void {
+  webContents.fromId(entry.webContentsId)?.send('bridge:event', event)
+}
+
+/**
+ * Settle every permission request still waiting on a bridge that is going away.
+ * An unanswered card for a dead process is authority in limbo: the renderer
+ * keeps offering "Allow?" for something that can no longer act, and the promise
+ * behind it never resolves. Cancel is the only honest answer, and the card is
+ * dismissed explicitly rather than left to look live.
+ */
+function cancelPendingUserRequests(bridgeId: string, reason: string): number {
+  const entry = bridges.get(bridgeId)
+  let cancelled = 0
+  for (const [requestId, pending] of [...pendingUserRequests]) {
+    if (pending.bridgeId !== bridgeId) continue
+    pendingUserRequests.delete(requestId)
+    pending.resolve({ requestId, action: 'cancel' })
+    cancelled++
+    if (entry) sendToClient(entry, { type: 'user_request_resolved', bridgeId, requestId })
+  }
+  if (cancelled) {
+    const record = custodyJournal().get(bridgeId)
+    const provider = entry?.provider ?? record?.authority.provider ?? 'unknown'
+    const cwd = entry?.opts.cwd ?? record?.authority.cwd ?? 'unknown'
+    const issue = custodyViolation(
+      'orphaned-authorization',
+      `${cancelled} permission request${cancelled === 1 ? '' : 's'} cancelled because the owning bridge was ${reason}`,
+      { bridgeId, provider, cwd, turnId: record?.turnId, sessionKey: entry?.sessionKey ?? record?.sessionKey },
+    )
+    custodyJournal().recordViolation(bridgeId, issue)
+    sessionDebug('custody: cancelled orphaned permission requests', { bridgeId, cancelled, reason })
+  }
+  return cancelled
+}
+
+/**
+ * Persist what an interrupted turn asked for and whatever came back before
+ * custody was lost. Without this the prompt is dropped on the floor — the local
+ * transcript only saves on turn_end — and the thread resumes looking like the
+ * turn never happened. Losing the evidence is the failure, not the interruption.
+ */
+function preserveInterruptedTurn(entry: BridgeEntry, turnId: string | undefined, detail: string): { prompt?: string; partial?: string } {
+  const record = custodyJournal().get(entry.bridge.bridgeId)
+  const prompt = (turnId ? entry.promptTextByTurn[turnId] : undefined) ?? record?.activePrompt
+  const partial = turnId ? entry.assistantTextByTurn[turnId] ?? '' : ''
+  if (turnId) {
+    delete entry.promptTextByTurn[turnId]
+    delete entry.assistantTextByTurn[turnId]
+  }
+  if (!prompt) return { partial: partial || undefined }
+  const recordLocalHistory = !!entry.conversationKey
+    && !HTTP_ONLY_PROVIDERS.has(entry.provider)
+    && !entry.provider.startsWith('plugin:')
+  if (recordLocalHistory) {
+    const history = loadConversation(entry.conversationKey!)
+    history.push({ role: 'user', content: prompt })
+    history.push({
+      role: 'assistant',
+      content: `${partial}\n\n[CrewCode: this turn was interrupted — ${detail}. The response above is incomplete, and whatever it had already done to the workspace was not observed.]`.trim(),
+    })
+    saveConversation(entry.conversationKey!, history)
+  }
+  return { prompt, partial: partial || undefined }
+}
+
+/**
+ * Trip the tripwire: record the exact failed invariant, contain owned execution,
+ * preserve the evidence, report it, and refuse privileged actions on this thread
+ * until a human explicitly reauthorizes.
+ */
+function haltBridge(bridgeId: string, halt: CustodyViolation): void {
+  const entry = bridges.get(bridgeId)
+  const evidence = entry ? preserveInterruptedTurn(entry, halt.scope.turnId, halt.detail) : {}
+  custodyJournal().halt(bridgeId, halt, evidence)
+  cancelPendingUserRequests(bridgeId, halt.invariant)
+  turnPermissionGrants.clearBridge(bridgeId)
+
+  sessionDebug('custody: halted', {
+    bridgeId, invariant: halt.invariant, detail: halt.detail,
+    provider: halt.scope.provider, cwd: halt.scope.cwd, turnId: halt.scope.turnId,
+  })
+
+  if (!entry) return
+  // Contain: the process no longer holds a grant we can vouch for.
+  entry.running = false
+  entry.bridge.abort().catch(() => {})
+  entry.bridge.stop().catch(() => {})
+  bridges.delete(bridgeId)
+  sendToClient(entry, {
+    type: 'custody_halt',
+    bridgeId,
+    halt: {
+      scopeKey: entry.custodyScopeKey,
+      violation: halt,
+      interruptedPrompt: evidence.prompt,
+      interruptedPartial: evidence.partial,
+    },
+  })
+}
+
+/** The halt in force for a thread, or null. Survives bridge restarts by design. */
+function activeHaltFor(scopeKey: string): CustodyViolation | null {
+  return custodyJournal().activeHalt(scopeKey)
+}
+
+/** Apply a mode mutation that was refused while the previous turn was live. */
+function applyDeferredMode(entry: BridgeEntry, bridgeId: string): void {
+  if (!entry.pendingMode) return
+  const mode = entry.pendingMode
+  entry.opts.mode = mode
+  entry.pendingMode = undefined
+  custodyJournal().patch(bridgeId, { authority: authorityOf(entry.opts) })
+  sendToClient(entry, { type: 'custody_deferred', bridgeId, message: `Mode ${mode} now in effect.` })
+}
+
+/**
+ * Gate for privileged actions. Returns a refusal when the thread is halted, and
+ * re-checks the invariants that can go stale between actions (workspace scope,
+ * authority drift) so a violation is caught at the action, not one action later.
+ */
+function custodyRefusal(entry: BridgeEntry, bridgeId: string, action: PrivilegedAction): { error: string } | null {
+  const halted = activeHaltFor(entry.custodyScopeKey)
+  if (halted) return { error: refusalMessage(action, halted) }
+
+  const record = custodyJournal().get(bridgeId)
+  const scope = { bridgeId, provider: entry.provider, cwd: entry.opts.cwd, turnId: record?.turnId, sessionKey: entry.sessionKey }
+
+  const gone = scopeViolation({ cwd: entry.opts.cwd, provider: entry.provider, bridgeId }, entry.sessionKey, record?.turnId)
+  if (gone) { haltBridge(bridgeId, gone); return { error: refusalMessage(action, gone) } }
+
+  if (record) {
+    const drift = authorityDriftViolation(record.authority, authorityOf(entry.opts), scope)
+    if (drift) { haltBridge(bridgeId, drift); return { error: refusalMessage(action, drift) } }
+  }
+  return null
 }
 
 function replayMarker(conversationKey: string, provider: string): string {
@@ -621,6 +788,9 @@ export function registerAgentBridgeIpc(resolveAgentPath: AgentPathResolver): voi
       await existing.bridge.stop().catch(() => {})
       bridges.delete(rawOpts.bridgeId)
       turnPermissionGrants.clearBridge(rawOpts.bridgeId)
+      // Replacing a live bridge leaves its permission cards stranded otherwise.
+      cancelPendingUserRequests(rawOpts.bridgeId, 'bridge restarted')
+      custodyJournal().patch(rawOpts.bridgeId, { status: 'ended', endedAt: Date.now(), activePrompt: undefined })
     }
 
     // Remote SSH workspaces run the agent ON the host. Local: resolve the binary
@@ -648,6 +818,31 @@ export function registerAgentBridgeIpc(resolveAgentPath: AgentPathResolver): voi
     // stable transcript key survives stale provider ids and restart fallbacks.
     const sessionKey = rawOpts.sessionKey ?? null
     const conversationScopeKey = rawOpts.conversationScopeKey ?? sessionKey
+    // Halts are scoped to the thread, not the bridge: bridgeIds embed a
+    // timestamp and are minted fresh on every start, so a bridge-scoped halt
+    // would evaporate on exactly the restart that raised it.
+    const custodyScopeKey = scopeKeyFor(sessionKey, rawOpts.bridgeId)
+
+    // A halt still in force for this thread (typically raised by a restart
+    // during a turn) refuses the start outright. Spawning the process and then
+    // refusing its prompts would leave an orphaned provider running with a
+    // grant nobody can vouch for. The halt travels back in the result rather
+    // than as an event: the renderer's bridgeId→tab routing table is only
+    // populated on its next render, so an event sent now could be dropped —
+    // and a dropped halt is precisely the silent failure this exists to stop.
+    const startHalt = activeHaltFor(custodyScopeKey)
+    if (startHalt) {
+      const haltedRecord = custodyJournal().haltedRecord(custodyScopeKey)
+      return {
+        error: refusalMessage('prompt', startHalt),
+        custodyHalt: {
+          scopeKey: custodyScopeKey,
+          violation: startHalt,
+          interruptedPrompt: haltedRecord?.interruptedPrompt,
+          interruptedPartial: haltedRecord?.interruptedPartial,
+        },
+      }
+    }
     const resumeId = sessionKey && !rawOpts.freshSession ? getSessionId(sessionKey) : undefined
     // The upstream resume id is provider-specific, but CrewCode's local replay
     // transcript is session-scoped so provider swaps can continue the thread.
@@ -679,6 +874,13 @@ export function registerAgentBridgeIpc(resolveAgentPath: AgentPathResolver): voi
 
     const win = BrowserWindow.fromWebContents(e.sender)
     const requestUser: RequestUserFn = (request) => {
+      // Check custody before even an auto-response is prepared. Otherwise a
+      // Full Access grant could approve a request after its scope disappeared.
+      const liveEntry = bridges.get(opts.bridgeId)
+      if (liveEntry) {
+        const refused = custodyRefusal(liveEntry, opts.bridgeId, 'authorize')
+        if (refused) return Promise.resolve({ requestId: `${opts.bridgeId}:custody-refused`, action: 'decline' })
+      }
       const prepared = turnPermissionGrants.prepareRequest(opts.bridgeId, opts.mode, opts.toolPolicy, request)
       if (prepared.autoResponse) return Promise.resolve(prepared.autoResponse)
 
@@ -729,6 +931,13 @@ export function registerAgentBridgeIpc(resolveAgentPath: AgentPathResolver): voi
       // Keep the idle clock and running flag current for the sweep.
       const eventBridgeId = event.type === 'user_request' ? event.request.bridgeId : event.bridgeId
       const entry = bridges.get(eventBridgeId)
+      if (entry && event.type === 'compaction_event' && event.status === 'completed' && event.resetContext) {
+        // Native compaction invalidates the old absolute occupancy immediately.
+        // Do not display or persist a fabricated zero: leave context unknown until
+        // the provider's next authoritative usage report repopulates it.
+        entry.lastUsage = undefined
+        if (entry.sessionKey) clearUsageSnapshot(entry.sessionKey)
+      }
       if (entry && (event.type === 'turn_end' || event.type === 'usage_update') && event.usage) {
         const previousUsage = entry.lastUsage
         const detection = detectAutoCompaction(previousUsage, event.usage, event.type)
@@ -799,8 +1008,24 @@ export function registerAgentBridgeIpc(resolveAgentPath: AgentPathResolver): voi
           delete entry.promptTextByTurn[event.turnId]
           delete entry.assistantTextByTurn[event.turnId]
         }
-        if (event.type === 'turn_start') entry.running = true
-        else if (event.type === 'turn_end' || event.type === 'closed' || event.type === 'error') entry.running = false
+        if (event.type === 'turn_start') {
+          entry.running = true
+          entry.userInitiatedStop = false
+          // This path handles provider-internal queued follow-ups. Direct
+          // prompts apply the deferred mode before calling the provider, but a
+          // provider may start its next queued turn without another IPC call.
+          applyDeferredMode(entry, event.bridgeId)
+          custodyJournal().patch(event.bridgeId, {
+            status: 'running', turnId: event.turnId, turnStartedAt: Date.now(),
+            authority: authorityOf(entry.opts), pid: entry.bridge.pid,
+          })
+        } else if (event.type === 'turn_end') {
+          entry.running = false
+          // Only a real turn_end closes a running record. Nothing else does.
+          custodyJournal().patch(event.bridgeId, { status: 'idle', turnId: undefined, turnStartedAt: undefined, activePrompt: undefined })
+        } else if (event.type === 'closed' || event.type === 'error') {
+          entry.running = false
+        }
         if ((event.type === 'error' || event.type === 'closed') && entry.pendingAutoCompaction) {
           entry.pendingAutoCompaction = false
           win?.webContents.send('bridge:event', {
@@ -869,6 +1094,26 @@ export function registerAgentBridgeIpc(resolveAgentPath: AgentPathResolver): voi
           })
         }
       }
+      // Custody tripwire on process exit. A provider that dies while a turn is
+      // in flight leaves that turn's effects unobserved — the one thing this
+      // must never do is treat the silence that follows as a completed turn.
+      // Deferred past this event so the renderer sees 'closed' then the halt.
+      if (entry && (event.type === 'closed' || event.type === 'error')) {
+        const record = custodyJournal().get(event.bridgeId)
+        const lostMidTurn = record?.status === 'running' && !entry.userInitiatedStop
+        const detail = event.type === 'closed'
+          ? `${entry.provider} exited (code ${event.code ?? 'unknown'}) while a turn was still running`
+          : `${entry.provider} failed while a turn was still running: ${event.message}`
+        const scope = { bridgeId: event.bridgeId, provider: entry.provider, cwd: entry.opts.cwd, turnId: record?.turnId, sessionKey: entry.sessionKey }
+        const bridgeId = event.bridgeId
+        queueMicrotask(() => {
+          if (lostMidTurn) haltBridge(bridgeId, custodyViolation('execution-custody-lost', detail, scope))
+          else {
+            custodyJournal().patch(bridgeId, { status: 'ended', endedAt: Date.now(), turnId: undefined, activePrompt: undefined })
+            cancelPendingUserRequests(bridgeId, event.type)
+          }
+        })
+      }
       win?.webContents.send('bridge:event', eventToSend)
     }
 
@@ -896,7 +1141,24 @@ export function registerAgentBridgeIpc(resolveAgentPath: AgentPathResolver): voi
         pendingManualCompaction: false,
         pendingAutoCompaction: false,
         pendingSummaryReset: false,
+        custodyScopeKey,
+        userInitiatedStop: false,
       })
+
+      // Open the custody record for this execution. It is the authority of
+      // record from here on: any later divergence between it and entry.opts is
+      // drift, and a record still marked 'running' at next launch is recovered
+      // as halted rather than assumed to have finished.
+      custodyJournal().open({
+        bridgeId: opts.bridgeId,
+        sessionKey,
+        authority: authorityOf(opts),
+        pid: bridge.pid,
+        status: 'idle',
+        startedAt: Date.now(),
+        updatedAt: Date.now(),
+      })
+
       return { ok: true }
     } catch (err) {
       return { error: (err as Error).message }
@@ -920,6 +1182,13 @@ export function registerAgentBridgeIpc(resolveAgentPath: AgentPathResolver): voi
   ipcMain.handle('bridge:respondUserRequest', (_e, response: AgentUserResponse) => {
     const pending = pendingUserRequests.get(response.requestId)
     if (!pending) return { error: 'request not found or already resolved' }
+    // Approving a tool call is a privileged action: a halted thread must not be
+    // able to launder a new grant through a permission card that predates it.
+    const respondingEntry = bridges.get(pending.bridgeId)
+    if (respondingEntry && response.action !== 'decline' && response.action !== 'cancel') {
+      const refusedResponse = custodyRefusal(respondingEntry, pending.bridgeId, 'respond')
+      if (refusedResponse) return refusedResponse
+    }
     let resolved = response
     let grantedTurnId: string | null = null
     if (response.action === 'accept_for_turn') {
@@ -1017,10 +1286,28 @@ export function registerAgentBridgeIpc(resolveAgentPath: AgentPathResolver): voi
   ipcMain.handle('bridge:prompt', async (_e, { bridgeId, text, options }: { bridgeId: string; text: string; options?: PromptOptions }) => {
     const entry = bridges.get(bridgeId)
     if (!entry) return { error: 'bridge not found' }
-    // Mark running before the turn_start event arrives so a sweep mid-flight
-    // never targets a bridge whose prompt is already in transit.
+    // Prompting is the moment authority is actually exercised, so it is the
+    // moment the invariants are re-checked. A halted thread refuses here.
+    const refused = custodyRefusal(entry, bridgeId, 'prompt')
+    if (refused) return refused
+    const queueingFollowUp = entry.running && options?.streamingBehavior === 'followUp'
+    // A direct next-turn prompt must see the deferred mode before the provider
+    // builds its request. turn_start is too late for providers that serialize
+    // mode into the request before emitting that event.
+    if (!queueingFollowUp) applyDeferredMode(entry, bridgeId)
+    // Mark custody before handoff summarization or provider setup begins. A
+    // process can disappear before turn_start; that gap is still in-flight work,
+    // not an idle bridge whose outcome may be inferred cleanly.
+    entry.userInitiatedStop = false
     entry.running = true
     entry.lastActivityAt = Date.now()
+    entry.pendingPromptTexts.push(text)
+    if (!queueingFollowUp) {
+      custodyJournal().patch(bridgeId, {
+        status: 'running', turnId: undefined, turnStartedAt: Date.now(),
+        activePrompt: text, authority: authorityOf(entry.opts), pid: entry.bridge.pid,
+      })
+    }
 
     const localHistory = entry.conversationKey ? loadConversation(entry.conversationKey) : []
     const marker = entry.conversationKey ? replayMarker(entry.conversationKey, entry.provider) : null
@@ -1085,11 +1372,29 @@ export function registerAgentBridgeIpc(resolveAgentPath: AgentPathResolver): voi
           : `Starting ${entry.provider} runtime…`
 
     sendStatus(startupLabel, entry.opts.resumeSessionId ? 'resuming' : 'starting')
-    entry.pendingPromptTexts.push(text)
-    const result = await entry.bridge.prompt(wireText, options)
+    let result: { ok: boolean; error?: string }
+    try {
+      result = await entry.bridge.prompt(wireText, options)
+    } catch (error) {
+      const message = (error as Error).message || String(error)
+      const record = custodyJournal().get(bridgeId)
+      haltBridge(bridgeId, custodyViolation(
+        'execution-custody-lost',
+        `${entry.provider} prompt channel failed while execution was in flight: ${message}`,
+        { bridgeId, provider: entry.provider, cwd: entry.opts.cwd, turnId: record?.turnId, sessionKey: entry.sessionKey },
+      ))
+      return { ok: false, error: message }
+    }
     if (!result.ok) {
       const idx = entry.pendingPromptTexts.indexOf(text)
       if (idx !== -1) entry.pendingPromptTexts.splice(idx, 1)
+      // A provider rejection observed before turn_start is known state. Do not
+      // leave a synthetic running record that would become a false restart halt.
+      const record = custodyJournal().get(bridgeId)
+      if (!queueingFollowUp && bridges.get(bridgeId) === entry && record?.status === 'running' && !record.turnId) {
+        entry.running = false
+        custodyJournal().patch(bridgeId, { status: 'idle', turnStartedAt: undefined, activePrompt: undefined })
+      }
     }
     return result
   })
@@ -1097,6 +1402,8 @@ export function registerAgentBridgeIpc(resolveAgentPath: AgentPathResolver): voi
   ipcMain.handle('bridge:compact', async (_e, { bridgeId }: { bridgeId: string }) => {
     const entry = bridges.get(bridgeId)
     if (!entry) return { ok: false, error: 'bridge not found' }
+    const refusedCompact = custodyRefusal(entry, bridgeId, 'compact')
+    if (refusedCompact) return { ok: false, ...refusedCompact }
     const strategy = compactionStrategy({
       provider: entry.provider,
       hasNativeCompact: !!entry.bridge.compact,
@@ -1107,8 +1414,6 @@ export function registerAgentBridgeIpc(resolveAgentPath: AgentPathResolver): voi
     if (strategy === 'unsupported') {
       return { ok: false, unsupported: true, error: `${entry.provider} does not support /compact yet` }
     }
-    entry.running = true
-    entry.lastActivityAt = Date.now()
     const emitCompaction = (status: 'started' | 'completed' | 'failed', message: string) => {
       webContents.fromId(entry.webContentsId)?.send('bridge:event', {
         type: 'compaction_event',
@@ -1127,6 +1432,15 @@ export function registerAgentBridgeIpc(resolveAgentPath: AgentPathResolver): voi
       emitCompaction('failed', 'No conversation history available to compact.')
       return { ok: false, error: 'no conversation history available to compact' }
     }
+
+    const compactionTurnId = `${bridgeId}:compaction:${Date.now().toString(36)}`
+    entry.userInitiatedStop = false
+    entry.running = true
+    entry.lastActivityAt = Date.now()
+    custodyJournal().patch(bridgeId, {
+      status: 'running', turnId: compactionTurnId, turnStartedAt: Date.now(),
+      activePrompt: 'Compact the current conversation', authority: authorityOf(entry.opts),
+    })
 
     try {
       const summary = await summarizeHandoffWithDisposable(entry, history, {
@@ -1165,36 +1479,90 @@ export function registerAgentBridgeIpc(resolveAgentPath: AgentPathResolver): voi
     } finally {
       entry.running = false
       entry.lastActivityAt = Date.now()
+      const record = custodyJournal().get(bridgeId)
+      if (record?.status === 'running' && record.turnId === compactionTurnId) {
+        custodyJournal().patch(bridgeId, { status: 'idle', turnId: undefined, turnStartedAt: undefined, activePrompt: undefined })
+      }
     }
   })
 
   ipcMain.handle('bridge:removeFollowUp', async (_e, { bridgeId, followUpId }: { bridgeId: string; followUpId: string }) => {
     const entry = bridges.get(bridgeId)
     if (!entry) return { ok: false, error: 'bridge not found' }
+    const refusedFollowUp = custodyRefusal(entry, bridgeId, 'removeFollowUp')
+    if (refusedFollowUp) return { ok: false, ...refusedFollowUp }
     if (!entry.bridge.removeFollowUp) return { ok: false, error: `${entry.provider} queues follow-ups upstream; they cannot be removed` }
     return entry.bridge.removeFollowUp(followUpId)
   })
 
   ipcMain.on('bridge:setMode', (_e, { bridgeId, mode }: { bridgeId: string; mode: BridgeStartOpts['mode'] }) => {
     const entry = bridges.get(bridgeId)
-    if (entry) entry.opts.mode = mode
+    if (!entry || !mode) return
+    if (activeHaltFor(entry.custodyScopeKey)) {
+      sendToClient(entry, { type: 'custody_deferred', bridgeId, message: 'Mode change refused: this thread is halted until you reauthorize it.' })
+      return
+    }
+    // Authority must not change underneath a turn that is already executing.
+    // The change is refused now and applied at the next turn_start rather than
+    // killing in-progress work — the deferral IS the enforcement.
+    const decision = decideModeChange(entry.opts.mode, mode, entry.running)
+    if (!decision.apply) {
+      entry.pendingMode = mode
+      sendToClient(entry, { type: 'custody_deferred', bridgeId, message: decision.reason })
+      return
+    }
+    entry.opts.mode = mode
+    entry.pendingMode = undefined
+    // Record the sanctioned change so the drift check does not later read the
+    // user's own authorized choice as an unexplained mutation.
+    custodyJournal().patch(bridgeId, { authority: authorityOf(entry.opts) })
   })
 
   ipcMain.on('bridge:abort', async (_e, bridgeId: string) => {
     turnPermissionGrants.clearBridge(bridgeId)
     const entry = bridges.get(bridgeId)
-    if (entry) await entry.bridge.abort().catch(() => {})
+    if (!entry) return
+    // User-initiated: the turn ending here is known state, not lost custody.
+    entry.userInitiatedStop = true
+    custodyJournal().patch(bridgeId, { status: 'idle', turnId: undefined, turnStartedAt: undefined, activePrompt: undefined })
+    cancelPendingUserRequests(bridgeId, 'aborted by user')
+    await entry.bridge.abort().catch(() => {})
   })
 
   ipcMain.on('bridge:stop', async (_e, bridgeId: string) => {
     turnPermissionGrants.clearBridge(bridgeId)
     const entry = bridges.get(bridgeId)
     if (!entry) return
+    entry.userInitiatedStop = true
+    custodyJournal().patch(bridgeId, { status: 'ended', endedAt: Date.now(), turnId: undefined, activePrompt: undefined })
+    cancelPendingUserRequests(bridgeId, 'stopped by user')
     // Stop is the user's "make it stop no matter what" escape hatch, so we
     // try a polite abort first before tearing the bridge process down.
     await entry.bridge.abort().catch(() => {})
     await entry.bridge.stop().catch(() => {})
     bridges.delete(bridgeId)
+  })
+
+  // Explicit human reauthorization — the only way out of a halt. The halted
+  // record is stamped, never deleted, so the evidence trail survives resuming.
+  ipcMain.handle('bridge:reauthorize', (_e, { bridgeId, scopeKey }: { bridgeId?: string; scopeKey?: string }) => {
+    const entry = bridgeId ? bridges.get(bridgeId) : undefined
+    const key = scopeKey ?? entry?.custodyScopeKey
+    if (!key) return { ok: false, error: 'no custody scope to reauthorize' }
+    const cleared = custodyJournal().reauthorize(key)
+    if (!cleared) return { ok: false, error: 'no halt in force for this thread' }
+    sessionDebug('custody: reauthorized', { scopeKey: key, cleared })
+    const target = entry ? webContents.fromId(entry.webContentsId) : BrowserWindow.getAllWindows()[0]?.webContents
+    target?.send('bridge:event', { type: 'custody_cleared', bridgeId: bridgeId ?? '', scopeKey: key } satisfies BridgeEvent)
+    return { ok: true, cleared }
+  })
+
+  // Read-only custody state for a thread. Deliberately never gated by a halt:
+  // a halt must not hide the evidence it exists to preserve.
+  ipcMain.handle('bridge:custodyState', (_e, { sessionKey, bridgeId }: { sessionKey?: string | null; bridgeId?: string }) => {
+    const key = scopeKeyFor(sessionKey ?? null, bridgeId ?? '')
+    const journal = custodyJournal()
+    return { ok: true, scopeKey: key, halt: journal.activeHalt(key), record: journal.haltedRecord(key), history: journal.forScope(key) }
   })
 
   // Bridge runtimes are intentionally long-lived. Navigation, hidden chat tabs,

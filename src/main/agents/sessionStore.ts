@@ -80,6 +80,13 @@ export function getUsageSnapshot(tabAgentKey: string): UsageSnapshot | undefined
   return read().usage?.[tabAgentKey]
 }
 
+export function clearUsageSnapshot(tabAgentKey: string): void {
+  const store = read()
+  if (!store.usage || !(tabAgentKey in store.usage)) return
+  delete store.usage[tabAgentKey]
+  write(store)
+}
+
 export function setUsageSnapshot(tabAgentKey: string, snapshot: UsageSnapshot): void {
   // Only persist meaningful context numbers; a snapshot without context tokens
   // would seed a useless baseline and risk masking a genuine fresh session.

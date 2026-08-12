@@ -62,6 +62,21 @@ describe('sessionStore usage snapshots', () => {
     expect(store.getUsageSnapshot('tab:pi')).toEqual({ contextTokens: 1234 })
   })
 
+  it('clears only the usage baseline after authoritative compaction', async () => {
+    const userData = tempUserData('compaction-reset')
+    const store = await loadStore(userData)
+
+    store.setSessionId('tab:crewcoder', 'sess-1')
+    store.setUsageSnapshot('tab:crewcoder', { contextTokens: 170_000, contextWindow: 200_000 })
+    store.clearUsageSnapshot('tab:crewcoder')
+
+    expect(store.getSessionId('tab:crewcoder')).toBe('sess-1')
+    expect(store.getUsageSnapshot('tab:crewcoder')).toBeUndefined()
+
+    store.setUsageSnapshot('tab:crewcoder', { contextTokens: 24_000, contextWindow: 200_000 })
+    expect(store.getUsageSnapshot('tab:crewcoder')).toEqual({ contextTokens: 24_000, contextWindow: 200_000 })
+  })
+
   it('clears the usage baseline when the session id is cleared', async () => {
     const userData = tempUserData('clear')
     const store = await loadStore(userData)

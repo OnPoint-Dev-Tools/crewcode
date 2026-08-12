@@ -51,6 +51,18 @@ has no native compact RPC.
 | repeated `tool_call` for the same id | `tool_update` |
 | running `tool_call_update` | `tool_update` |
 | completed/failed `tool_call_update` | `tool_end` |
+| `_crewcoder/compaction_update` | `compaction_event` |
+
+CrewCoder's compaction update is an additive namespaced ACP extension carrying
+started/completed/failed status, automatic intent, progress, and a human-readable
+message. The bridge treats it as authoritative and does not also infer
+compaction from the later context-token drop. The compacted summary remains in
+CrewCoder's durable session and is not copied into CrewCode's transcript.
+CrewCode deliberately retains the full visible transcript as history; it is not
+the provider context. On authoritative completion, CrewCode clears the stale
+live context occupancy from memory, disk, and the latest visible usage strip
+without fabricating `0` tokens. The next CrewCoder usage report repopulates the
+meter with the compacted context's measured size.
 
 CrewCoder emits genuine reasoning, so the Hermes cosmetic-thinking filter must
 not be applied. Gated tools are announced as pending before the permission
@@ -63,7 +75,9 @@ the bridge prefers that detail instead of appending a misleading generic error a
 failure.
 
 CrewCoder ACP respects CrewCoder's persisted `autoCompact` setting. CrewCode does not force
-compaction or retry context-window failures. When automatic compaction is off, the user explicitly
+compaction or retry context-window failures. Automatic and provider-neutral safety compaction are
+reported live through `_crewcoder/compaction_update`, allowing CrewCode to show the compaction meter
+while CrewCoder summarizes in the background. When automatic compaction is off, the user explicitly
 runs `/compact` before continuing; this policy does not affect Pi or other providers.
 
 A prompt has a ten-minute **inactivity** watchdog rather than a wall-clock turn

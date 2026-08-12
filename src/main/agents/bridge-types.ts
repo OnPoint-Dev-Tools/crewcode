@@ -2,7 +2,9 @@
 // Each provider (pi, opencode, claude/code-stream) maps its native events to these.
 
 import type { McpServerConfig } from '../../shared/mcp-types'
+import type { CustodyHaltPayload } from '../../shared/custody-types'
 export type { McpServerConfig } from '../../shared/mcp-types'
+export type { CustodyHaltPayload } from '../../shared/custody-types'
 // Re-exported (not redeclared) so main and the renderer share one union.
 import type { ModeLevel } from '../../shared/mode-types'
 
@@ -85,7 +87,7 @@ export type BridgeEvent =
   | { type: 'tool_end';         bridgeId: string; turnId: string; toolCallId: string; result: unknown; isError: boolean; args?: unknown; title?: string }
   | { type: 'usage_update';     bridgeId: string; turnId: string; usage: TurnUsage }
   | { type: 'turn_end';         bridgeId: string; turnId: string; usage?: TurnUsage }
-  | { type: 'compaction_event'; bridgeId: string; turnId?: string; status: 'started' | 'completed' | 'failed' | 'detected'; automatic: boolean; message?: string; beforeTokens?: number; afterTokens?: number; percent?: number; provider?: string }
+  | { type: 'compaction_event'; bridgeId: string; turnId?: string; status: 'started' | 'completed' | 'failed' | 'detected'; automatic: boolean; message?: string; beforeTokens?: number; afterTokens?: number; percent?: number; provider?: string; resetContext?: boolean }
   | { type: 'handoff_summary'; bridgeId: string; summary: string; fromProvider?: string; toProvider?: string; reason?: 'handoff' | 'compact' }
   | { type: 'user_request';     request: AgentUserRequest }
   | { type: 'user_request_resolved'; bridgeId: string; requestId: string }
@@ -101,6 +103,14 @@ export type BridgeEvent =
   // memory. Distinct from 'closed' so the renderer cleans up silently (no "agent
   // exited" notice) — the thread resumes on the next prompt via the saved id.
   | { type: 'idle_stopped';     bridgeId: string }
+  // An execution-custody invariant tripped. Privileged actions on this thread
+  // are refused until the user explicitly reauthorizes. Never inferred away.
+  | { type: 'custody_halt';     bridgeId: string; halt: CustodyHaltPayload }
+  // The user reauthorized the thread; the banner clears and prompts resume.
+  | { type: 'custody_cleared';  bridgeId: string; scopeKey: string }
+  // An authority mutation was refused while a turn was in flight and will apply
+  // at the next turn instead. Not a violation — the deferral IS the enforcement.
+  | { type: 'custody_deferred'; bridgeId: string; message: string }
 
 export type EffortLevel = 'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
 export type { ModeLevel } from '../../shared/mode-types'

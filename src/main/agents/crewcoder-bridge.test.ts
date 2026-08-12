@@ -324,7 +324,51 @@ describe('CrewCoder ACP update projection', () => {
     })])
   })
 
-  it('ignores unknown session update kinds', () => {
+  it('projects CrewCoder compaction lifecycle updates', () => {
+    expect(crewCoderEventsFromUpdate({
+      sessionUpdate: '_crewcoder/compaction_update',
+      status: 'started',
+      automatic: true,
+      phase: 'summarizing',
+      percent: 35,
+      message: 'Summarizing older context…',
+    }, 'bridge', 'turn', createCrewCoderToolProjectionState())).toEqual([{
+      type: 'compaction_event',
+      bridgeId: 'bridge',
+      turnId: 'turn',
+      status: 'started',
+      automatic: true,
+      message: 'Summarizing older context…',
+      percent: 35,
+      provider: 'crewcoder',
+    }])
+
+    expect(crewCoderEventsFromUpdate({
+      sessionUpdate: '_crewcoder/compaction_update',
+      status: 'completed',
+      automatic: true,
+      percent: 100,
+      message: 'Context compacted.',
+    }, 'bridge', 'turn', createCrewCoderToolProjectionState())).toEqual([{
+      type: 'compaction_event',
+      bridgeId: 'bridge',
+      turnId: 'turn',
+      status: 'completed',
+      automatic: true,
+      message: 'Context compacted.',
+      percent: 100,
+      provider: 'crewcoder',
+      resetContext: true,
+    }])
+  })
+
+  it('ignores malformed compaction and unknown session update kinds', () => {
+    expect(crewCoderEventsFromUpdate(
+      { sessionUpdate: '_crewcoder/compaction_update', status: 'unknown' },
+      'bridge',
+      'turn',
+      createCrewCoderToolProjectionState(),
+    )).toEqual([])
     expect(crewCoderEventsFromUpdate(
       { sessionUpdate: 'session_info_update', title: 'ignored' },
       'bridge',

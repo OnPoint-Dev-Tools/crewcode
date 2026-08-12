@@ -15,6 +15,7 @@ interface CrewColumnsProps {
   onSetLaneEffort: (laneId: string, effort: CrewLaneEffort) => void
   onRestartLane:   (laneId: string) => void
   onToggleLaneMute:(laneId: string) => void
+  onSetLaneNextAction: (laneId: string, nextAction: string) => void
   userRequestsByTab?: Record<string, AgentUserRequest[]>
   onAgentRequestResponse?: (response: AgentUserResponse) => void
   /** Hide each lane's composer — set when the Supervisor owns the crew's input. */
@@ -27,7 +28,7 @@ interface CrewColumnsProps {
  */
 export function CrewColumns({
   session, agents, messagesByTab, ptyPanes,
-  onSendToLane, onClosePane, onSetLaneModel, onSetLaneEffort, onRestartLane, onToggleLaneMute,
+  onSendToLane, onClosePane, onSetLaneModel, onSetLaneEffort, onRestartLane, onToggleLaneMute, onSetLaneNextAction,
   userRequestsByTab, onAgentRequestResponse,
   hideComposer = false,
 }: CrewColumnsProps) {
@@ -49,6 +50,7 @@ export function CrewColumns({
             onSetEffort={e => onSetLaneEffort(lane.laneId, e)}
             onRestart={() => onRestartLane(lane.laneId)}
             onToggleMute={() => onToggleLaneMute(lane.laneId)}
+            onSetNextAction={nextAction => onSetLaneNextAction(lane.laneId, nextAction)}
             agentRequest={(userRequestsByTab?.[tabId] ?? [])[0] ?? null}
             onAgentRequestResponse={onAgentRequestResponse}
             hideComposer={hideComposer}

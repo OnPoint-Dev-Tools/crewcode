@@ -6,6 +6,7 @@ import { PROVIDER_IMAGES, providerImageClass } from '../composer/provider-meta'
 import type { AgentInfo, GitStatusFile } from '../../types'
 import type { CrewSession, CrewAgentLane } from '../../orchestrator/crew-session'
 import { analyzeCrewCollisions } from '../../orchestrator/crew-collision-analysis'
+import { crewReviewFingerprint } from '../../orchestrator/crew-review-fingerprint'
 
 interface CrewDiffViewProps {
   open:     boolean
@@ -41,6 +42,7 @@ export function CrewDiffView({ open, session, agents, onClose }: CrewDiffViewPro
   const [byLane, setByLane] = useState<Record<string, LaneDiffState>>({})
   const [tick, setTick]     = useState(0)
   const lanes = session.lanes
+  const reviewFingerprint = crewReviewFingerprint(lanes)
   const agentName = useCallback(
     (id: string) => agents.find(a => a.id === id)?.name ?? id,
     [agents],
@@ -84,7 +86,9 @@ export function CrewDiffView({ open, session, agents, onClose }: CrewDiffViewPro
       }))
     })
     return () => { cancelled = true }
-  }, [open, lanes, tick, session.baseBranch])
+  // Runtime updates replace session.lanes every second. Depend only on Git
+  // ownership inputs so loaded evidence does not flash back to "loading".
+  }, [open, reviewFingerprint, tick, session.baseBranch])
 
   const loadDiff = useCallback(async (lane: CrewAgentLane, file: GitStatusFile) => {
     const key = file.path

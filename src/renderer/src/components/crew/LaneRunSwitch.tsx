@@ -7,8 +7,8 @@ interface LaneRunSwitchProps {
 }
 
 /**
- * Explicit run inclusion switch for a lane's selected model. It is separate from
- * model picking so operators choose both "which model" and "whether it runs".
+ * Explicit pause/resume switch for one durable lane. Pausing stops its runtime
+ * while preserving the worktree, transcript, and next-action checkpoint.
  */
 export function LaneRunSwitch({ enabled, onToggle, compact = false }: LaneRunSwitchProps) {
   return (
@@ -17,13 +17,13 @@ export function LaneRunSwitch({ enabled, onToggle, compact = false }: LaneRunSwi
       role="switch"
       aria-checked={enabled}
       className={`crew-lane-run-switch ${enabled ? 'is-on' : 'is-off'} ${compact ? 'is-compact' : ''}`}
-      title={enabled ? 'included in this run' : 'excluded from this run'}
+      title={enabled ? 'lane enabled for delegation; pause it' : 'lane paused; resume with its retained next action'}
       onClick={onToggle}
     >
       <span className="crew-lane-run-track" aria-hidden="true">
         <span className="crew-lane-run-thumb" />
       </span>
-      <span className="crew-lane-run-label">{enabled ? 'use' : 'skip'}</span>
+      <span className="crew-lane-run-label">{enabled ? 'enabled' : 'paused'}</span>
     </button>
   )
 }

@@ -7,6 +7,7 @@ import { latestTodoActivity } from '../thread/todo-from-toolcall'
 import { LaneComposer } from './LaneComposer'
 import { LaneModelButton } from './LaneModelButton'
 import { LaneRunSwitch } from './LaneRunSwitch'
+import { LaneNextAction } from './LaneNextAction'
 import { LaneEffortButton } from './LaneEffortButton'
 import { BroadcastTargetChip } from './BroadcastTargetChip'
 import { buildCrewRounds } from './crew-rounds'
@@ -27,6 +28,7 @@ interface CrewTimelineProps {
   onSetLaneEffort:  (laneId: string, effort: CrewLaneEffort) => void
   onRestartLane:    (laneId: string) => void
   onToggleLaneMute: (laneId: string) => void
+  onSetLaneNextAction: (laneId: string, nextAction: string) => void
   userRequestsByTab?: Record<string, AgentUserRequest[]>
   onAgentRequestResponse?: (response: AgentUserResponse) => void
   /** Hide the broadcast composer — set when the Supervisor owns the crew's input. */
@@ -42,7 +44,7 @@ interface CrewTimelineProps {
  */
 export function CrewTimeline({
   session, agents, messagesByTab,
-  onBroadcast, onSendToLane, onSetLaneModel, onSetLaneEffort, onRestartLane, onToggleLaneMute,
+  onBroadcast, onSendToLane, onSetLaneModel, onSetLaneEffort, onRestartLane, onToggleLaneMute, onSetLaneNextAction,
   userRequestsByTab, onAgentRequestResponse,
   hideComposer = false,
 }: CrewTimelineProps) {
@@ -117,6 +119,12 @@ export function CrewTimeline({
                     <span className="lane-head-agent">{agentName(lane.agentId)}</span>
                     <span className="lane-head-role">{lane.roleName || 'no role'}</span>
                   </div>
+                  <LaneNextAction
+                    value={lane.nextAction ?? ''}
+                    paused={lane.muted}
+                    compact
+                    onChange={nextAction => onSetLaneNextAction(lane.laneId, nextAction)}
+                  />
                   <LaneModelButton
                     provider={lane.agentId}
                     model={lane.model}
@@ -203,6 +211,12 @@ export function CrewTimeline({
                                 {formatTokens(usage.tokensIn + usage.tokensOut)}
                               </span>
                             )}
+                            <LaneNextAction
+                              value={lane.nextAction ?? ''}
+                              paused={lane.muted}
+                              compact
+                              onChange={nextAction => onSetLaneNextAction(lane.laneId, nextAction)}
+                            />
                           </div>
                         )}
                         {i !== rounds.length - 1 && (
@@ -246,7 +260,8 @@ export function CrewTimeline({
             onPick={setTargetId}
           />
           <LaneComposer
-            placeholder={placeholder}
+            workspacePath={session.basePath}
+            placeholder={`${placeholder} · use @ to add files`}
             disabled={reach === 0 && !targetLane}
             running={targetLane ? !!(targetLane.bridgeId || targetLane.paneId) : enabledLanes.some(l => l.bridgeId || l.paneId)}
             onStop={targetLane ? () => onRestartLane(targetLane.laneId) : undefined}
@@ -266,7 +281,8 @@ export function CrewTimeline({
                   <span className="lane-head-role">{lane.roleName || 'no role'}</span>
                 </span>
                 <LaneComposer
-                  placeholder={`task for ${agentName(lane.agentId)}`}
+                  workspacePath={lane.path || session.basePath}
+                  placeholder={`task for ${agentName(lane.agentId)} · use @ to add files`}
                   running={!!(lane.bridgeId || lane.paneId)}
                   onStop={() => onRestartLane(lane.laneId)}
                   onSend={text => onSendToLane(lane.laneId, text)}

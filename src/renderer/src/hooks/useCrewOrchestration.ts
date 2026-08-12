@@ -271,10 +271,14 @@ export function useCrewOrchestration(opts: UseCrewOrchestrationOpts) {
       const tabId = lane.tabId
 
       if (lane.muted) {
-        setMessagesForTab(tabId, m => [...m, { kind: 'system', time, tone: 'info', text: `${lane.agentId} is skipped for this run — enable its model toggle before sending.` }])
+        setMessagesForTab(tabId, m => [...m, { kind: 'system', time, tone: 'info', text: `${lane.agentId} is paused — resume the lane before sending.` }])
         return { ...task, lane, tabId, started: false }
       }
 
+      // Persist the exact assignment beside this worktree before starting a
+      // runtime. If the provider is unavailable or CrewCode stops, the operator
+      // still has an honest checkpoint for the next attempt.
+      crew.setLaneNextAction(activeTabId, lane.laneId, task.text)
       setMessagesForTab(tabId, m => [...m, { kind: 'user', text: task.text, time }])
 
       const agent = agents.find(a => a.id === lane.agentId && a.available)
@@ -394,6 +398,11 @@ export function useCrewOrchestration(opts: UseCrewOrchestrationOpts) {
   const handleToggleLaneMute = useCallback((laneId: string) => {
     if (!activeTabId) return
     crew.toggleLaneMute(activeTabId, laneId)
+  }, [activeTabId, crew])
+
+  const handleSetLaneNextAction = useCallback((laneId: string, nextAction: string) => {
+    if (!activeTabId) return
+    crew.setLaneNextAction(activeTabId, laneId, nextAction)
   }, [activeTabId, crew])
 
   const handleBroadcast = useCallback((text: string) => {
@@ -530,6 +539,7 @@ export function useCrewOrchestration(opts: UseCrewOrchestrationOpts) {
     handleSetLaneRole,
     handleRestartLane,
     handleToggleLaneMute,
+    handleSetLaneNextAction,
     handleBroadcast,
     abortAll,
     abortSupervisor,

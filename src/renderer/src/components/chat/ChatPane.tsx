@@ -19,7 +19,7 @@ import { describeProviders } from '../../hooks/delegation-provider-selection'
 import { knownModelIds } from '../../hooks/useProviderModels'
 import { useMessagesForScope, useMessagesForScopes, useMessagesStore } from '../../stores/chat-messages-store'
 import { useComposerDraft } from '../../stores/composer-draft-store'
-import { useBridgeStatus, useIsBridgeRunning, useQueuedFollowUps, useUserRequestsByTab, useUserRequestsForTab } from '../../stores/bridge-activity-store'
+import { bridgeActivity, useBridgeStatus, useCustodyHalt, useIsBridgeRunning, useQueuedFollowUps, useUserRequestsByTab, useUserRequestsForTab } from '../../stores/bridge-activity-store'
 import { useAppliedSkillsBySession } from '../../hooks/useAppliedSkillsBySession'
 import { useAppliedModesBySession } from '../../hooks/useAppliedModesBySession'
 import { extractProviderPatchChanges, pathField } from '../../hooks/turn-file-edit-detect'
@@ -32,6 +32,7 @@ import type { EffortLevel } from '../composer/EffortPicker'
 import { useSettings, type McpServerConfig } from '../../hooks/useSettings'
 import { resolveSessionMcpServers } from '../../hooks/session-mcp-selection'
 import { useVoiceSessionController } from '../../hooks/useVoiceSessionController'
+import { getCrewCodeClient } from '../../runtime/crewcode-client'
 
 type CrewBranchWithMessagesProps = Omit<React.ComponentProps<typeof CrewBranch>, 'messagesByTab'>
 
@@ -450,6 +451,38 @@ export function ChatPane({
   // on the `bridges` prop being reallocated every App render.
   const activeBridgeId: string | null = bridges.getBridgeId?.(sessActive, activeAgentId) ?? null
   const pendingAgentRequest = useUserRequestsForTab(sessActive)[0] ?? null
+  // A tripped execution-custody invariant for this thread. Survives the bridge
+  // that raised it, so it is read from the store rather than from bridge state.
+  const custodyHalt = useCustodyHalt(sessActive)
+  const reauthorizeCustody = useCallback(async () => {
+    if (!custodyHalt) return
+    const result = await getCrewCodeClient().bridgeReauthorize({ scopeKey: custodyHalt.scopeKey })
+    // Only a confirmed clear removes the banner; a failed call must leave the
+    // halt standing and state the reason instead of implying authorization.
+    if (!result.ok) throw new Error(result.error ?? 'Reauthorization was refused')
+    bridgeActivity.clearCustodyHaltsForScope(custodyHalt.scopeKey)
+  }, [custodyHalt])
+  // Surface a halt the moment the thread is opened, not only when the user next
+  // tries to send. After a restart the halt lives in the journal with no live
+  // bridge behind it, so without this read the evidence would sit silent until
+  // something happened to poke it — which is the failure this system exists to
+  // prevent. Read-only, and deliberately never gated by the halt itself.
+  useEffect(() => {
+    let cancelled = false
+    const scopeKey = `${sessActive}:${activeAgentId}`
+    void getCrewCodeClient().bridgeCustodyState({ sessionKey: scopeKey })
+      .then(state => {
+        if (cancelled || !state?.ok || !state.halt) return
+        bridgeActivity.setCustodyHalt(sessActive, {
+          scopeKey: state.scopeKey,
+          violation: state.halt,
+          interruptedPrompt: state.record?.interruptedPrompt,
+          interruptedPartial: state.record?.interruptedPartial,
+        })
+      })
+      .catch(() => { /* diagnostics read; never block the thread from opening */ })
+    return () => { cancelled = true }
+  }, [sessActive, activeAgentId])
   // Follow-ups the bridge is holding until the current turn finishes (claude
   // queues locally; providers that queue upstream report nothing here).
   const queuedFollowUps = useQueuedFollowUps(activeBridgeId)
@@ -579,6 +612,7 @@ export function ChatPane({
         onSetLaneEffort={crewCtl.handleSetLaneEffort}
         onRestartLane={crewCtl.handleRestartLane}
         onToggleLaneMute={crewCtl.handleToggleLaneMute}
+        onSetLaneNextAction={crewCtl.handleSetLaneNextAction}
         onAbortAll={crewCtl.abortAll}
         onAbortSupervisor={crewCtl.abortSupervisor}
         onSendToSupervisor={crewCtl.sendToSupervisor}
@@ -638,6 +672,8 @@ export function ChatPane({
             loadingStatus={loadingStatus}
             onStop={stop}
             agentRequest={pendingAgentRequest}
+            custodyHalt={custodyHalt}
+            onReauthorizeCustody={reauthorizeCustody}
             onAgentRequestResponse={(response) => bridges.respondUserRequest?.(response)}
             agents={chatAgents}
             activeAgentId={activeAgentId}
