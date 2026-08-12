@@ -26,6 +26,14 @@ jobs:
       # the binary on first require. Parallel vitest workers racing that download
       # corrupt the extract on macOS (EEXIST on the Electron Framework symlink),
       # so do it once, serially, up front. Idempotent - exits early if present.
-      - run: npm run install-electron
+      - name: Install Electron binary
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            npm run install-electron && exit 0
+            if [ "$attempt" -eq 3 ]; then exit 1; fi
+            echo "Electron download failed (attempt $attempt/3); retrying in 10 seconds..."
+            sleep 10
+          done
       - run: npm run typecheck
       - run: npm test

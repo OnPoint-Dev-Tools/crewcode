@@ -49,19 +49,28 @@ jobs:
       # corrupt the extract on macOS (EEXIST on the Electron Framework symlink),
       # so do it once, serially, up front. Idempotent - exits early if present.
       - name: Install Electron binary
-        run: npm run install-electron
-
-      # package.json sets npmRebuild:false, so node-pty is NOT rebuilt for
-      # Electron's ABI automatically. Without this the packaged app dies on
-      # first terminal spawn.
-      - name: Rebuild native modules for Electron
-        run: npm run rebuild
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            npm run install-electron && exit 0
+            if [ "$attempt" -eq 3 ]; then exit 1; fi
+            echo "Electron download failed (attempt $attempt/3); retrying in 10 seconds..."
+            sleep 10
+          done
 
       - name: Typecheck
         run: npm run typecheck
 
+      # Tests load node-pty under Node.js, so they must run before the native
+      # addon is rebuilt for Electron's different ABI.
       - name: Test
         run: npm test
+
+      # package.json sets npmRebuild:false, so node-pty is NOT rebuilt for
+      # Electron's ABI automatically. Rebuild only after Node-based tests pass;
+      # otherwise macOS tests load the Electron-ABI addon and PTY output stalls.
+      - name: Rebuild native modules for Electron
+        run: npm run rebuild
 
       # A tag like v0.2.0-nightly.1 must land as a GitHub *prerelease*, because
       # that is exactly what the app's nightly channel filters on
