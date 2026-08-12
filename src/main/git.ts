@@ -1,5 +1,6 @@
 import electron from 'electron'
 import { execFile } from 'child_process'
+import { randomUUID } from 'crypto'
 import { mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { join, posix } from 'path'
 import os from 'os'
@@ -18,10 +19,12 @@ import {
   applyCrewIntegration,
   verifyCrewIntegration,
   type CrewIntegrationRequest,
+  type IntegrationCheckExecution,
   type IntegrationGitRunner,
   type IntegrationLane,
 } from './crew-integration-verification'
 import { CrewMergeJournal, type CrewIntegrationJournalRecord } from './crew-merge-journal'
+import { probeLocalCheckExecution, validateAppliedCheckout } from './crew-crash-reconciliation'
 import { ensureWorktreesExcluded } from './worktree-ops'
 
 const { app, ipcMain } = electron
@@ -167,23 +170,34 @@ async function discoverCrewChecks(cwd: string): Promise<SuggestedCrewCheck[]> {
   } catch { return [] }
 }
 
-async function runCrewCheck(cwd: string, check: SuggestedCrewCheck): Promise<{ code: number; output: string }> {
+async function runCrewCheck(
+  cwd: string,
+  check: SuggestedCrewCheck,
+  onExecution?: (execution: IntegrationCheckExecution) => void,
+): Promise<{ code: number; output: string }> {
+  const token = randomUUID()
   if (isRemoteRoot(cwd)) {
     const target = parseRemoteTarget(cwd)
     if (!target) return { code: 1, output: 'invalid remote root' }
-    const command = `cd ${shq(target.path)} && CI=1 ${[check.command, ...check.args].map(shq).join(' ')}`
+    const pidFile = posix.join(target.path, `.crewcode-check-${token}.pid`)
+    onExecution?.({ token, pidFile, state: 'running', checkedAt: Date.now(), detail: 'remote check channel is active' })
+    // The shell writes its PID before exec replaces it with the package-manager
+    // process. CREWCODE_CHECK_TOKEN survives exec and lets restart recovery prove
+    // that this PID is the original check rather than a reused numeric PID.
+    const command = `cd ${shq(target.path)} && printf '%s\\n' "$$" > ${shq(pidFile)} && exec env CREWCODE_CHECK_TOKEN=${shq(token)} CI=1 ${[check.command, ...check.args].map(shq).join(' ')}`
     const result = await execRemote(target, command)
     return { code: result.code ?? 1, output: `${result.stdout}${result.stderr}`.slice(-20_000) }
   }
   return new Promise(resolve => {
-    execFile(check.command, check.args, {
+    const child = execFile(check.command, check.args, {
       cwd,
-      env: { ...process.env, CI: '1' },
+      env: { ...process.env, CI: '1', CREWCODE_CHECK_TOKEN: token },
       timeout: 120_000,
       maxBuffer: 10 * 1024 * 1024,
     }, (error, stdout, stderr) => {
       resolve({ code: error ? 1 : 0, output: `${stdout ?? ''}${stderr ?? ''}`.slice(-20_000) })
     })
+    onExecution?.({ token, pid: child.pid, state: 'running', checkedAt: Date.now(), detail: 'local check process is active' })
   })
 }
 
@@ -218,13 +232,45 @@ function integrationLocations(repoPath: string, sessionId: string): { path: stri
   return { path, cwd: path, retentionRef }
 }
 
+async function reconcileCheckExecution(repoPath: string, execution: IntegrationCheckExecution): Promise<IntegrationCheckExecution> {
+  const checkedAt = Date.now()
+  if (isRemoteRoot(repoPath)) {
+    const target = parseRemoteTarget(repoPath)
+    if (!target || !execution.pidFile) return { ...execution, state: 'unknown', checkedAt, detail: 'remote process identity is unavailable' }
+    const tokenLine = `CREWCODE_CHECK_TOKEN=${execution.token}`
+    const command = `pid=$(cat ${shq(execution.pidFile)} 2>/dev/null) || exit 3; kill -0 "$pid" 2>/dev/null || exit 4; if [ -r "/proc/$pid/environ" ]; then tr '\\0' '\\n' < "/proc/$pid/environ" | grep -Fqx ${shq(tokenLine)}; else ps eww -p "$pid" -o command= 2>/dev/null | grep -Fq ${shq(tokenLine)}; fi`
+    try {
+      const result = await execRemote(target, command)
+      if (result.code === 0) return { ...execution, state: 'running', checkedAt, detail: 'remote PID is alive and its custody token matches' }
+      if (result.code === 4) return { ...execution, state: 'exited', checkedAt, detail: 'remote check process is no longer running' }
+      if (result.code === 3) return { ...execution, state: 'unknown', checkedAt, detail: 'remote PID file was not created before custody was lost' }
+      return { ...execution, state: 'unknown', checkedAt, detail: 'remote PID exists but its custody token could not be verified' }
+    } catch (error) {
+      return { ...execution, state: 'unknown', checkedAt, detail: `remote liveness probe failed: ${error instanceof Error ? error.message : String(error)}` }
+    }
+  }
+
+  return probeLocalCheckExecution(execution, checkedAt)
+}
+
 async function reconcileIntegrationRecord(record: CrewIntegrationJournalRecord): Promise<CrewIntegrationJournalRecord> {
   if (record.status === 'running') return record
   const journal = mergeJournal()
+  const checks = await Promise.all(record.checks.map(async check => check.status === 'interrupted' && check.execution
+    ? { ...check, execution: await reconcileCheckExecution(record.repoPath, check.execution) }
+    : check))
+  if (checks.some((check, index) => check.execution?.state !== record.checks[index]?.execution?.state
+      || check.execution?.checkedAt !== record.checks[index]?.execution?.checkedAt)) {
+    record = journal.patch(record.id, { checks, updatedAt: Date.now() }) ?? record
+  }
   if (record.phase === 'applying' && record.integrationHead) {
     const head = await integrationGitRunner(record.repoPath, ['rev-parse', record.baseBranch])
     if (head.code === 0 && head.stdout.trim() === record.integrationHead) {
-      return journal.patch(record.id, { status: 'applied', phase: 'complete', updatedAt: Date.now(), finishedAt: Date.now(), error: undefined }) ?? record
+      const checkout = await validateAppliedCheckout(record.repoPath, record.baseBranch, record.integrationHead, integrationGitRunner)
+      if (checkout.ok) {
+        return journal.patch(record.id, { status: 'applied', phase: 'complete', updatedAt: Date.now(), finishedAt: Date.now(), error: undefined }) ?? record
+      }
+      return journal.patch(record.id, { status: 'interrupted', updatedAt: Date.now(), finishedAt: Date.now(), error: checkout.error }) ?? record
     }
   }
   if (record.status === 'passed' && record.integrationHead) {
@@ -541,8 +587,12 @@ export function registerGitIpc(): void {
     const locations = integrationLocations(input.repoPath, input.sessionId)
     if (!locations) return { error: 'invalid integration repository path' }
     if (!input.lanes.length || input.lanes.some(lane => !lane.branch || !lane.head)) return { error: 'every integration lane needs a branch and commit' }
-    const previous = mergeJournal().latest(input.sessionId)
+    const previousRecord = mergeJournal().latest(input.sessionId)
+    const previous = previousRecord ? await reconcileIntegrationRecord(previousRecord) : null
     if (previous?.status === 'running') return { error: 'integration verification is already running', record: previous }
+    if (previous?.checks.some(check => check.status === 'interrupted' && check.execution?.state !== 'exited')) {
+      return { error: 'an interrupted verification check is still executing or its process identity is unresolved; refresh after it exits before starting another candidate', record: previous }
+    }
 
     const now = Date.now()
     const record: CrewIntegrationJournalRecord = {

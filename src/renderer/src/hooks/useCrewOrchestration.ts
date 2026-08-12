@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useCrewSession } from './useCrewSession'
 import { useCrewSupervisor } from './useCrewSupervisor'
 import { buildWorkerPreamble } from '../orchestrator/crew-supervisor-protocol'
+import { promptCrewBridgeWithRecovery } from '../orchestrator/crew-bridge-recovery'
 import { promptDialog } from '../stores/dialog-service'
 import {
   loadCrewTemplates,
@@ -54,6 +55,7 @@ interface BridgesLike {
     effort: EffortLevel,
     mode?: 'ask' | 'plan' | 'build' | 'full',
     toolPolicy?: 'default' | 'read-only',
+    force?: boolean,
   ) => Promise<{ bridgeId: string } | { error: string }>
   prompt: (bridgeId: string, text: string, options?: { streamingBehavior?: 'followUp' }) => Promise<{ ok: boolean; error?: string }>
   abort: (bridgeId: string) => void
@@ -113,9 +115,13 @@ export function useCrewOrchestration(opts: UseCrewOrchestrationOpts) {
 
   // Stop a lane's agent before its worktree is removed — no orphaned processes.
   const releaseLane = useCallback((lane: CrewAgentLane) => {
-    if (lane.bridgeId) window.electronAPI?.bridgeStop(lane.bridgeId)
-    if (lane.paneId)   pty.close(lane.paneId)
-  }, [pty])
+    // Stop through the registry, not raw IPC. Raw bridgeStop leaves the cached
+    // (tab, agent) mapping pointing at a process main has deleted, so the next
+    // lane prompt reuses that id and fails with "bridge not found".
+    if (lane.bridgeId && lane.tabId) bridges.dropBridge(lane.tabId, lane.agentId)
+    else if (lane.bridgeId) window.electronAPI?.bridgeStop(lane.bridgeId)
+    if (lane.paneId) pty.close(lane.paneId)
+  }, [bridges, pty])
 
   const crew = useCrewSession({ git: crewGit, onReleaseLane: releaseLane })
   const crewSession = activeTabId ? crew.sessions[activeTabId] ?? null : null
@@ -264,6 +270,12 @@ export function useCrewOrchestration(opts: UseCrewOrchestrationOpts) {
   const sendToLanes = useCallback(async (tasks: Array<{ laneId: string; text: string }>): Promise<Array<{ laneId: string; started: boolean }>> => {
     if (!activeWs || !crewSession) return tasks.map(task => ({ laneId: task.laneId, started: false }))
     const time = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    const primeText = (lane: CrewAgentLane, runtimeId: string, body: string): string => {
+      if (primedRuntimes.current.has(runtimeId)) return body
+      primedRuntimes.current.add(runtimeId)
+      const pre = buildWorkerPreamble(lane, lane.path || crewSession.basePath)
+      return pre ? `${pre}\n\n${body}` : body
+    }
 
     const prepared = await Promise.all(tasks.map(async (task) => {
       const lane = crewSession.lanes.find(l => l.laneId === task.laneId)
@@ -287,13 +299,6 @@ export function useCrewOrchestration(opts: UseCrewOrchestrationOpts) {
         return { ...task, lane, tabId, started: false }
       }
 
-      const primeText = (runtimeId: string, body: string): string => {
-        if (primedRuntimes.current.has(runtimeId)) return body
-        primedRuntimes.current.add(runtimeId)
-        const pre = buildWorkerPreamble(lane, lane.path || crewSession.basePath)
-        return pre ? `${pre}\n\n${body}` : body
-      }
-
       if (agent.transport === 'bridge') {
         const r = await bridges.ensureBridge(
           tabId, agent.id, agent.id as AgentProviderId, lane.path, lane.model || undefined, lane.effort ?? effort,
@@ -303,13 +308,13 @@ export function useCrewOrchestration(opts: UseCrewOrchestrationOpts) {
           return { ...task, lane, tabId, started: false }
         }
         crew.bindLane(activeTabId, lane.laneId, { status: 'running', tabId, bridgeId: r.bridgeId })
-        return { ...task, lane, tabId, bridgeId: r.bridgeId, prompt: primeText(r.bridgeId, task.text), started: true }
+        return { ...task, lane, tabId, bridgeId: r.bridgeId, prompt: primeText(lane, r.bridgeId, task.text), started: true }
       }
 
       let pane = pty.panes.find(p => p.tabId === tabId && p.agentId === agent.id && p.live)
       if (!pane) pane = pty.addAgent(activeWs, tabId, agent.id, agent.name, lane.path, agent.path)
       crew.bindLane(activeTabId, lane.laneId, { status: 'running', tabId, paneId: pane.paneId })
-      return { ...task, lane, tabId, paneId: pane.paneId, prompt: primeText(pane.paneId, task.text), started: true }
+      return { ...task, lane, tabId, paneId: pane.paneId, prompt: primeText(lane, pane.paneId, task.text), started: true }
     }))
 
     // All runtimes have been started/bound before any bridge prompt is submitted.
@@ -317,13 +322,28 @@ export function useCrewOrchestration(opts: UseCrewOrchestrationOpts) {
     // worker's process startup in the same supervisor fan-out.
     for (const item of prepared) {
       if (!item.started) continue
-      if ('bridgeId' in item && item.bridgeId && item.prompt) {
-        void bridges.prompt(item.bridgeId, item.prompt).then(res => {
-          if (!res.ok && item.tabId) {
-            setMessagesForTab(item.tabId, m => [...m, { kind: 'system', time, tone: 'error', text: res.error ?? 'prompt failed' }])
+      if ('bridgeId' in item && item.bridgeId && item.prompt && item.lane && item.tabId) {
+        void promptCrewBridgeWithRecovery(
+          { bridgeId: item.bridgeId, prompt: item.prompt },
+          bridges.prompt,
+          async () => {
+            const replacement = await bridges.ensureBridge(
+              item.tabId!, item.lane!.agentId, item.lane!.agentId as AgentProviderId,
+              item.lane!.path, item.lane!.model || undefined, item.lane!.effort ?? effort,
+              undefined, undefined, true,
+            )
+            if ('error' in replacement) return replacement
+            crew.bindLane(activeTabId, item.lane!.laneId, {
+              status: 'running', tabId: item.tabId!, bridgeId: replacement.bridgeId,
+            })
+            return { bridgeId: replacement.bridgeId, prompt: primeText(item.lane!, replacement.bridgeId, item.text) }
+          },
+        ).then(res => {
+          if (!res.ok) {
+            setMessagesForTab(item.tabId!, m => [...m, { kind: 'system', time, tone: 'error', text: res.error ?? 'prompt failed' }])
           }
         }).catch(err => {
-          if (item.tabId) setMessagesForTab(item.tabId, m => [...m, { kind: 'system', time, tone: 'error', text: (err as Error).message || 'prompt failed' }])
+          setMessagesForTab(item.tabId!, m => [...m, { kind: 'system', time, tone: 'error', text: (err as Error).message || 'prompt failed' }])
         })
       } else if ('paneId' in item && item.paneId && item.prompt) {
         pty.write(item.paneId, item.prompt + '\n')

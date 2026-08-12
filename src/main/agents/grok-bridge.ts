@@ -17,6 +17,7 @@ import type {
 } from './bridge-types'
 import { buildUsage } from './model-context'
 import { enrichUsageContextWindow } from './openrouter-model-context'
+import { tripwireForToolCall } from './dangerous-command'
 
 // Grok Build via ACP (Agent Client Protocol) — newline-delimited JSON-RPC 2.0
 // over stdio. CrewCode is the client and spawns `grok agent stdio`.
@@ -140,7 +141,11 @@ export function grokPermissionMode(opts: Pick<BridgeStartOpts, 'mode' | 'toolPol
   // A constrained role (supervisor, completion) outranks the composer mode.
   if (opts.toolPolicy === 'read-only') return 'dontAsk'
   if (opts.mode === 'ask' || opts.mode === 'plan') return 'dontAsk'
-  if (opts.mode === 'full') return 'bypassPermissions'
+  // Full Access used to send 'bypassPermissions', which made Grok run every tool
+  // silently — leaving no chance to inspect commands. Route through 'default' so
+  // Grok asks via session/request_permission; CrewCode auto-approves everything
+  // except the denylist (the Full Access tripwire, see handlePermissionRequest).
+  if (opts.mode === 'full') return 'default'
   return 'default'
 }
 
@@ -709,12 +714,21 @@ export async function createGrokBridge(
 
   async function handlePermissionRequest(requestMessage: AcpRequestIn, params: Record<string, unknown>): Promise<void> {
     const options = grokPermissionOptions(params)
-    if (opts.mode === 'full' && opts.toolPolicy !== 'read-only') {
+    const fullToolCall = record(params.toolCall)
+    const fullVerdict = tripwireForToolCall(typeof fullToolCall?.kind === 'string' ? fullToolCall.kind : undefined, fullToolCall?.rawInput)
+    if (opts.mode === 'full' && opts.toolPolicy !== 'read-only' && !fullVerdict.dangerous) {
+      // Auto-approve in Full Access — except denylisted catastrophic commands,
+      // which fall through to the confirmation prompt (the Full Access tripwire).
       send({
         jsonrpc: '2.0',
         id: requestMessage.id,
         result: { outcome: { outcome: 'selected', optionId: grokSelectedOption({ requestId: '', action: 'accept' }, params, options) } },
       })
+      return
+    }
+    if (opts.mode === 'full' && fullVerdict.dangerous && !requestUser) {
+      // Tripwire tripped but no human to confirm — fail safe by refusing.
+      send({ jsonrpc: '2.0', id: requestMessage.id, result: { outcome: { outcome: 'cancelled' } } })
       return
     }
     if (writeBlocked(opts) || !requestUser) {
@@ -729,11 +743,11 @@ export async function createGrokBridge(
       const response = await requestUser({
         kind: 'permission',
         turnId: currentTurnId ?? undefined,
-        title: typeof toolCall?.title === 'string' ? toolCall.title : 'Permission required',
-        message: typeof params.message === 'string' ? params.message : undefined,
+        title: fullVerdict.dangerous ? 'Full Access tripwire — confirm dangerous command' : (typeof toolCall?.title === 'string' ? toolCall.title : 'Permission required'),
+        message: fullVerdict.dangerous ? fullVerdict.reason : (typeof params.message === 'string' ? params.message : undefined),
         detail: JSON.stringify(toolCall ?? params, null, 2).slice(0, 1600),
         options,
-        dangerous: meta.readOnly !== true,
+        dangerous: fullVerdict.dangerous || meta.readOnly !== true,
         source: 'grok',
       })
       const optionId = grokSelectedOption(response, params, options)

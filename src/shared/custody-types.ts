@@ -73,6 +73,18 @@ export interface CustodyHaltPayload {
   interruptedPartial?: string
 }
 
+/**
+ * Execution-custody halts are a crew-lane safety feature. Crew lane thread keys
+ * are `crew/<laneId>:<agentId>`; supervisor keys contain another `/` and are not
+ * lane execution. Ordinary chat tab IDs must never inherit this gating policy.
+ */
+export function isCrewLaneSessionKey(sessionKey: string | null | undefined): boolean {
+  if (!sessionKey) return false
+  const separator = sessionKey.indexOf(':')
+  const tabId = separator >= 0 ? sessionKey.slice(0, separator) : sessionKey
+  return /^crew\/[^/]+$/.test(tabId)
+}
+
 export function custodyViolation(
   invariant: CustodyInvariantId,
   detail: string,

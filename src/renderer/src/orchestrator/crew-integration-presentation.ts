@@ -75,13 +75,22 @@ export function presentCrewIntegration(record: CrewIntegrationRecord | null): In
         nextStep: 'Refresh and verify the current commits again.',
         verifyLabel: 'Verify current commits',
       }
-    case 'interrupted':
+    case 'interrupted': {
+      const executing = record.checks.some(check => check.status === 'interrupted' && check.execution?.state === 'running')
+      const unresolved = record.checks.some(check => check.status === 'interrupted' && check.execution?.state === 'unknown')
       return {
         tone: 'attention', badge: 'Interrupted', heading: 'Verification was interrupted',
-        summary: 'CrewCode restarted or stopped before this operation completed. No successful result is being assumed.',
+        summary: executing
+          ? 'CrewCode restarted, but a custody-token probe shows an interrupted project check is still executing. No successful result is being assumed.'
+          : unresolved
+            ? 'CrewCode restarted and could not prove that an interrupted project check exited. No successful result or stopped process is being assumed.'
+            : 'CrewCode restarted or stopped before this operation completed. No successful result is being assumed.',
         progress: `Interrupted during: ${PHASE_LABELS[record.phase]}`,
-        nextStep: 'Verify the current commits again to produce fresh evidence.',
-        verifyLabel: 'Restart verification',
+        nextStep: executing || unresolved
+          ? 'Resolve or wait for the interrupted check process, refresh this evidence, then verify again.'
+          : 'Verify the current commits again to produce fresh evidence.',
+        verifyLabel: executing ? 'Check process still running' : unresolved ? 'Process state unresolved' : 'Restart verification',
       }
+    }
   }
 }

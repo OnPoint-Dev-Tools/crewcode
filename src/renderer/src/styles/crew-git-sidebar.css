@@ -146,6 +146,10 @@
 .crew-integration-check-status.is-passed { color: #9ce2b4; }
 .crew-integration-check-status.is-failed,
 .crew-integration-check-status.is-interrupted { color: #f0b6b6; }
+.crew-integration-process { display: block; font-size: 10px; color: var(--text-muted); overflow-wrap: anywhere; }
+.crew-integration-process.is-running { color: #f0c674; }
+.crew-integration-process.is-exited { color: #9fc89f; }
+.crew-integration-process.is-unknown { color: #f0b6b6; }
 .crew-integration-check-status.is-running { color: var(--crs-accent-fg); }
 .crew-integration-command { display: block; margin-top: 4px; color: var(--muted-foreground); font-size: 9px; }
 .crew-integration-empty { color: var(--muted-foreground); font-style: italic; }

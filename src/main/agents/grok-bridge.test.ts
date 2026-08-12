@@ -91,7 +91,8 @@ describe('grokPermissionMode', () => {
 
   it('maps build to interactive approval and full to bypass', () => {
     expect(grokPermissionMode({ mode: 'build' })).toBe('default')
-    expect(grokPermissionMode({ mode: 'full' })).toBe('bypassPermissions')
+    // Full Access routes through 'default' (not native bypass) so the tripwire can inspect commands.
+    expect(grokPermissionMode({ mode: 'full' })).toBe('default')
   })
 
   it('defaults an absent mode to interactive approval rather than bypass', () => {

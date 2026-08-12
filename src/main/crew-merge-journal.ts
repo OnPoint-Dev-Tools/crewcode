@@ -41,7 +41,12 @@ export class CrewMergeJournal {
       recovered = true
       return {
         ...record, status: 'interrupted', updatedAt: now, finishedAt: now,
-        checks: record.checks.map(check => check.status === 'running' ? { ...check, status: 'interrupted', output: 'CrewCode stopped while this check was running' } : check),
+        checks: record.checks.map(check => check.status === 'running' ? {
+          ...check,
+          status: 'interrupted',
+          output: [check.output, 'CrewCode stopped while this check was running'].filter(Boolean).join('\n'),
+          execution: check.execution ? { ...check.execution, state: 'unknown', checkedAt: now, detail: 'awaiting post-restart liveness probe' } : undefined,
+        } : check),
         error: `CrewCode stopped during ${record.phase}; the base was not updated unless the record reached complete`,
       }
     })

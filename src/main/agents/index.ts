@@ -33,6 +33,7 @@ import {
 } from './custody-invariants'
 import type { ModeLevel } from '../../shared/mode-types'
 import type { AgentCompletionRequest, AgentCompletionResult, CompletionProviderId } from '../../shared/agent-completion-types'
+import { isCrewLaneSessionKey } from '../../shared/custody-types'
 
 const { ipcMain, BrowserWindow, webContents } = electron
 
@@ -80,9 +81,17 @@ interface BridgeEntry {
   // no thread key). Halts are keyed by this, not by the timestamped bridgeId, so
   // they survive the restart that raised them.
   custodyScopeKey: string
+  // Execution-custody halts intentionally apply only to synthetic crew lanes.
+  custodyEnabled: boolean
   // Set by bridge:stop / bridge:abort so a 'closed' event that the user asked
   // for is recorded as a clean end instead of tripping the custody tripwire.
   userInitiatedStop: boolean
+  // Set by bridge:stop for the whole teardown window (before the async
+  // abort/stop/delete completes). A prompt that races into this window must NOT
+  // resurrect the bridge — otherwise it flips userInitiatedStop back to false and
+  // the impending 'closed' event trips a spurious custody halt. Guarded in
+  // bridge:prompt so the renderer's retry starts a clean fresh bridge instead.
+  stopping?: boolean
   // A mode change requested mid-turn: refused now, applied at the next turn_start.
   pendingMode?: ModeLevel
 }
@@ -230,6 +239,7 @@ function preserveInterruptedTurn(entry: BridgeEntry, turnId: string | undefined,
  */
 function haltBridge(bridgeId: string, halt: CustodyViolation): void {
   const entry = bridges.get(bridgeId)
+  if (!entry?.custodyEnabled) return
   const evidence = entry ? preserveInterruptedTurn(entry, halt.scope.turnId, halt.detail) : {}
   custodyJournal().halt(bridgeId, halt, evidence)
   cancelPendingUserRequests(bridgeId, halt.invariant)
@@ -279,6 +289,7 @@ function applyDeferredMode(entry: BridgeEntry, bridgeId: string): void {
  * authority drift) so a violation is caught at the action, not one action later.
  */
 function custodyRefusal(entry: BridgeEntry, bridgeId: string, action: PrivilegedAction): { error: string } | null {
+  if (!entry.custodyEnabled) return null
   const halted = activeHaltFor(entry.custodyScopeKey)
   if (halted) return { error: refusalMessage(action, halted) }
 
@@ -822,6 +833,7 @@ export function registerAgentBridgeIpc(resolveAgentPath: AgentPathResolver): voi
     // timestamp and are minted fresh on every start, so a bridge-scoped halt
     // would evaporate on exactly the restart that raised it.
     const custodyScopeKey = scopeKeyFor(sessionKey, rawOpts.bridgeId)
+    const custodyEnabled = isCrewLaneSessionKey(sessionKey)
 
     // A halt still in force for this thread (typically raised by a restart
     // during a turn) refuses the start outright. Spawning the process and then
@@ -830,7 +842,7 @@ export function registerAgentBridgeIpc(resolveAgentPath: AgentPathResolver): voi
     // than as an event: the renderer's bridgeId→tab routing table is only
     // populated on its next render, so an event sent now could be dropped —
     // and a dropped halt is precisely the silent failure this exists to stop.
-    const startHalt = activeHaltFor(custodyScopeKey)
+    const startHalt = custodyEnabled ? activeHaltFor(custodyScopeKey) : null
     if (startHalt) {
       const haltedRecord = custodyJournal().haltedRecord(custodyScopeKey)
       return {
@@ -1142,6 +1154,7 @@ export function registerAgentBridgeIpc(resolveAgentPath: AgentPathResolver): voi
         pendingAutoCompaction: false,
         pendingSummaryReset: false,
         custodyScopeKey,
+        custodyEnabled,
         userInitiatedStop: false,
       })
 
@@ -1149,7 +1162,7 @@ export function registerAgentBridgeIpc(resolveAgentPath: AgentPathResolver): voi
       // record from here on: any later divergence between it and entry.opts is
       // drift, and a record still marked 'running' at next launch is recovered
       // as halted rather than assumed to have finished.
-      custodyJournal().open({
+      if (custodyEnabled) custodyJournal().open({
         bridgeId: opts.bridgeId,
         sessionKey,
         authority: authorityOf(opts),
@@ -1286,6 +1299,11 @@ export function registerAgentBridgeIpc(resolveAgentPath: AgentPathResolver): voi
   ipcMain.handle('bridge:prompt', async (_e, { bridgeId, text, options }: { bridgeId: string; text: string; options?: PromptOptions }) => {
     const entry = bridges.get(bridgeId)
     if (!entry) return { error: 'bridge not found' }
+    // The user stopped this bridge and its teardown is still in flight. Do not
+    // resurrect it (that would reset userInitiatedStop and trip a spurious halt
+    // on the imminent 'closed' event). Same signal as a missing bridge, so the
+    // renderer's self-heal starts a fresh one.
+    if (entry.stopping) return { error: 'bridge not found' }
     // Prompting is the moment authority is actually exercised, so it is the
     // moment the invariants are re-checked. A halted thread refuses here.
     const refused = custodyRefusal(entry, bridgeId, 'prompt')
@@ -1534,6 +1552,9 @@ export function registerAgentBridgeIpc(resolveAgentPath: AgentPathResolver): voi
     const entry = bridges.get(bridgeId)
     if (!entry) return
     entry.userInitiatedStop = true
+    // Close the teardown race: a prompt arriving before the async abort/stop/delete
+    // below must be refused (retriable) rather than resurrecting this bridge.
+    entry.stopping = true
     custodyJournal().patch(bridgeId, { status: 'ended', endedAt: Date.now(), turnId: undefined, activePrompt: undefined })
     cancelPendingUserRequests(bridgeId, 'stopped by user')
     // Stop is the user's "make it stop no matter what" escape hatch, so we
@@ -1560,7 +1581,12 @@ export function registerAgentBridgeIpc(resolveAgentPath: AgentPathResolver): voi
   // Read-only custody state for a thread. Deliberately never gated by a halt:
   // a halt must not hide the evidence it exists to preserve.
   ipcMain.handle('bridge:custodyState', (_e, { sessionKey, bridgeId }: { sessionKey?: string | null; bridgeId?: string }) => {
-    const key = scopeKeyFor(sessionKey ?? null, bridgeId ?? '')
+    const entry = bridgeId ? bridges.get(bridgeId) : undefined
+    const laneSession = sessionKey ?? entry?.sessionKey
+    const key = scopeKeyFor(laneSession ?? null, bridgeId ?? '')
+    if (!isCrewLaneSessionKey(laneSession)) {
+      return { ok: true, scopeKey: key, halt: null, record: null, history: [] }
+    }
     const journal = custodyJournal()
     return { ok: true, scopeKey: key, halt: journal.activeHalt(key), record: journal.haltedRecord(key), history: journal.forScope(key) }
   })

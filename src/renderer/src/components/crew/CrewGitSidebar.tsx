@@ -206,6 +206,7 @@ export function CrewGitSidebar({
 
   const banner    = git.state.banner
   const conflicts = git.state.conflicts
+  const orphanCheckUnresolved = integration?.checks.some(check => check.status === 'interrupted' && check.execution?.state !== 'exited') ?? false
   const integrationRunning = integrationBusy || integration?.status === 'running'
   const candidateLaneCount = lanes.filter(lane => !!byLane[lane.laneId]?.head && (byLane[lane.laneId]?.changed ?? 0) > 0).length
   const hasCandidateLanes = candidateLaneCount > 0
@@ -302,6 +303,12 @@ export function CrewGitSidebar({
                   <span className={`crew-integration-check-status is-${check.status}`}>{check.status}</span>
                 </div>
                 <span className="mono crew-integration-command">{check.command} → {check.script}</span>
+                {check.execution && (
+                  <span className={`crew-integration-process is-${check.execution.state}`}>
+                    process: {check.execution.state}{check.execution.pid ? ` · PID ${check.execution.pid}` : ''}
+                    {check.execution.detail ? ` · ${check.execution.detail}` : ''}
+                  </span>
+                )}
                 {check.output?.trim() && (
                   <details className="crew-integration-output" open={check.status === 'failed' || check.status === 'interrupted'}>
                     <summary>Check output</summary>
@@ -343,7 +350,7 @@ export function CrewGitSidebar({
             <button
               type="button"
               className="crew-btn-ghost"
-              disabled={!baseHead || !hasCandidateLanes || merging}
+              disabled={!baseHead || !hasCandidateLanes || merging || orphanCheckUnresolved}
               title={!baseHead ? 'base commit is still loading' : !hasCandidateLanes ? 'no committed lane changes found' : integrationView.nextStep}
               onClick={() => { void verifyCombinedIntegration() }}
             >

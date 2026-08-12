@@ -208,14 +208,15 @@ cannot be prevented, not what cannot be *contained after the fact*.
    test that read-only/ask/plan block writes and that `full`/bypass is reachable only by
    explicit opt-in. Ollama and OpenRouter expose **no** tool surface at all (pure chat
    streamers), so they cannot write or exec regardless of mode.
-4. **Authority can be withdrawn after it was granted.** Previously CrewCode could only
-   deny the *next* action; a grant already in flight was good until the session ended,
-   and an execution whose outcome was never observed left no trace. Now a persisted
-   custody journal records every bridge execution, an interrupted turn is recovered as
-   halted rather than assumed complete, mid-turn authority mutations are refused and
-   deferred, and a tripped invariant refuses privileged actions until a human explicitly
-   reauthorizes — reporting the exact failed invariant and affected scope, with the
-   interrupted prompt and partial response preserved. See hop 5 and
+4. **Crew-lane authority can be withdrawn after it was granted.** Previously CrewCode
+   could only deny the *next* action; a grant already in flight was good until the lane
+   ended, and an execution whose outcome was never observed left no trace. For synthetic
+   crew lane bridge threads, a persisted custody journal records execution, an interrupted
+   turn is recovered as halted rather than assumed complete, mid-turn authority mutations
+   are refused and deferred, and a tripped invariant refuses privileged actions until a
+   human explicitly reauthorizes — reporting the exact failed invariant and affected
+   scope, with the interrupted prompt and partial response preserved. Ordinary solo chats
+   and crew supervisors deliberately retain normal provider error/retry behavior. See hop 5 and
    [`execution-custody.md`](execution-custody.md). Coverage gaps (remote transport, PTY,
    plugin sessions) are named there rather than implied away.
 
@@ -240,13 +241,20 @@ cannot be prevented, not what cannot be *contained after the fact*.
    - **Claude** — full coverage. Full Access routes through `canUseTool` (no more native
      `bypassPermissions`), so every command is classified; denylisted ones pause. Highest
      priority because Claude's Full Access is an unsandboxed shell.
+   - **Grok** — full coverage. Full Access now routes through `session/request_permission`
+     (`--permission-mode default` instead of `bypassPermissions`); benign commands
+     auto-approve, denylisted ones pause. Also an unsandboxed shell, so high priority.
    - **CrewCoder(ACP), Hermes(ACP)** — covered via the tool call's `rawInput`; denylisted
      commands fall through to a confirmation prompt instead of auto-approving.
-   - **Codex** — **not yet routed through the tripwire**, but Full Access still runs under a
-     `workspace-write` sandbox (writes scoped to the workspace, network off), so its blast
-     radius is already the smallest. Tracked as follow-up.
-   - **Grok, pi** — **not yet covered**; their Full Access uses engine-native bypass / a
-     confirmation channel that does not carry the command string. Tracked as follow-up.
+   - **Codex** — defense-in-depth tripwire wired into its approval handler, AND Full Access
+     runs under a `workspace-write` sandbox (writes scoped to the workspace, network off).
+     The sandbox alone already blocks most of the denylist (`curl|sh`, force-push, `dd`,
+     `mkfs`, `sudo`, `chmod /` all need network or out-of-workspace access it denies); the
+     only residual is destroying files *inside* the workspace, which is git-recoverable.
+   - **pi** — **not covered.** pi's protocol has no pre-execution permission request that
+     carries the command string (its `confirm` channel omits it, and `tool_execution_start`
+     is informational — it cannot block). A tripwire here needs a pi protocol change; a
+     best-effort hook would be false confidence, so it is deliberately omitted and tracked.
    - **Ollama, OpenRouter** — N/A (no tool surface; cannot exec).
 7. **MCP servers run with user privilege.** A user-configured MCP server is trusted code on
    the host; CrewCode gates *which* sessions may use it, not what the server binary itself

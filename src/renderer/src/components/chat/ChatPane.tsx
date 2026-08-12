@@ -33,6 +33,7 @@ import { useSettings, type McpServerConfig } from '../../hooks/useSettings'
 import { resolveSessionMcpServers } from '../../hooks/session-mcp-selection'
 import { useVoiceSessionController } from '../../hooks/useVoiceSessionController'
 import { getCrewCodeClient } from '../../runtime/crewcode-client'
+import { isCrewLaneSessionKey } from '../../../../shared/custody-types'
 
 type CrewBranchWithMessagesProps = Omit<React.ComponentProps<typeof CrewBranch>, 'messagesByTab'>
 
@@ -453,7 +454,9 @@ export function ChatPane({
   const pendingAgentRequest = useUserRequestsForTab(sessActive)[0] ?? null
   // A tripped execution-custody invariant for this thread. Survives the bridge
   // that raised it, so it is read from the store rather than from bridge state.
-  const custodyHalt = useCustodyHalt(sessActive)
+  const storedCustodyHalt = useCustodyHalt(sessActive)
+  const crewLaneCustody = isCrewLaneSessionKey(`${sessActive}:${activeAgentId}`)
+  const custodyHalt = crewLaneCustody ? storedCustodyHalt : null
   const reauthorizeCustody = useCallback(async () => {
     if (!custodyHalt) return
     const result = await getCrewCodeClient().bridgeReauthorize({ scopeKey: custodyHalt.scopeKey })
@@ -470,6 +473,7 @@ export function ChatPane({
   useEffect(() => {
     let cancelled = false
     const scopeKey = `${sessActive}:${activeAgentId}`
+    if (!isCrewLaneSessionKey(scopeKey)) return () => { cancelled = true }
     void getCrewCodeClient().bridgeCustodyState({ sessionKey: scopeKey })
       .then(state => {
         if (cancelled || !state?.ok || !state.halt) return

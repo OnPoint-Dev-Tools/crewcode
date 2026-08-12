@@ -9,6 +9,15 @@ export interface IntegrationLane {
   files: string[]
 }
 
+export interface IntegrationCheckExecution {
+  token: string
+  pid?: number
+  pidFile?: string
+  state: 'running' | 'exited' | 'unknown'
+  checkedAt?: number
+  detail?: string
+}
+
 export interface IntegrationCheckResult {
   id: string
   label: string
@@ -16,6 +25,7 @@ export interface IntegrationCheckResult {
   script: string
   status: 'running' | 'passed' | 'failed' | 'interrupted'
   output: string
+  execution?: IntegrationCheckExecution
 }
 
 export interface CrewIntegrationRequest {
@@ -39,7 +49,11 @@ export type CrewIntegrationResult =
 export interface IntegrationGitResult { code: number; stdout: string; stderr: string }
 export type IntegrationGitRunner = (cwd: string, args: string[]) => Promise<IntegrationGitResult>
 export type IntegrationCheckDiscovery = (cwd: string) => Promise<SuggestedCrewCheck[]>
-export type IntegrationCheckRunner = (cwd: string, check: SuggestedCrewCheck) => Promise<{ code: number; output: string }>
+export type IntegrationCheckRunner = (
+  cwd: string,
+  check: SuggestedCrewCheck,
+  onExecution?: (execution: IntegrationCheckExecution) => void,
+) => Promise<{ code: number; output: string }>
 
 const paths = (stdout: string): string[] => stdout.split('\n').map(line => line.trim()).filter(Boolean)
 
@@ -113,15 +127,19 @@ export async function verifyCrewIntegration(
     const checks = await discoverChecks(request.integrationCwd)
     const results: IntegrationCheckResult[] = []
     for (const check of checks) {
-      const running: IntegrationCheckResult = {
+      let running: IntegrationCheckResult = {
         id: check.id, label: check.label,
         command: [check.command, ...check.args].join(' '), script: check.script,
         status: 'running', output: '',
       }
       onCheck?.(running)
-      const result = await runCheck(request.integrationCwd, check)
+      const result = await runCheck(request.integrationCwd, check, execution => {
+        running = { ...running, execution }
+        onCheck?.(running)
+      })
       const finished: IntegrationCheckResult = {
         ...running, status: result.code === 0 ? 'passed' : 'failed', output: result.output,
+        execution: running.execution ? { ...running.execution, state: 'exited', checkedAt: Date.now(), detail: 'check process exited' } : undefined,
       }
       results.push(finished)
       onCheck?.(finished)

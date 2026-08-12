@@ -215,12 +215,13 @@ describe('D2 — every agent bridge blocks writes in read-only/ask/plan', () => 
     expect(crewcoderWriteBlocked({ mode: 'full' })).toBe(false)
   })
 
-  it('grok resolves ask/plan/read-only to a non-asking permission mode, full to bypass only on opt-in', () => {
+  it('grok resolves ask/plan/read-only to a non-asking permission mode; full routes through default for the tripwire', () => {
     expect(grokPermissionMode({ mode: 'ask' })).toBe('dontAsk')
     expect(grokPermissionMode({ mode: 'plan' })).toBe('dontAsk')
     expect(grokPermissionMode({ mode: 'build', toolPolicy: 'read-only' })).toBe('dontAsk')
     expect(grokPermissionMode({ mode: 'build' })).toBe('default')
-    expect(grokPermissionMode({ mode: 'full' })).toBe('bypassPermissions')
+    // No engine-native bypass: full asks via request_permission so the tripwire sees commands.
+    expect(grokPermissionMode({ mode: 'full' })).toBe('default')
   })
 })
 
@@ -295,7 +296,7 @@ describe('F — execution custody withdraws authority once it is no longer knowa
 
     // A turn is in flight when the process dies. Nothing writes an outcome.
     new CustodyJournal(path, 100).open({
-      bridgeId: 'br-tab1-claude-abc', sessionKey: 'tab1:claude', authority,
+      bridgeId: 'br-crew-lane1-claude-abc', sessionKey: 'crew/lane1:claude', authority,
       pid: 4242, status: 'running', startedAt: 100, updatedAt: 100, turnId: 'turn-1',
     })
 
@@ -303,23 +304,23 @@ describe('F — execution custody withdraws authority once it is no longer knowa
     // What matters is that the record GATES — the status name is secondary, so
     // the gate itself is asserted rather than the spelling of the status.
     const recovered = new CustodyJournal(path, 500)
-    expect(recovered.get('br-tab1-claude-abc')?.status).toBe('interrupted')
-    expect(recovered.get('br-tab1-claude-abc')?.status).not.toBe('ended')
-    expect(recovered.activeHalt('tab1:claude')?.invariant).toBe('restart-recovery')
+    expect(recovered.get('br-crew-lane1-claude-abc')?.status).toBe('interrupted')
+    expect(recovered.get('br-crew-lane1-claude-abc')?.status).not.toBe('ended')
+    expect(recovered.activeHalt('crew/lane1:claude')?.invariant).toBe('restart-recovery')
 
     // The halt is keyed to the thread, so a brand-new bridge id inherits it —
     // it cannot be shaken off by restarting the process that tripped it.
-    expect(recovered.activeHalt('tab1:claude')).not.toBeNull()
+    expect(recovered.activeHalt('crew/lane1:claude')).not.toBeNull()
 
     // Privileged actions are refused while the halt stands, and the refusal
     // states the failed invariant rather than a generic error.
-    const halt = recovered.activeHalt('tab1:claude')!
+    const halt = recovered.activeHalt('crew/lane1:claude')!
     expect(refusalMessage('prompt', halt)).toContain('turn interrupted by restart')
 
     // Only an explicit reauthorization clears it, and the evidence survives.
-    expect(recovered.reauthorize('tab1:claude', 600)).toBe(1)
-    expect(recovered.activeHalt('tab1:claude')).toBeNull()
-    expect(recovered.forScope('tab1:claude')[0].halt?.invariant).toBe('restart-recovery')
+    expect(recovered.reauthorize('crew/lane1:claude', 600)).toBe(1)
+    expect(recovered.activeHalt('crew/lane1:claude')).toBeNull()
+    expect(recovered.forScope('crew/lane1:claude')[0].halt?.invariant).toBe('restart-recovery')
   })
 
   it('does NOT halt on a known-good end — an idle bridge stopping is not lost custody', () => {

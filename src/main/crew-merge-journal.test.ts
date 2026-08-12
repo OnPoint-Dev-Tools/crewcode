@@ -19,7 +19,10 @@ describe('CrewMergeJournal', () => {
         { laneId: 'api', label: 'API', branch: 'lane/api', head: 'bbb222', worktreePath: '/repo/wt-api', files: ['src/model.ts'] },
       ],
       retentionRef: 'refs/crewcode/integration/session-1', phase: 'checking', status: 'running',
-      checks: [], startedAt: 100, updatedAt: 110,
+      checks: [{
+        id: 'test', label: 'tests', command: 'npm test', script: 'vitest', status: 'running', output: 'partial',
+        execution: { token: 'custody-token', pid: 1234, state: 'running' },
+      }], startedAt: 100, updatedAt: 110,
     }
     new CrewMergeJournal(path, 100).put(record)
 
@@ -28,6 +31,10 @@ describe('CrewMergeJournal', () => {
       status: 'interrupted', phase: 'checking', finishedAt: 200,
       lanes: record.lanes, baseHead: 'base123',
     })
+    const check = restarted.latest('session-1')!.checks[0]
+    expect(check).toMatchObject({ status: 'interrupted', execution: { state: 'unknown', token: 'custody-token' } })
+    expect(check.output).toContain('partial')
+    expect(check.output).toContain('stopped while this check was running')
     expect(readFileSync(path, 'utf8')).toContain('interrupted')
   })
 })

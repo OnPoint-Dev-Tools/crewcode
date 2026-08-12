@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useCallback, useEffect } from 'react'
 
 import { Icon } from '../ui/Icon'
 import { Messages } from '../thread/Messages'
@@ -10,11 +10,14 @@ import { LaneModelButton } from './LaneModelButton'
 import { LaneRunSwitch } from './LaneRunSwitch'
 import { LaneNextAction } from './LaneNextAction'
 import { LaneEffortButton } from './LaneEffortButton'
+import { CustodyHaltBanner } from '../chat/CustodyHaltBanner'
 import { shortModel } from './model-label'
 import { formatTokens, formatElapsed } from './lane-usage-format'
 import { PROVIDER_IMAGES, providerImageClass } from '../composer/provider-meta'
 import type { Message, AgentInfo, PtyPane, AgentUserRequest, AgentUserResponse } from '../../types'
 import type { CrewAgentLane, CrewLaneEffort } from '../../orchestrator/crew-session'
+import { bridgeActivity, useCustodyHalt } from '../../stores/bridge-activity-store'
+import { getCrewCodeClient } from '../../runtime/crewcode-client'
 
 interface LaneColumnProps {
   /** Position in the row — drives the stagger entry animation via --lane-i. */
@@ -59,6 +62,30 @@ export function LaneColumn({
   // pty agents take the lane model as a CLI flag — bridges apply it at spawn,
   // so this is the only place a pty lane's picked model reaches the process.
   const ptyArgv = isPty && lane.model ? ['--model', lane.model] : undefined
+  const laneTabId = lane.tabId ?? ''
+  const custodyHalt = useCustodyHalt(laneTabId)
+  const reauthorizeCustody = useCallback(async () => {
+    if (!custodyHalt) return
+    const result = await getCrewCodeClient().bridgeReauthorize({ scopeKey: custodyHalt.scopeKey })
+    if (!result.ok) throw new Error(result.error ?? 'Reauthorization was refused')
+    bridgeActivity.clearCustodyHaltsForScope(custodyHalt.scopeKey)
+  }, [custodyHalt])
+
+  useEffect(() => {
+    if (!lane.tabId || isPty) return
+    let cancelled = false
+    const scopeKey = `${lane.tabId}:${lane.agentId}`
+    void getCrewCodeClient().bridgeCustodyState({ sessionKey: scopeKey }).then(state => {
+      if (cancelled || !state?.ok || !state.halt) return
+      bridgeActivity.setCustodyHalt(lane.tabId!, {
+        scopeKey: state.scopeKey,
+        violation: state.halt,
+        interruptedPrompt: state.record?.interruptedPrompt,
+        interruptedPartial: state.record?.interruptedPartial,
+      })
+    }).catch(() => { /* read-only recovery evidence; lane remains inspectable */ })
+    return () => { cancelled = true }
+  }, [isPty, lane.agentId, lane.tabId])
 
   return (
     <div
@@ -127,6 +154,7 @@ export function LaneColumn({
       </header>
 
       <div className={`lane-body ${isPty ? 'lane-body-term' : ''}`}>
+        {custodyHalt && <CustodyHaltBanner halt={custodyHalt} onReauthorize={reauthorizeCustody} />}
         {offline ? (
           <div className="lane-empty">{lane.agentId} is unavailable</div>
         ) : lane.muted ? (
@@ -163,7 +191,7 @@ export function LaneColumn({
         <LaneComposer
           workspacePath={lane.path}
           placeholder={lane.muted ? `resume ${name} before sending` : `message ${name} · use @ to add files`}
-          disabled={offline || lane.muted}
+          disabled={offline || lane.muted || !!custodyHalt}
           running={live}
           onStop={onRestart}
           onSend={onSend}

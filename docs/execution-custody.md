@@ -1,5 +1,7 @@
 # Execution Custody
 
+> Scope: interactive halt-and-reauthorize custody is enabled for synthetic crew lane threads only. Ordinary solo chats and the crew supervisor use their normal provider error/retry behavior and do not receive custody-loss banners or gates.
+
 > Status: living document. `docs/security-model.md` covers **granting** authority —
 > whether it may cross the next boundary. This document covers **withdrawing** it:
 > what happens when authority that was already granted stops being knowable while

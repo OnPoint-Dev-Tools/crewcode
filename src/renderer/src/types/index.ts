@@ -24,7 +24,8 @@ export type AgentProviderId = 'pi' | 'opencode' | 'codex' | 'claude' | 'hermes' 
 export type { CrewCodePluginManifest, InstalledPlugin, PluginRegistryError, PluginRegistrySnapshot } from '../../../shared/plugin-types'
 
 export interface CrewIntegrationLane { laneId: string; label: string; branch: string; head: string; worktreePath: string; files: string[] }
-export interface CrewIntegrationCheck { id: string; label: string; command: string; script: string; status: 'running' | 'passed' | 'failed' | 'interrupted'; output: string }
+export interface CrewIntegrationCheckExecution { token: string; pid?: number; pidFile?: string; state: 'running' | 'exited' | 'unknown'; checkedAt?: number; detail?: string }
+export interface CrewIntegrationCheck { id: string; label: string; command: string; script: string; status: 'running' | 'passed' | 'failed' | 'interrupted'; output: string; execution?: CrewIntegrationCheckExecution }
 export interface CrewIntegrationRecord {
   id: string
   sessionId: string

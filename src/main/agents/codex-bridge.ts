@@ -1,6 +1,7 @@
 import { spawnAgentProcess } from './agent-spawn'
 import type { AgentBridge, BridgeStartOpts, EmitFn, ModeLevel, RequestUserFn, TurnUsage } from './bridge-types'
 import { buildUsage, contextWindowFor } from './model-context'
+import { tripwireForToolCall } from './dangerous-command'
 
 // Codex app-server JSON-RPC over stdio.
 // Protocol: newline-delimited JSON (`"jsonrpc": "2.0"` header omitted on the wire).
@@ -516,15 +517,26 @@ export async function createCodexBridge(
       // Mode switches mutate opts on the live bridge; honor them even when the
       // Codex thread was started with a different approval policy.
       const modeDecision = codexApprovalDecisionForMode(opts.mode, opts.toolPolicy)
-      if (modeDecision || !requestUser) {
+      // Full Access tripwire: a denylisted command must confirm even when the mode
+      // would auto-accept. Codex's workspace-write sandbox (no network, scoped
+      // writes) already blocks most of the denylist; this is defense-in-depth for
+      // in-workspace destruction whenever Codex does surface an approval request.
+      const itemRecord = (msg.params.item && typeof msg.params.item === 'object') ? msg.params.item as Record<string, unknown> : undefined
+      const codexCommand = msg.params.command ?? itemRecord?.command
+      const codexVerdict = codexCommand !== undefined ? tripwireForToolCall('shell', { command: codexCommand }) : { dangerous: false as const }
+      if (!codexVerdict.dangerous && (modeDecision || !requestUser)) {
         respond(msg.id, { decision: modeDecision ?? 'accept' })
+        return
+      }
+      if (!requestUser) {
+        respond(msg.id, { decision: codexVerdict.dangerous ? 'decline' : (modeDecision ?? 'accept') })
         return
       }
       const response = await requestUser({
         kind: 'permission',
         turnId: currentTurnId ?? undefined,
-        title: msg.method.includes('commandExecution') ? 'approve command execution' : 'approve file change',
-        message: typeof msg.params.reason === 'string' ? msg.params.reason : undefined,
+        title: codexVerdict.dangerous ? 'Full Access tripwire — confirm dangerous command' : (msg.method.includes('commandExecution') ? 'approve command execution' : 'approve file change'),
+        message: codexVerdict.dangerous ? codexVerdict.reason : (typeof msg.params.reason === 'string' ? msg.params.reason : undefined),
         detail: requestDetail(msg.params),
         dangerous: true,
         source: 'codex',

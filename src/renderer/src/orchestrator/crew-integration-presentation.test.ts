@@ -30,4 +30,15 @@ describe('presentCrewIntegration', () => {
     expect(view.badge).toBe('Interrupted')
     expect(view.summary).toContain('No successful result is being assumed')
   })
+
+  it('warns when a token-matched interrupted check is still executing', () => {
+    const interrupted = record('interrupted', 'checking')
+    interrupted.checks = [{
+      id: 'test', label: 'tests', command: 'npm test', script: 'vitest', status: 'interrupted', output: '',
+      execution: { token: 'token', pid: 42, state: 'running' },
+    }]
+    const view = presentCrewIntegration(interrupted)
+    expect(view.summary).toContain('still executing')
+    expect(view.verifyLabel).toBe('Check process still running')
+  })
 })
