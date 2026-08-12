@@ -98,7 +98,10 @@ describe('remote access server', () => {
     })
     // /bin/sh does not exist on Windows. node is the one interpreter guaranteed
     // to be present wherever this suite runs.
-    const create = await rpc('pty', 'pty.create', { paneId: 'web-test', cwd: root, shell: process.execPath, argv: ['-e', 'process.stdout.write("remote-pty-ok")'] })
+    // Keep the process alive briefly after the write completes. A zero-lived
+    // process can exit before macOS's native PTY dispatches its final data event.
+    const script = 'process.stdout.write("remote-pty-ok", () => setTimeout(() => process.exit(0), 50))'
+    const create = await rpc('pty', 'pty.create', { paneId: 'web-test', cwd: root, shell: process.execPath, argv: ['-e', script] })
     expect(create.status).toBe(200)
     await expect(output).resolves.toContain('remote-pty-ok')
     socket.close()

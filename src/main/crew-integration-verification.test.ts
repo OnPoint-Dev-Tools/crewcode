@@ -47,7 +47,11 @@ const runner: IntegrationGitRunner = async (cwd, args) => {
 }
 
 const runCheck = async (cwd: string, check: { command: string; args: string[] }) => {
-  const result = spawnSync(check.command, check.args, { cwd, encoding: 'utf8', env: { ...process.env, CI: '1' } })
+  const result = spawnSync(check.command, check.args, {
+    cwd, encoding: 'utf8', env: { ...process.env, CI: '1' },
+    // npm/pnpm/yarn are .cmd shims on Windows and require cmd.exe.
+    shell: process.platform === 'win32',
+  })
   return { code: result.status ?? 1, output: `${result.stdout ?? ''}${result.stderr ?? ''}` }
 }
 

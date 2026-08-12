@@ -192,6 +192,9 @@ async function runCrewCheck(
     const child = execFile(check.command, check.args, {
       cwd,
       env: { ...process.env, CI: '1', CREWCODE_CHECK_TOKEN: token },
+      // npm/pnpm/yarn are .cmd shims on Windows and cannot be launched by
+      // execFile without cmd.exe. Commands and args come from the allowlist.
+      shell: process.platform === 'win32',
       timeout: 120_000,
       maxBuffer: 10 * 1024 * 1024,
     }, (error, stdout, stderr) => {
