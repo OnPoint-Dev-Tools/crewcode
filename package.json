@@ -1,11 +1,11 @@
 {
    "name": "crewcode",
-   "version": "0.2.0",
+   "version": "0.2.1",
    "description": "Desktop ACE for orchestrating AI coding agents In a elegant Chat UI across local project worktrees.",
    "author": {
-    "name": "OnPoint Tools",
-    "email": "Logix_Creations.Work@proton.me"
-  },
+      "name": "OnPoint Tools",
+      "email": "Logix_Creations.Work@proton.me"
+   },
    "copyright": "Copyright © 2026 OnPoint Tools. Licensed under the Apache License, Version 2.0.",
    "license": "Apache-2.0",
    "desktopName": "crewcode",
