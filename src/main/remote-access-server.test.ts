@@ -96,15 +96,15 @@ describe('remote access server', () => {
         }
       })
     })
-    // /bin/sh does not exist on Windows. Node is the one interpreter guaranteed
-    // to be present wherever this suite runs. Keep it alive until input arrives
-    // so native PTY startup and immediate process exit cannot race on macOS.
-    const script = 'process.stdin.once("data", () => process.stdout.write("remote-pty-ok"))'
-    const create = await rpc('pty', 'pty.create', { paneId: 'web-test', cwd: root, shell: process.execPath, argv: ['-e', script] })
+    // Exercise the same default OS shell CrewCode opens for a real terminal.
+    // Treating Node as a shell is not portable: macOS node-pty can reject it via
+    // posix_spawnp, while ConPTY may launch it without honoring the -e fixture.
+    const create = await rpc('pty', 'pty.create', { paneId: 'web-test', cwd: root })
     expect(create.status).toBe(200)
     const createBody = await create.json() as { ok: boolean; result?: { ok?: boolean; error?: string } }
     expect(createBody).toMatchObject({ ok: true, result: { ok: true } })
-    const write = await rpc('pty-write', 'pty.write', { paneId: 'web-test', data: 'go\n' })
+    const enter = process.platform === 'win32' ? '\r' : '\n'
+    const write = await rpc('pty-write', 'pty.write', { paneId: 'web-test', data: `echo remote-pty-ok${enter}` })
     expect(write.status).toBe(200)
     await expect(output).resolves.toContain('remote-pty-ok')
     socket.close()
