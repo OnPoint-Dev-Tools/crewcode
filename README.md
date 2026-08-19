@@ -10,6 +10,14 @@
 
 </div>
 
+<div align="center">
+
+[![CrewCode multi-agent workflow demo](docs/assets/crewcode-demo.gif)](https://youtu.be/--jFB-w31YQ)
+
+**[Watch the full CrewCode demo on YouTube →](https://youtu.be/--jFB-w31YQ)**
+
+</div>
+
 # CrewCode
 
 CrewCode is a free, open-source desktop ACE for developers who already work repo-first and agent-first.
