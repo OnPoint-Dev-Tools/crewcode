@@ -5,7 +5,7 @@ import { NEW_TAB_ACTIONS } from './WindowTabs'
 describe('WindowTabs new-tab menu', () => {
   it('offers the built-in control, studio, and Git workspace pages', () => {
     expect(NEW_TAB_ACTIONS).toEqual(expect.arrayContaining([
-      { kind: 'mission', icon: 'grid', label: 'Control Center (Mission Control)' },
+      { kind: 'mission', icon: 'grid', label: 'Control Center' },
       { kind: 'prompts', icon: 'inspection', label: 'Skills & Prompts Studio' },
       { kind: 'git', icon: 'gitBranch', label: 'Git Workspace' },
     ]))
