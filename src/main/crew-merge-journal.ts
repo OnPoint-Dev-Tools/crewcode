@@ -14,6 +14,9 @@ export interface CrewIntegrationJournalRecord {
   lanes: IntegrationLane[]
   retentionRef: string
   integrationHead?: string
+  conflictLaneId?: string
+  conflictBranch?: string
+  conflicts?: string[]
   phase: CrewIntegrationPhase
   status: CrewIntegrationStatus
   checks: IntegrationCheckResult[]

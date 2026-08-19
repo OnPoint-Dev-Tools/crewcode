@@ -2,6 +2,7 @@ import React, { useCallback, useEffect } from 'react'
 
 import { Icon } from '../ui/Icon'
 import { Messages } from '../thread/Messages'
+import { useStickToBottom } from '../../hooks/useStickToBottom'
 import { XTermPane } from '../terminal/XTermPane'
 import { AgentActivityOverlay } from '../thread/AgentActivityOverlay'
 import { latestTodoActivity } from '../thread/todo-from-toolcall'
@@ -16,7 +17,7 @@ import { formatTokens, formatElapsed } from './lane-usage-format'
 import { PROVIDER_IMAGES, providerImageClass } from '../composer/provider-meta'
 import type { Message, AgentInfo, PtyPane, AgentUserRequest, AgentUserResponse } from '../../types'
 import type { CrewAgentLane, CrewLaneEffort } from '../../orchestrator/crew-session'
-import { bridgeActivity, useCustodyHalt } from '../../stores/bridge-activity-store'
+import { bridgeActivity, useCustodyHalt, useIsBridgeRunning } from '../../stores/bridge-activity-store'
 import { getCrewCodeClient } from '../../runtime/crewcode-client'
 
 interface LaneColumnProps {
@@ -37,6 +38,10 @@ interface LaneColumnProps {
   onAgentRequestResponse?: (response: AgentUserResponse) => void
   /** Hide the per-lane composer — set when the Supervisor owns the crew's input. */
   hideComposer?: boolean
+  /** This lane is the only one rendered, filling the whole crew surface. */
+  maximized?: boolean
+  /** Toggle this lane between the pane grid and full-surface reading view. */
+  onToggleMaximize?: () => void
 }
 
 /**
@@ -52,6 +57,7 @@ export function LaneColumn({
   onSend, onClosePane, onSetModel, onSetEffort, onRestart, onToggleMute, onSetNextAction,
   agentRequest = null, onAgentRequestResponse,
   hideComposer = false,
+  maximized = false, onToggleMaximize,
 }: LaneColumnProps) {
   const name    = agent?.name ?? lane.agentId
   const isPty   = agent?.transport === 'pty'
@@ -59,9 +65,18 @@ export function LaneColumn({
   const live    = !!(lane.bridgeId || lane.paneId)
   const usage   = lane.usage
   const todoActivity = latestTodoActivity(messages)
+  // pty lanes render a raw terminal — they have no bridge requests or todo
+  // stream, so the dock stays composer-only there.
+  const showActivity = !isPty && !!(agentRequest || todoActivity)
   // pty agents take the lane model as a CLI flag — bridges apply it at spawn,
   // so this is the only place a pty lane's picked model reaches the process.
   const ptyArgv = isPty && lane.model ? ['--model', lane.model] : undefined
+  // Follow the newest output while the worker streams, but stop following the
+  // moment the operator scrolls up to read — re-arms when they scroll back down.
+  const thread = useStickToBottom(messages, !isPty)
+  // `live` only means a bridge/pane is attached — it stays true between turns.
+  // The waiting loader needs the real turn-in-flight signal, or it never clears.
+  const streaming = useIsBridgeRunning(lane.bridgeId ?? null)
   const laneTabId = lane.tabId ?? ''
   const custodyHalt = useCustodyHalt(laneTabId)
   const reauthorizeCustody = useCallback(async () => {
@@ -89,11 +104,11 @@ export function LaneColumn({
 
   return (
     <div
-      className={`lane-col ${lane.muted ? 'is-muted' : ''}`}
+      className={`canvas-mode-pane ${isPty ? 'canvas-pane-terminal' : 'canvas-pane-chat'} lane-col ${lane.muted ? 'is-muted' : ''}`}
       style={{ ['--lane-i' as string]: index }}
     >
-      <header className="lane-head">
-        <div className="lane-head-row">
+      <div className="canvas-mode-pane-bar">
+        <span className="canvas-mode-pane-title">
           {PROVIDER_IMAGES[lane.agentId] && (
             <img
               src={PROVIDER_IMAGES[lane.agentId]}
@@ -105,7 +120,8 @@ export function LaneColumn({
           )}
           <span className="lane-head-agent crew-diff-base">{name}</span>
           <span className="lane-head-role">{lane.roleName || 'no role'}</span>
-          <div className="lane-head-spacer" />
+        </span>
+        <div className="canvas-mode-pane-actions">
           <button
             type="button"
             className="lane-head-btn"
@@ -115,11 +131,25 @@ export function LaneColumn({
           >
             <Icon name="refresh" size={11} />
           </button>
+          {onToggleMaximize && (
+            <button
+              type="button"
+              className={`lane-head-btn ${maximized ? 'is-on' : ''}`}
+              title={maximized ? 'restore the lane grid (Esc)' : `expand ${name} to the full crew surface`}
+              aria-pressed={maximized}
+              onClick={onToggleMaximize}
+            >
+              <Icon name={maximized ? 'shrink' : 'expand'} size={11} />
+            </button>
+          )}
           <span
             className={`crew-status-dot status-${lane.status}`}
             title={lane.muted ? 'paused · worktree and next action retained' : lane.status}
           />
         </div>
+      </div>
+
+      <header className="lane-head">
         <div className="lane-head-row lane-head-meta">
           <span className="lane-head-branch mono" title={lane.path || lane.branch}>{lane.branch}</span>
           <LaneModelButton
@@ -169,33 +199,55 @@ export function LaneColumn({
               />
             : <div className="lane-empty">send a prompt to start {name}</div>
         ) : (
-          <div className="lane-thread">
-            {(agentRequest || todoActivity) && (
-              <div className="composer-activity-shell">
-                <AgentActivityOverlay
-                  todos={todoActivity?.todos ?? []}
-                  isStreaming={todoActivity?.isStreaming ?? live}
-                  request={agentRequest ?? undefined}
-                  onRespond={onAgentRequestResponse}
-                />
-              </div>
-            )}
+          <div className="lane-thread" ref={thread.ref} onScroll={thread.onScroll}>
             {messages.length === 0
               ? <div className="lane-empty">send a prompt to start {name} · {shortModel(lane.model)}</div>
-              : <Messages messages={messages} />}
+              : <Messages messages={messages} isRunning={streaming} />}
+            {thread.scrolledUp && (
+              <button
+                type="button"
+                className="lane-scroll-bottom"
+                onClick={() => thread.scrollToBottom('smooth')}
+                title="jump to the newest output"
+              >
+                <Icon name="arrowDown" size={12} />
+              </button>
+            )}
           </div>
         )}
       </div>
 
-      {!hideComposer && (
-        <LaneComposer
-          workspacePath={lane.path}
-          placeholder={lane.muted ? `resume ${name} before sending` : `message ${name} · use @ to add files`}
-          disabled={offline || lane.muted || !!custodyHalt}
-          running={live}
-          onStop={onRestart}
-          onSend={onSend}
-        />
+      {/*
+        Activity/permission card is docked to the composer, not parked in the
+        scrolling thread — same as the solo `composer-dock`. A permission pause
+        blocks the turn, so it must stay on screen no matter where the thread is
+        scrolled. It renders even when the composer is hidden (broadcast
+        distribution / Supervisor owns input) so the lane's pause is still
+        answerable.
+      */}
+      {(showActivity || !hideComposer) && (
+        <div className="lane-composer-dock">
+          {showActivity && (
+            <div className="composer-activity-shell lane-activity-shell">
+              <AgentActivityOverlay
+                todos={todoActivity?.todos ?? []}
+                isStreaming={todoActivity?.isStreaming ?? live}
+                request={agentRequest ?? undefined}
+                onRespond={onAgentRequestResponse}
+              />
+            </div>
+          )}
+          {!hideComposer && (
+            <LaneComposer
+              workspacePath={lane.path}
+              placeholder={lane.muted ? `resume ${name} before sending` : `message ${name} · use @ to add files`}
+              disabled={offline || lane.muted || !!custodyHalt}
+              running={live}
+              onStop={onRestart}
+              onSend={onSend}
+            />
+          )}
+        </div>
       )}
     </div>
   )

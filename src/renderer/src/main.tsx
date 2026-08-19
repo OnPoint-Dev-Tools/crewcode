@@ -15,6 +15,9 @@ import './styles/crew-config.css'
 import './styles/crew-surface.css'
 import './styles/crew-diff.css'
 import './styles/crew-git-sidebar.css'
+// Loaded after both consumers so the shared gate wins over their older
+// per-surface collision rules while those are being retired.
+import './styles/crew-collision-review.css'
 import './styles/turn-changes.css'
 import './styles/prompt-builder.css'
 import './styles/mission-control.css'

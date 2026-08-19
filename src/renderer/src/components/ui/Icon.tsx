@@ -18,6 +18,7 @@ export type IconName =
   | 'fileCode' | 'wrench' | 'inspection' | 'scissors' | 'changes'
   | 'folderPlus' | 'tags' | 'message' | 'app' | 'workbench'
   | 'archive' | 'unarchive'
+  | 'expand' | 'shrink'
 
 interface IconProps extends Omit<React.SVGProps<SVGSVGElement>, 'stroke'> {
   name: IconName
@@ -37,6 +38,8 @@ const PATHS: Record<IconName, React.ReactNode> = {
   bell:       <><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256"><path d="M96,192a32,32,0,0,0,64,0" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="16"/><path d="M56,104a72,72,0,0,1,144,0c0,35.82,8.3,64.6,14.9,76A8,8,0,0,1,208,192H48a8,8,0,0,1-6.88-12C47.71,168.6,56,139.81,56,104Z" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="16"/></svg></>,
   cpu:        <><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256"><rect x="48" y="48" width="160" height="160" rx="8" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="16"/><line x1="208" y1="104" x2="232" y2="104" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="16"/><line x1="208" y1="152" x2="232" y2="152" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="16"/><line x1="24" y1="104" x2="48" y2="104" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="16"/><line x1="24" y1="152" x2="48" y2="152" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="16"/><line x1="152" y1="208" x2="152" y2="232" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="16"/><line x1="104" y1="208" x2="104" y2="232" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="16"/><line x1="152" y1="24" x2="152" y2="48" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="16"/><line x1="104" y1="24" x2="104" y2="48" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="16"/></svg></>,
   min:        <line x1="4" y1="12" x2="20" y2="12"/>,
+  expand:     <><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></>,
+  shrink:     <><polyline points="20 10 14 10 14 4"/><polyline points="4 14 10 14 10 20"/><line x1="14" y1="10" x2="21" y2="3"/><line x1="10" y1="14" x2="3" y2="21"/></>,
   max:        <rect x="4" y="4" width="16" height="16" rx="1"/>,
   close:      <><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></>,
   copy:       <><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256"><polyline points="168 168 216 168 216 40 88 40 88 88" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="16"/><rect x="40" y="88" width="128" height="128" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="16"/></svg></>,

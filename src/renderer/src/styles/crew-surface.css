@@ -241,12 +241,61 @@
   overflow: hidden;
 }
 
-/* ---------- isolated: side-by-side lane columns ---------- */
-.crew-columns {
-  flex: 1;
+/* ---------- isolated: lane panes ---------- */
+/* Shares Workbench's pane grid (.canvas-mode-pane-grid) so lanes wrap onto new
+   rows instead of squeezing into a horizontal scroller. Lanes are denser than
+   canvas panes, so the track floor is smaller. */
+.crew-columns-wrap {
+  flex: 1 1 0;
+  min-width: 0;
   min-height: 0;
   display: flex;
-  overflow-x: auto;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.crew-pane-grid {
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+  grid-auto-rows: minmax(min(520px, 100%), 1fr);
+}
+
+/* One lane expanded to the whole surface. A single track that exactly fills the
+   grid — no min track floor, so the pane can never overflow into a scroll. */
+.crew-pane-grid.is-maximized {
+  grid-template-columns: minmax(0, 1fr);
+  grid-auto-rows: minmax(0, 1fr);
+  overflow: hidden;
+}
+/* The entry stagger is for a row of lanes appearing together; expanding one
+   lane should read as an instant swap, not a fade-in. */
+.crew-pane-grid.is-maximized .lane-col {
+  opacity: 1;
+  transform: none;
+  animation: none;
+}
+
+/* Broadcast distribution: lane composers are gone, so one centered composer
+   under the grid fans the same prompt out to every run-enabled lane. */
+.crew-broadcast-foot {
+  flex-shrink: 0;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--background);
+}
+
+.crew-broadcast-center {
+  width: 100%;
+  max-width: 860px;
+  margin: 0 auto;
+}
+
+.crew-broadcast-center .lane-composer {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px 6px;
 }
 
 /* ============================================================
@@ -475,18 +524,12 @@
 }
 
 /* ============================================================
-   lane column (isolated mode) — one agent, its own worktree,
-   thread and composer. Cards entry-stagger via --lane-i.
+   lane pane (isolated mode) — one agent, its own worktree,
+   thread and composer. The card shell (border, radius, bar) comes
+   from .canvas-mode-pane; this only adds the lane-specific entry
+   stagger via --lane-i and the muted treatment.
    ============================================================ */
 .lane-col {
-  /* Equal-width columns that fill the surface; min-width drives the horizontal
-     scroll only once there are too many lanes to fit (no empty gap with 2–3). */
-  flex: 1 1 0;
-  min-width: 340px;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  border-right: 1px solid var(--border);
   background: var(--background);
   opacity: 0;
   transform: translateY(6px);
@@ -494,14 +537,25 @@
   animation-delay: calc(var(--lane-i, 0) * 60ms);
 }
 
-.lane-col:last-child { border-right: 0; }
-
 .lane-col.is-muted { opacity: 0.62; }
-.lane-col.is-muted .lane-head { background: repeating-linear-gradient(
+.lane-col.is-muted .lane-head,
+.lane-col.is-muted .canvas-mode-pane-bar { background: repeating-linear-gradient(
   135deg, transparent 0, transparent 6px, color-mix(in srgb, var(--crs-accent-bright) 4%, transparent) 6px, color-mix(in srgb, var(--crs-accent-bright) 4%, transparent) 7px), var(--crs-header); }
 
 @keyframes lane-enter {
   to { opacity: 1; transform: none; }
+}
+
+/* The lane's title strip is the canvas pane bar, re-skinned to the crew header
+   register so it reads continuous with the control row beneath it. */
+.lane-col > .canvas-mode-pane-bar {
+  height: 34px;
+  padding: 0 8px 0 10px;
+  background: var(--crs-header);
+}
+.lane-col > .canvas-mode-pane-bar .canvas-mode-pane-title {
+  gap: 7px;
+  font-family: var(--font-family-sans);
 }
 
 /* ---------- lane header ---------- */
@@ -827,6 +881,27 @@
   padding: 10px 11px;
 }
 
+/* Jump-to-latest — only shown once the operator has scrolled up, which is also
+   when the thread stops auto-following the stream. Sticky so it rides the
+   bottom of the lane thread; the negative margin keeps it off the last row. */
+.lane-scroll-bottom {
+  position: sticky;
+  bottom: 4px;
+  margin-left: auto;
+  margin-top: -32px;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  z-index: 2;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--card);
+  color: var(--crs-accent-fg);
+  cursor: pointer;
+}
+.lane-scroll-bottom:hover { border-color: var(--crs-accent); background: var(--crs-accent-soft); }
+
 /* empty / unavailable placeholder — used in lanes and timeline */
 .lane-empty {
   flex: 1;
@@ -843,6 +918,30 @@
 }
 
 /* ---------- lane composer ---------- */
+/* Composer dock — pins the activity/permission card directly above the lane
+   composer instead of letting it scroll away inside the thread. Mirrors the
+   solo chat `.composer-dock`. */
+.lane-composer-dock {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--crs-header);
+  border-top: 1px solid var(--border);
+}
+
+/* The solo shell is centered at 55% of a full-width chat column; a lane pane is
+   far narrower, so the card takes the whole width with the composer's padding. */
+.lane-activity-shell {
+  width: 100%;
+  margin: 0;
+  padding: 8px 10px 0;
+}
+
+/* The dock owns the top hairline so the card and composer read as one unit. */
+.lane-composer-dock > .lane-composer {
+  border-top: 0;
+}
+
 .lane-composer {
   display: flex;
   align-items: flex-end;
@@ -1246,7 +1345,8 @@ body.light .lane-composer {
   background: var(--crs-header);
 }
 
-body.light .lane-col.is-muted .lane-head {
+body.light .lane-col.is-muted .lane-head,
+body.light .lane-col.is-muted .canvas-mode-pane-bar {
   background:
     repeating-linear-gradient(
       135deg,

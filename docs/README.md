@@ -19,7 +19,7 @@ internal references).
 
 | Doc | What it covers |
 | --- | --- |
-| [using-crews.md](./using-crews.md) | Crews: running multiple agents in parallel with lanes, modes, and a supervisor |
+| [using-crews.md](./using-crews.md) | Crews: parallel lanes, supervisors, and the select → verify → reconcile → apply Merge lanes workflow |
 | [reasoning-effort.md](./reasoning-effort.md) | Provider-native reasoning effort levels in the composer and crew lanes |
 | [realtime-voice.md](./realtime-voice.md) | Voice orb providers, coding-agent routing, natural spoken replies, credentials, and local roadmap |
 | [prompt-skill-studio.md](./prompt-skill-studio.md) | Prompt Builder Studio and local `.crewcode` prompt/skill folders _(needs a user-guide rewrite — currently changelog-style)_ |

@@ -135,8 +135,9 @@
   color: #f0b6b6;
 }
 .crew-integration-error > svg { flex-shrink: 0; margin-top: 1px; }
-.crew-integration-error > div { display: flex; flex-direction: column; gap: 2px; }
+.crew-integration-error > div { display: flex; flex-direction: column; gap: 5px; }
 .crew-integration-error b { color: var(--foreground); }
+.crew-integration-error .crew-git-mini { align-self: flex-start; margin-top: 2px; }
 
 .crew-integration-evidence { display: flex; flex-direction: column; gap: 6px; }
 .crew-integration-section-title { color: var(--foreground); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; }
@@ -170,31 +171,65 @@
 
 .crew-integration-inputs { border-top: 1px solid var(--border); padding-top: 8px; }
 .crew-integration-base { margin-top: 7px; color: var(--crs-accent-fg); }
-.crew-integration-owner { display: flex; flex-direction: column; gap: 2px; margin-top: 7px; padding-left: 8px; border-left: 1px solid var(--border); }
+.crew-integration-owner { display: flex; flex-direction: column; gap: 4px; margin-top: 7px; padding-left: 8px; border-left: 1px solid var(--border); }
 .crew-integration-owner b { color: var(--foreground); }
-.crew-integration-owner span { font-size: 9px; }
+.crew-integration-owner > span { font-size: 9px; }
+.crew-integration-worktree { color: var(--muted-foreground); overflow-wrap: anywhere; }
+.crew-integration-file-pills { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 2px; }
+.crew-integration-file-pill {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: 100%;
+  padding: 3px 7px;
+  border: 1px solid color-mix(in srgb, var(--crs-accent-bright) 32%, var(--border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--crs-accent) 13%, transparent);
+  color: var(--foreground);
+  font-size: 9px;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.035);
+}
+.crew-integration-file-pill::before {
+  content: '';
+  width: 4px;
+  height: 4px;
+  margin-right: 5px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--crs-accent-bright);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--crs-accent) 28%, transparent);
+}
+.crew-integration-file-pill.is-empty { color: var(--muted-foreground); border-style: dashed; background: transparent; }
+.crew-integration-file-pill.is-empty::before { background: var(--muted-foreground); box-shadow: none; }
 .crew-integration-next { display: flex; flex-direction: column; gap: 2px; padding: 7px 8px; border-radius: 4px; background: rgba(255, 255, 255, 0.035); }
 .crew-integration-next b { color: var(--foreground); }
 .crew-integration-actions { display: flex; gap: 6px; align-items: stretch; }
 .crew-integration-actions > button { flex: 1; min-width: 0; white-space: normal; }
-
-/* ---------- behavioral review gate ---------- */
-.crew-git-risk-gate {
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  padding: 9px 12px;
-  border-bottom: 1px solid rgba(224, 178, 110, 0.3);
-  background: rgba(150, 120, 40, 0.1);
+.crew-integration-selection-stale {
+  padding: 6px 8px;
+  border: 1px solid rgba(185, 145, 55, 0.35);
+  border-radius: 4px;
+  background: rgba(185, 145, 55, 0.08);
   color: #e8d199;
   font-size: 10.5px;
 }
-.crew-git-risk-gate > div { display: flex; align-items: center; gap: 6px; }
-.crew-git-risk-gate label { display: flex; align-items: center; gap: 7px; color: var(--foreground); }
-.crew-git-risk-gate input { accent-color: var(--crs-accent-bright); }
+
+/* The behavioral review gate now lives in the shared CrewCollisionReview
+   component — see styles/crew-collision-review.css. */
 
 /* ---------- lane list ---------- */
 .crew-git-lanes { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 8px; }
+.crew-git-selection-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 2px 0;
+  color: var(--foreground);
+  font-size: 10.5px;
+}
+.crew-git-selection-tools > span { flex: 1; opacity: 0.7; }
 .crew-git-lane {
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -205,6 +240,9 @@
   background: rgba(255, 255, 255, 0.012);
 }
 .crew-git-lane-head { display: flex; align-items: baseline; gap: 8px; }
+.crew-git-lane-select { display: inline-flex; align-items: center; gap: 7px; min-width: 0; cursor: pointer; }
+.crew-git-lane-select input { margin: 0; accent-color: var(--crs-accent-bright); }
+.crew-git-lane-select:has(input:disabled) { cursor: default; opacity: 0.55; }
 .crew-git-lane-agent { font-size: 12px; font-weight: 600; }
 .crew-git-lane-role { font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em; opacity: 0.55; }
 .crew-git-lane-branch { font-size: 11px; color: var(--crs-accent-fg); opacity: 0.85; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

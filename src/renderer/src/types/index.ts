@@ -35,6 +35,9 @@ export interface CrewIntegrationRecord {
   lanes: CrewIntegrationLane[]
   retentionRef: string
   integrationHead?: string
+  conflictLaneId?: string
+  conflictBranch?: string
+  conflicts?: string[]
   phase: 'preflight' | 'combining' | 'checking' | 'ready' | 'applying' | 'complete'
   status: 'running' | 'passed' | 'failed' | 'conflict' | 'interrupted' | 'applied' | 'stale'
   checks: CrewIntegrationCheck[]

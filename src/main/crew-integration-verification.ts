@@ -78,11 +78,9 @@ export async function verifyCrewIntegration(
 ): Promise<CrewIntegrationResult> {
   if (!request.lanes.length) return { ok: false, status: 'error', error: 'no lane commits to verify' }
 
-  const dirty = await run(request.repoPath, ['status', '--porcelain'])
-  if (dirty.code !== 0) return { ok: false, status: 'error', error: dirty.stderr.trim() || 'could not read base status' }
-  const dirtyFiles = paths(dirty.stdout).map(line => line.slice(3).trim()).filter(file => file && file !== '.worktrees/' && !file.startsWith('.worktrees/'))
-  if (dirtyFiles.length) return { ok: false, status: 'dirty', files: dirtyFiles, error: 'base checkout must be clean before integration verification' }
-
+  // Verification only reads the committed base SHA and builds in a disposable
+  // worktree. Uncommitted files in the user's checkout cannot affect that tree,
+  // so they must not prevent producing verification evidence.
   const checkedOut = await run(request.repoPath, ['symbolic-ref', '--short', 'HEAD'])
   if (checkedOut.code !== 0 || checkedOut.stdout.trim() !== request.baseBranch) {
     return { ok: false, status: 'stale', error: `base checkout must have ${request.baseBranch} checked out` }
@@ -115,10 +113,12 @@ export async function verifyCrewIntegration(
       ])
       if (merge.code !== 0) {
         const conflicted = await run(request.integrationCwd, ['diff', '--name-only', '--diff-filter=U'])
+        const conflicts = paths(conflicted.stdout)
+        const details = [merge.stdout.trim(), merge.stderr.trim()].filter(Boolean).join('\n')
         return {
           ok: false, status: 'conflict', laneId: lane.laneId, branch: lane.branch,
-          conflicts: paths(conflicted.stdout),
-          error: merge.stderr.trim() || `integration conflict while combining ${lane.branch}`,
+          conflicts,
+          error: `Could not combine ${lane.branch}${conflicts.length ? `; conflicted files: ${conflicts.join(', ')}` : ''}.${details ? `\n${details}` : ''}`,
         }
       }
     }
@@ -164,12 +164,7 @@ export async function verifyCrewIntegration(
 export async function applyCrewIntegration(
   request: Pick<CrewIntegrationRequest, 'repoPath' | 'baseBranch' | 'baseHead' | 'lanes' | 'retentionRef'> & { integrationHead: string },
   run: IntegrationGitRunner,
-): Promise<{ ok: true } | { ok: false; status: 'dirty' | 'stale' | 'error'; error: string }> {
-  const dirty = await run(request.repoPath, ['status', '--porcelain'])
-  if (dirty.code !== 0) return { ok: false, status: 'error', error: dirty.stderr.trim() || 'could not read base status' }
-  const dirtyFiles = paths(dirty.stdout).map(line => line.slice(3).trim()).filter(file => file && file !== '.worktrees/' && !file.startsWith('.worktrees/'))
-  if (dirtyFiles.length) return { ok: false, status: 'dirty', error: 'base checkout changed after verification' }
-
+): Promise<{ ok: true; warning?: string } | { ok: false; status: 'stale' | 'error'; error: string }> {
   const checkedOut = await run(request.repoPath, ['symbolic-ref', '--short', 'HEAD'])
   if (checkedOut.code !== 0 || checkedOut.stdout.trim() !== request.baseBranch) return { ok: false, status: 'stale', error: `base checkout no longer has ${request.baseBranch} checked out` }
   const base = await run(request.repoPath, ['rev-parse', request.baseBranch])
@@ -182,8 +177,45 @@ export async function applyCrewIntegration(
   if (retained.code !== 0 || retained.stdout.trim() !== request.integrationHead) {
     return { ok: false, status: 'stale', error: 'the checked integration commit is no longer available' }
   }
+
+  const status = await run(request.repoPath, ['status', '--porcelain'])
+  if (status.code !== 0) return { ok: false, status: 'error', error: status.stderr.trim() || 'could not read base status' }
+  const dirtyFiles = paths(status.stdout)
+    .map(line => line.slice(3).trim())
+    .filter(file => file && file !== '.worktrees/' && !file.startsWith('.worktrees/'))
+  let stashHead = ''
+  if (dirtyFiles.length) {
+    const stash = await run(request.repoPath, ['stash', 'push', '--include-untracked', '--message', `CrewCode integration ${request.integrationHead.slice(0, 10)}`])
+    if (stash.code !== 0) return { ok: false, status: 'error', error: stash.stderr.trim() || 'could not temporarily preserve base checkout changes' }
+    const saved = await run(request.repoPath, ['rev-parse', 'refs/stash'])
+    if (saved.code !== 0 || !saved.stdout.trim()) return { ok: false, status: 'error', error: 'could not identify the temporary recovery stash' }
+    stashHead = saved.stdout.trim()
+  }
+
+  const restore = async (): Promise<string | null> => {
+    if (!stashHead) return null
+    // `stash pop` requires a reflog selector rather than a raw stash commit.
+    // Confirm the top entry is still ours before touching it, so concurrent user
+    // activity cannot cause CrewCode to restore or drop the wrong stash.
+    const current = await run(request.repoPath, ['rev-parse', 'refs/stash'])
+    if (current.code !== 0 || current.stdout.trim() !== stashHead) {
+      return `recovery stash ${stashHead} is no longer the top stash entry; it was left untouched`
+    }
+    const pop = await run(request.repoPath, ['stash', 'pop', '--index', 'stash@{0}'])
+    return pop.code === 0 ? null : (pop.stderr.trim() || pop.stdout.trim() || `restore the retained stash ${stashHead}`)
+  }
+
   const merge = await run(request.repoPath, ['merge', '--ff-only', request.integrationHead])
-  if (merge.code !== 0) return { ok: false, status: 'error', error: merge.stderr.trim() || 'could not apply checked integration' }
+  if (merge.code !== 0) {
+    const restoreError = await restore()
+    return {
+      ok: false, status: 'error',
+      error: `${merge.stderr.trim() || 'could not apply checked integration'}${restoreError ? `; base changes remain recoverable in stash ${stashHead}: ${restoreError}` : ''}`,
+    }
+  }
   await run(request.repoPath, ['update-ref', '-d', request.retentionRef])
-  return { ok: true }
+  const restoreError = await restore()
+  return restoreError
+    ? { ok: true, warning: `Integration was applied, but base changes could not be restored cleanly. Resolve the checkout conflicts; recovery stash ${stashHead} was retained. ${restoreError}` }
+    : { ok: true }
 }

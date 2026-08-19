@@ -66,6 +66,7 @@ describe('crew-session — isolated mode (multiple workspaces)', () => {
     // Each lane gets its own branch namespaced under crew/<tag>/...
     expect(s.lanes[0].branch).toMatch(/^crew\/.+\/pi-1$/)
     expect(s.lanes[1].branch).toMatch(/^crew\/.+\/codex-2$/)
+    expect(s.lanes[0].branch).toContain(s.id.replace(/^crew-/, ''))
     expect(s.lanes[0].branch).not.toBe(s.lanes[1].branch)
     // No directory or worktree exists yet — provisioning fills these in.
     expect(s.lanes.every(l => l.path === '' && l.worktreeId === null)).toBe(true)

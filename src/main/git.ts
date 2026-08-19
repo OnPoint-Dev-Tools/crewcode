@@ -631,6 +631,9 @@ export function registerGitIpc(): void {
         phase: result.ok ? 'ready' : (mergeJournal().latest(input.sessionId)?.phase ?? 'preflight'),
         status, checks, updatedAt: finished, finishedAt: finished,
         integrationHead: result.ok ? result.integrationHead : undefined,
+        conflictLaneId: !result.ok && result.status === 'conflict' ? result.laneId : undefined,
+        conflictBranch: !result.ok && result.status === 'conflict' ? result.branch : undefined,
+        conflicts: !result.ok && result.status === 'conflict' ? result.conflicts : undefined,
         error: result.ok ? undefined : result.error,
       })
       return { ...result, record: updated }
@@ -654,7 +657,7 @@ export function registerGitIpc(): void {
     }, integrationGitRunner)
     const finished = Date.now()
     const updated = mergeJournal().patch(record.id, result.ok
-      ? { status: 'applied', phase: 'complete', updatedAt: finished, finishedAt: finished, error: undefined }
+      ? { status: 'applied', phase: 'complete', updatedAt: finished, finishedAt: finished, error: result.warning }
       : { status: result.status === 'stale' ? 'stale' : 'failed', updatedAt: finished, finishedAt: finished, error: result.error })
     return result.ok ? { ok: true, record: updated } : { error: result.error, record: updated }
   })

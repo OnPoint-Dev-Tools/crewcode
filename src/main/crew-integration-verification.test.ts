@@ -79,6 +79,59 @@ describe('crew combined integration verification', () => {
     expect(existsSync(integrationPath)).toBe(false)
   })
 
+  it('reports the lane and conflicted files instead of only Git rerere noise', async () => {
+    const f = fixture()
+    write(f.repo, 'migration.sql', 'CREATE TABLE users (account_id INTEGER);\n')
+    git(f.repo, 'add', '.')
+    git(f.repo, 'commit', '-m', 'base changes migration differently')
+    const movedBase = git(f.repo, 'rev-parse', 'HEAD')
+    const integrationPath = join(f.repo, '.crew-integration')
+
+    const result = await verifyCrewIntegration({
+      repoPath: f.repo, integrationPath, integrationCwd: integrationPath,
+      baseBranch: 'main', baseHead: movedBase,
+      lanes: [
+        { laneId: 'migration', label: 'Migration', branch: 'lane/migration', head: f.migrationHead, worktreePath: '/migration', files: ['migration.sql'] },
+      ],
+      retentionRef: 'refs/crewcode/integration/conflict-test',
+    }, runner, async cwd => suggestedCrewChecks(cwd), runCheck)
+
+    expect(result.status).toBe('conflict')
+    if (result.status !== 'conflict') return
+    expect(result.conflicts).toEqual(['migration.sql'])
+    expect(result.error).toContain('Could not combine lane/migration')
+    expect(result.error).toContain('conflicted files: migration.sql')
+  })
+
+  it('verifies with a dirty base and preserves base changes while applying in the background', async () => {
+    const f = fixture()
+    const integrationPath = join(f.repo, '.crew-integration')
+    const request = {
+      repoPath: f.repo, integrationPath, integrationCwd: integrationPath,
+      baseBranch: 'main', baseHead: f.baseHead,
+      lanes: [
+        { laneId: 'migration', label: 'Migration', branch: 'lane/migration', head: f.migrationHead, worktreePath: '/migration', files: ['migration.sql'] },
+      ],
+      retentionRef: 'refs/crewcode/integration/dirty-test',
+    }
+
+    write(f.repo, 'model.ts', 'export const primaryKey = "local-draft"\n')
+    git(f.repo, 'add', 'model.ts')
+    write(f.repo, 'local-notes.txt', 'untracked notes\n')
+
+    const verified = await verifyCrewIntegration(request, runner, async cwd => suggestedCrewChecks(cwd), runCheck)
+    expect(verified.ok).toBe(true)
+    if (!verified.ok) return
+
+    const applied = await applyCrewIntegration({ ...request, integrationHead: verified.integrationHead }, runner)
+    expect(applied).toEqual({ ok: true })
+    expect(git(f.repo, 'rev-parse', 'main')).toBe(verified.integrationHead)
+    expect(readFileSync(join(f.repo, 'model.ts'), 'utf8')).toContain('local-draft')
+    expect(readFileSync(join(f.repo, 'local-notes.txt'), 'utf8')).toContain('untracked notes')
+    expect(git(f.repo, 'diff', '--cached', '--name-only')).toBe('model.ts')
+    expect(git(f.repo, 'status', '--short')).toContain('?? local-notes.txt')
+  })
+
   it('retains the exact passing candidate and applies it only when inputs remain unchanged', async () => {
     const f = fixture()
     // Make the API lane compatible with the migration lane.

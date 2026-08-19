@@ -25,9 +25,9 @@ const PHASE_LABELS: Record<CrewIntegrationRecord['phase'], string> = {
 export function presentCrewIntegration(record: CrewIntegrationRecord | null): IntegrationPresentation {
   if (!record) return {
     tone: 'idle', badge: 'Not verified', heading: 'Combined verification',
-    summary: 'No combined candidate has been checked yet. Your base branch has not been changed.',
-    nextStep: 'Verify all committed lane changes together before applying anything to the base branch.',
-    verifyLabel: 'Verify combined lanes',
+    summary: 'No selected candidate has been checked yet. Your base branch has not been changed.',
+    nextStep: 'Select one or more committed lanes, then verify them together before applying anything to the base branch.',
+    verifyLabel: 'Verify selected lanes',
   }
 
   switch (record.status) {
@@ -36,7 +36,7 @@ export function presentCrewIntegration(record: CrewIntegrationRecord | null): In
         tone: 'running', badge: 'In progress', heading: 'Verifying combined candidate',
         summary: 'CrewCode is building and checking a disposable combined worktree. The base branch is unchanged.',
         progress: PHASE_LABELS[record.phase], nextStep: 'Wait for combination and project checks to finish.',
-        verifyLabel: 'Verifying combined lanes…',
+        verifyLabel: 'Verifying selected lanes…',
       }
     case 'passed':
       return {
@@ -47,9 +47,14 @@ export function presentCrewIntegration(record: CrewIntegrationRecord | null): In
       }
     case 'applied':
       return {
-        tone: 'applied', badge: 'Applied', heading: 'Verified integration applied',
-        summary: 'The exact combined commit that passed verification was applied to the base branch.',
-        progress: PHASE_LABELS[record.phase], nextStep: 'No merge action is required.',
+        tone: record.error ? 'attention' : 'applied',
+        badge: record.error ? 'Applied · restore needs attention' : 'Applied',
+        heading: 'Verified integration applied',
+        summary: record.error
+          ? 'The verified commit was applied, but CrewCode could not restore the preserved base changes cleanly. The recovery stash was retained.'
+          : 'The exact combined commit that passed verification was applied to the base branch.',
+        progress: PHASE_LABELS[record.phase],
+        nextStep: record.error ? 'Resolve the reported checkout conflicts; do not reapply the integration.' : 'No merge action is required.',
         verifyLabel: 'Verify current lanes',
       }
     case 'failed':
@@ -58,7 +63,7 @@ export function presentCrewIntegration(record: CrewIntegrationRecord | null): In
         summary: 'CrewCode completed the safety check and rejected these lane commits because a project check or preflight requirement failed. Nothing was applied to the base branch.',
         progress: `Stopped at: ${PHASE_LABELS[record.phase]}`,
         nextStep: 'Inspect the failure below, fix and commit the affected lane, refresh, then verify again.',
-        verifyLabel: 'Verify combined lanes again',
+        verifyLabel: 'Verify selected lanes again',
       }
     case 'conflict':
       return {
@@ -66,7 +71,7 @@ export function presentCrewIntegration(record: CrewIntegrationRecord | null): In
         summary: 'The disposable integration worktree hit a Git conflict. Nothing was applied to the base branch.',
         progress: `Stopped at: ${PHASE_LABELS[record.phase]}`,
         nextStep: 'Resolve the conflicting intent in a lane, commit it, refresh, then verify again.',
-        verifyLabel: 'Verify combined lanes again',
+        verifyLabel: 'Verify selected lanes again',
       }
     case 'stale':
       return {

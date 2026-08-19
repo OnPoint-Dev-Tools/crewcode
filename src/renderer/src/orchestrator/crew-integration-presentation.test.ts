@@ -11,6 +11,12 @@ function record(status: CrewIntegrationRecord['status'], phase: CrewIntegrationR
 }
 
 describe('presentCrewIntegration', () => {
+  it('prompts the operator to verify the selected lane subset', () => {
+    const view = presentCrewIntegration(null)
+    expect(view.verifyLabel).toBe('Verify selected lanes')
+    expect(view.nextStep).toContain('Select one or more')
+  })
+
   it('explains that a failed candidate means the safety gate worked and base was untouched', () => {
     const view = presentCrewIntegration(record('failed', 'checking'))
     expect(view.badge).toBe('Candidate rejected')
@@ -23,6 +29,15 @@ describe('presentCrewIntegration', () => {
     const view = presentCrewIntegration(record('passed', 'ready'))
     expect(view.badge).toBe('Ready to apply')
     expect(view.heading).toBe('Combined candidate verified')
+  })
+
+  it('surfaces a base-change restoration warning after the integration was applied', () => {
+    const applied = record('applied', 'complete')
+    applied.error = 'recovery stash abc was retained'
+    const view = presentCrewIntegration(applied)
+    expect(view.badge).toContain('restore needs attention')
+    expect(view.summary).toContain('recovery stash was retained')
+    expect(view.nextStep).toContain('do not reapply')
   })
 
   it('does not imply an interrupted operation survived restart', () => {

@@ -208,7 +208,10 @@ function newId(prefix: string): string {
 /** Branch a lane works on — shared lanes reuse baseBranch; isolated lanes fork. */
 function deriveLaneBranch(session: CrewSession, agentId: string, index: number): string {
   if (session.mode === 'shared') return session.baseBranch
-  const tag = session.id.split('-').pop() ?? 'crew'
+  // Keep the full timestamp+sequence portion. Using only the final sequence
+  // reused names such as crew/4/... after restart and silently reopened an old
+  // branch forked from a different base commit.
+  const tag = session.id.replace(/^crew-/, '').replace(/[^a-zA-Z0-9._-]/g, '-') || 'crew'
   return `crew/${tag}/${agentId}-${index + 1}`
 }
 

@@ -19,7 +19,9 @@ export type WorktreeOpResult = { ok: true; path: string } | { error: string }
  *   - `worktree add <target> -b <branch> [startPoint]` forks the branch; crew
  *     sessions pass their base branch as `startPoint` so every isolated lane
  *     forks from the same base rather than from whatever HEAD happens to be.
- *   - Exit 128 means the branch already exists → re-add without `-b`.
+ *   - A Crew/delegated create with `startPoint` must create a fresh branch;
+ *     an existing name is rejected rather than silently reopening stale work.
+ *     Generic worktree creation without a start point may reopen a branch.
  *   - Exclude `.worktrees/` through Git's private info/exclude file so creating
  *     a lane never dirties the user's project checkout.
  */
@@ -48,10 +50,12 @@ export function addWorktree(
   if (startPoint) addArgs.push(startPoint)
   let result = spawnSync('git', addArgs, { cwd, encoding: 'utf8' })
 
-  // Branch already exists — re-add without -b to check it out instead. Match on
-  // the message, not a fixed exit code: git reports this as 128 on some versions
-  // and 255 on others, so keying off the status alone silently skips the retry.
+  // Match the message, not a fixed exit code: Git reports name collisions as
+  // 128 on some versions and 255 on others.
   if (result.status !== 0 && /branch named .* already exists|already exists/i.test(result.stderr ?? '')) {
+    if (startPoint) {
+      return { error: `lane branch ${branch} already exists; use a new crew session name instead of reopening work from another base` }
+    }
     result = spawnSync('git', ['worktree', 'add', resolvedTarget, branch], { cwd, encoding: 'utf8' })
   }
 

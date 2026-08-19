@@ -267,7 +267,7 @@ export function useCrewOrchestration(opts: UseCrewOrchestrationOpts) {
     return () => clearInterval(interval)
   }, [crewSession, activeTabId, crew])
 
-  const sendToLanes = useCallback(async (tasks: Array<{ laneId: string; text: string }>): Promise<Array<{ laneId: string; started: boolean }>> => {
+  const sendToLanes = useCallback(async (tasks: Array<{ laneId: string; text: string; resumePaused?: boolean }>): Promise<Array<{ laneId: string; started: boolean }>> => {
     if (!activeWs || !crewSession) return tasks.map(task => ({ laneId: task.laneId, started: false }))
     const time = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
     const primeText = (lane: CrewAgentLane, runtimeId: string, body: string): string => {
@@ -282,10 +282,11 @@ export function useCrewOrchestration(opts: UseCrewOrchestrationOpts) {
       if (!lane || !lane.tabId) return { ...task, started: false, error: 'lane is not ready' }
       const tabId = lane.tabId
 
-      if (lane.muted) {
+      if (lane.muted && !task.resumePaused) {
         setMessagesForTab(tabId, m => [...m, { kind: 'system', time, tone: 'info', text: `${lane.agentId} is paused — resume the lane before sending.` }])
         return { ...task, lane, tabId, started: false }
       }
+      if (lane.muted && task.resumePaused) crew.toggleLaneMute(activeTabId, lane.laneId)
 
       // Persist the exact assignment beside this worktree before starting a
       // runtime. If the provider is unavailable or CrewCode stops, the operator
@@ -300,8 +301,16 @@ export function useCrewOrchestration(opts: UseCrewOrchestrationOpts) {
       }
 
       if (agent.transport === 'bridge') {
+        // Lanes are workers: they execute, so they run in Build mode like a solo
+        // Build-mode chat. Passing the mode explicitly (rather than leaving it
+        // undefined) is what makes TurnPermissionGrantStore issue the
+        // "allow all (this turn ONLY)" affordance on lane permission cards —
+        // eligibility requires mode==='build' and a non-read-only tool policy.
+        // Bridge behavior is unchanged: every provider already treats an absent
+        // mode exactly like 'build'.
         const r = await bridges.ensureBridge(
           tabId, agent.id, agent.id as AgentProviderId, lane.path, lane.model || undefined, lane.effort ?? effort,
+          'build',
         )
         if ('error' in r) {
           setMessagesForTab(tabId, m => [...m, { kind: 'system', time, tone: 'error', text: r.error }])
@@ -330,7 +339,9 @@ export function useCrewOrchestration(opts: UseCrewOrchestrationOpts) {
             const replacement = await bridges.ensureBridge(
               item.tabId!, item.lane!.agentId, item.lane!.agentId as AgentProviderId,
               item.lane!.path, item.lane!.model || undefined, item.lane!.effort ?? effort,
-              undefined, undefined, true,
+              // Keep the respawned bridge on the same Build mode as the original
+              // so a self-healed lane keeps its turn-scoped approval affordance.
+              'build', undefined, true,
             )
             if ('error' in replacement) return replacement
             crew.bindLane(activeTabId, item.lane!.laneId, {
@@ -354,8 +365,8 @@ export function useCrewOrchestration(opts: UseCrewOrchestrationOpts) {
   }, [activeWs, activeTabId, crewSession, agents, bridges, crew, pty, effort, setMessagesForTab])
 
   // Returns true once a live runtime has been started and its prompt submitted.
-  const sendToLane = useCallback(async (laneId: string, text: string): Promise<boolean> => {
-    const [result] = await sendToLanes([{ laneId, text }])
+  const sendToLane = useCallback(async (laneId: string, text: string, resumePaused = false): Promise<boolean> => {
+    const [result] = await sendToLanes([{ laneId, text, resumePaused }])
     return result?.started === true
   }, [sendToLanes])
 

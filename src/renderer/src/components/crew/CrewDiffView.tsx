@@ -6,6 +6,7 @@ import { PROVIDER_IMAGES, providerImageClass } from '../composer/provider-meta'
 import type { AgentInfo, GitStatusFile } from '../../types'
 import type { CrewSession, CrewAgentLane } from '../../orchestrator/crew-session'
 import { analyzeCrewCollisions } from '../../orchestrator/crew-collision-analysis'
+import { CrewCollisionReview } from './CrewCollisionReview'
 import { crewReviewFingerprint } from '../../orchestrator/crew-review-fingerprint'
 
 interface CrewDiffViewProps {
@@ -154,21 +155,15 @@ export function CrewDiffView({ open, session, agents, onClose }: CrewDiffViewPro
           </div>
         </header>
 
-        <section className={`crew-collision-review ${collisions.length ? 'has-risks' : ''}`}>
-          <div className="crew-collision-review-head">
-            <Icon name={collisions.length ? 'alert' : 'check'} size={13} />
-            <strong>{collisions.length ? `${collisions.length} cross-lane review signal${collisions.length === 1 ? '' : 's'}` : 'no heuristic collisions found'}</strong>
-            <span>Git can merge cleanly and still break behavior.</span>
-          </div>
-          {collisions.map((finding, index) => (
-            <div className="crew-collision-finding" key={`${finding.kind}-${finding.laneIds.join('-')}-${index}`}>
-              <span className={`crew-collision-severity is-${finding.severity}`}>{finding.kind === 'file-overlap' ? 'overlap' : 'contract risk'}</span>
-              <span><b>{finding.laneLabels.join(' ↔ ')}</b> — {finding.reason}</span>
-              <span className="mono">{finding.files.join(', ')}</span>
-            </div>
-          ))}
-          <div className="crew-collision-evidence">Verification checks: <b>none recorded here</b>. Run the repository's typecheck/tests against the combined result before accepting it.</div>
-        </section>
+        <div className="crew-diff-collision-slot">
+          <CrewCollisionReview
+            findings={collisions}
+            note="Git can merge cleanly and still break behavior."
+            footer="No verification checks are recorded here. Run the repository's typecheck/tests against the combined result before accepting it."
+            emptyTitle="No heuristic collisions found"
+            emptyNote="These heuristics are narrow — no finding is not a safety claim. Verify the combined result before accepting it."
+          />
+        </div>
 
         <div className="crew-diff-summary">
           {summary.map((s, i) => (

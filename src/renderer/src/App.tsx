@@ -3154,6 +3154,7 @@ export default function App() {
           agents={agents}
           onClose={() => crewCtl.setCrewGitTab(null)}
           onAskAgent={(text) => composerDraftActions().set(crewSession.hostTabId, text)}
+          onReconcileLane={(laneId, text) => crewCtl.sendToLane(laneId, text, true)}
           onWorktreesChanged={() => { if (activeWs) ws.refreshWorktrees(activeWs) }}
         />
       )}

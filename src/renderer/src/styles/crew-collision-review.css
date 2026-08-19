@@ -1,0 +1,222 @@
+/* ============================================================
+   CrewCode · Cross-lane Behavioral Review Gate
+   ------------------------------------------------------------
+   Shared by the crew merge sidebar and the Cross-lane Diff.
+   Same register as the rest of the crew chrome: hairline frame,
+   no gradients, no glass, mono reserved for file paths.
+
+   Severity is carried by a left rail + a badge rather than by
+   tinting whole blocks of body text — amber-on-amber prose was
+   the reason the old gate was hard to read.
+   ============================================================ */
+.crew-risk-gate {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 11px 13px;
+  border-bottom: 1px solid var(--border);
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 11.5px;
+
+  /* The gate is the scroller for its own findings. Both hosts clip their
+     overflow (`.crew-git-sidebar` and the diff overlay are `overflow: hidden`
+     flex columns), so without this an expanded "+N more" file list grows past
+     the viewport with nothing able to scroll to it. Keep this the ONLY scroll
+     container in the chain — a second one nested around it double-scrolls. */
+  max-height: min(340px, 45vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+
+  /* Local aliases so the gate is portable across the sidebar and the diff
+     overlay, neither of which defines the crew surface's semantic tokens. */
+  --crg-high:        var(--destructive, #dc2626);
+  --crg-high-soft:   color-mix(in srgb, var(--destructive, #dc2626) 12%, transparent);
+  --crg-high-border: color-mix(in srgb, var(--destructive, #dc2626) 38%, transparent);
+  --crg-med:         var(--warning, #fcd452);
+  --crg-med-soft:    color-mix(in srgb, var(--warning, #fcd452) 11%, transparent);
+  --crg-med-border:  color-mix(in srgb, var(--warning, #fcd452) 34%, transparent);
+}
+
+/* ---------- header ---------- */
+.crew-risk-gate-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+}
+
+.crew-risk-gate-icon {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--crg-med-border);
+  border-radius: var(--radius-sm, 4px);
+  background: var(--crg-med-soft);
+  color: var(--crg-med);
+}
+.crew-risk-gate.is-clear .crew-risk-gate-icon {
+  border-color: var(--border);
+  background: var(--crew-green-soft, transparent);
+  color: var(--crew-mint, var(--muted-foreground));
+}
+
+.crew-risk-gate-heading {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.crew-risk-gate-heading strong {
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+.crew-risk-gate-heading span {
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.crew-risk-tally {
+  flex-shrink: 0;
+  display: flex;
+  gap: 5px;
+}
+.crew-risk-count {
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill, 999px);
+  font-family: var(--font-family-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.crew-risk-count.is-high   { border-color: var(--crg-high-border); background: var(--crg-high-soft); color: var(--crg-high); }
+.crew-risk-count.is-medium { border-color: var(--crg-med-border);  background: var(--crg-med-soft);  color: var(--crg-med); }
+
+/* ---------- findings ---------- */
+.crew-risk-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.crew-risk-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 10px 9px 11px;
+  border: 1px solid var(--border);
+  /* The severity rail is the only place severity color touches a large area. */
+  border-left-width: 3px;
+  border-radius: var(--radius-sm, 4px);
+  background: color-mix(in srgb, var(--foreground) 3%, transparent);
+}
+.crew-risk-item.is-high   { border-left-color: var(--crg-high); }
+.crew-risk-item.is-medium { border-left-color: var(--crg-med); }
+
+.crew-risk-item-top {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.crew-risk-badge {
+  padding: 1px 6px;
+  border-radius: var(--radius-pill, 999px);
+  font-family: var(--font-family-mono);
+  font-size: 9px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+.crew-risk-badge.is-high   { background: var(--crg-high-soft); color: var(--crg-high); }
+.crew-risk-badge.is-medium { background: var(--crg-med-soft);  color: var(--crg-med); }
+
+.crew-risk-kind {
+  font-family: var(--font-family-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+}
+
+/* Lane pair as two discrete chips — a joined "a ↔ b" string read as one name. */
+.crew-risk-lanes {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.crew-risk-lane {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill, 999px);
+  background: var(--background);
+  font-size: 11px;
+  font-weight: 600;
+}
+.crew-risk-lane-link {
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
+.crew-risk-reason {
+  margin: 0;
+  color: var(--foreground);
+  font-size: 11.5px;
+  line-height: 1.5;
+}
+
+/* ---------- evidence ---------- */
+.crew-risk-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.crew-risk-file {
+  max-width: 100%;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 4px);
+  background: var(--background);
+  color: var(--muted-foreground);
+  font-size: 10px;
+  /* Truncate at the front so the filename — the part that identifies the
+     collision — stays visible on a deep path. */
+  direction: rtl;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.crew-risk-file-more {
+  padding: 2px 7px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm, 4px);
+  background: transparent;
+  color: var(--muted-foreground);
+  font-family: var(--font-family-mono);
+  font-size: 10px;
+  cursor: pointer;
+}
+.crew-risk-file-more:hover { color: var(--foreground); border-color: var(--muted-foreground); }
+
+/* ---------- footer ---------- */
+.crew-risk-gate-foot {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  color: var(--muted-foreground);
+  font-size: 10.5px;
+  line-height: 1.45;
+}
+.crew-risk-gate-foot > svg { flex-shrink: 0; margin-top: 2px; }

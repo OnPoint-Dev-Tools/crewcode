@@ -105,10 +105,61 @@ checkpoint; the operator or supervisor decides when to continue.
 
 After a stop, sending a message resumes orchestration cleanly.
 
+## Reviewing and merging isolated lanes
+
+Select **merge** in the crew header to open the **Merge lanes** sidebar. This
+sidebar moves committed lane work into the branch from which the crew was
+started (shown after the `→` in the header). It does not include uncommitted lane
+work; use the lane's **commit** action first when that warning appears.
+
+### Choose what to include
+
+- Every lane with committed changes is selected initially.
+- Clear a lane's checkbox to leave that branch out of this candidate.
+- Use **all** or **none** for quick selection.
+- **verify only this lane** selects that row alone and starts the same safe
+  verification used for multi-lane candidates.
+- The lane enabled/paused switch controls its agent runtime, not merge selection.
+
+Review **Cross-lane Diff** before merging when lanes edit related code. Candidate
+ownership records the exact base commit, lane branch and commit, worktree, and
+file paths used for the attempt. These are evidence for the candidate—not a list
+of uncommitted files.
+
+### Verify before applying
+
+Choose **Verify selected lanes**. CrewCode then:
+
+1. snapshots the current base commit and selected lane commits;
+2. creates a disposable detached worktree without changing the base checkout;
+3. combines the selected commits in displayed order; and
+4. runs discovered, allowlisted `typecheck` and `test` package scripts.
+
+A Git conflict or failed project check rejects only the disposable candidate;
+nothing is applied to the base branch. **Ready to apply** means the exact
+combined commit passed every discovered check. If no supported scripts exist,
+the sidebar explicitly says that only Git combination was verified.
+
+If combination conflicts, **ask lane agent to reconcile** resumes and starts the
+affected lane's configured agent in that lane worktree, then sends it a task to
+merge the current base into the lane, resolve the named files, run checks, and
+commit. After the agent finishes, select **refresh** and verify again.
+
+### Apply the verified commit
+
+Choose **Apply verified commit** only after reviewing the candidate evidence.
+CrewCode confirms that the base and lane commits still match verification, then
+fast-forwards the base to that exact checked commit. If the base checkout has
+staged, unstaged, or untracked work, CrewCode preserves it in a recovery stash,
+applies the integration, and restores the work with its staged state. A restore
+conflict is reported and its recovery stash is retained rather than discarded.
+
+Changing a selected lane, moving a lane branch, or moving the base commit makes
+old verification stale; refresh and verify the new candidate. Verification by
+itself never changes the base branch.
+
 ## Finishing up
 
-In isolated mode, review lane ownership and collision signals in Cross-lane
-Diff, then use the merge sidebar to verify all selected lane commits together
-before applying the exact checked integration. Archive the crew afterward;
-worktrees are torn down only after agents are released. In shared mode the work
-is already on your branch; review the diff and commit as usual.
+Archive the crew after its selected work has been applied. Worktrees are torn
+down only after agents are released. In shared mode there are no isolated lane
+branches to merge: review the shared branch diff and commit as usual.

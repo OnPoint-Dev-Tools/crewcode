@@ -86,9 +86,16 @@ describe('addWorktree — isolated lane provisioning', () => {
     }
   })
 
-  it('checks out an existing branch when -b would collide', () => {
+  it('rejects an existing branch for a start-point-based isolated lane', () => {
     git(repo, 'branch', 'existing')
     const r = addWorktree(repo, 'existing', { startPoint: 'main' })
+    expect(r).toEqual({ error: 'lane branch existing already exists; use a new crew session name instead of reopening work from another base' })
+    expect(existsSync(join(repo, '.worktrees', 'crewcode-wt-existing'))).toBe(false)
+  })
+
+  it('can still attach a generic worktree to an existing branch', () => {
+    git(repo, 'branch', 'existing')
+    const r = addWorktree(repo, 'existing')
     expect('ok' in r && r.ok).toBe(true)
     if ('ok' in r) expect(git(r.path, 'rev-parse', '--abbrev-ref', 'HEAD')).toBe('existing')
   })

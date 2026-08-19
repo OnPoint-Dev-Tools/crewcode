@@ -57,7 +57,7 @@ const TAB_ICONS: Record<TabKind, string> = {
 
 const PIN_ACCENT_IDS = TAB_COLOR_PALETTE.filter(entry => entry.id !== 'none')
 
-const NEW_TAB_ACTIONS: Array<{ kind: BuiltinTabKind; icon: string; label: string }> = [
+export const NEW_TAB_ACTIONS: Array<{ kind: BuiltinTabKind; icon: string; label: string }> = [
   { kind: 'chat', icon: 'threads', label: 'Chat' },
   { kind: 'terminal', icon: 'terminal', label: 'Terminal' },
   { kind: 'browser', icon: 'globe', label: 'Browser' },
@@ -65,6 +65,9 @@ const NEW_TAB_ACTIONS: Array<{ kind: BuiltinTabKind; icon: string; label: string
   { kind: 'code', icon: 'code', label: 'Code Editor' },
   { kind: 'writer', icon: 'edit', label: 'Writers workspace' },
   { kind: 'crew', icon: 'crew', label: 'CrewCode Workers' },
+  { kind: 'mission', icon: 'grid', label: 'Control Center' },
+  { kind: 'prompts', icon: 'inspection', label: 'Skills & Prompts Studio' },
+  { kind: 'git', icon: 'gitBranch', label: 'Git Workspace' },
 ]
 
 function fallbackPinColor(tabId: string): string {

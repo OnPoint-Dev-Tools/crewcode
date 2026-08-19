@@ -57,11 +57,16 @@
       the shared-mode timeline
       (`CrewTimeline`) renders one composer per worker so the user types each
       task manually; split timeline rounds show each lane's own prompt in that
-      lane card instead of one shared round prompt. Isolated mode already has
-      per-lane composers.
+      lane card instead of one shared round prompt. Isolated mode
+      (`CrewColumns`) keeps one composer inside each lane pane card.
     - `broadcast`: the same message fans out to every worker (`handleBroadcast`),
       and the supervisor is told it may use `"to":"all"`; the hard split gates
-      do not apply.
+      do not apply. Without a supervisor, BOTH modes collapse to a single
+      composer: shared mode uses the `crew-timeline-foot`, isolated mode drops
+      every per-lane composer and renders one centered `crew-broadcast-foot`
+      under the lane grid. Either one carries a `BroadcastTargetChip`, so the
+      next send can still be retargeted at one enabled lane without leaving
+      broadcast.
     - The toggle dispatches `set_distribution`, which — unlike `set_mode` — is
       legal at any lifecycle phase, so it can be flipped mid-run and takes effect
       on the next prompt.
@@ -88,6 +93,51 @@
     aborts every runtime, the supervisor composer stop button aborts only the
     supervisor loop, and lane composer stop buttons stop only that lane so the
     next prompt respawns it.
+
+  7d-i. Isolated lane layout — `CrewColumns` renders lanes into Workbench's
+
+    responsive pane grid (`.canvas-mode-pane-grid` from `styles.css`, with a
+    denser `.crew-pane-grid` track floor of 420px/520px in `crew-surface.css`)
+    instead of a horizontal scroller. Each `LaneColumn` is a
+    `.canvas-mode-pane` card whose title strip is a `.canvas-mode-pane-bar`
+    (provider logo, agent name, role pill, restart, status dot); the lane's
+    branch, model picker, run switch, effort, next action, and usage strip stay
+    in `.lane-head` directly beneath the bar. Lanes wrap onto new rows rather
+    than squeezing, and `--lane-i` still drives the entry stagger.
+
+  7d-iii. Lane reading affordances — a lane thread follows the newest output
+
+    while its worker streams via `useStickToBottom` (`hooks/useStickToBottom.ts`,
+    72px threshold, scroll applied in the next animation frame so a streaming
+    turn never forces a synchronous reflow of the surface). Following is
+    suspended the moment the operator scrolls up and re-armed when they scroll
+    back down; a sticky `lane-scroll-bottom` button appears only while unpinned.
+    The waiting loader is driven by `useIsBridgeRunning(lane.bridgeId)`, NOT by
+    `lane.bridgeId != null` / `lane.status === 'running'` — both of those mean
+    "a runtime is attached" and stay true between turns, which would leave a
+    permanent spinner.
+    Each lane pane bar also carries an expand/shrink button: expanding renders
+    that lane alone in a single full-surface grid track (`.crew-pane-grid.is-maximized`),
+    with `Escape` restoring the grid. The maximized lane is resolved against live
+    `session.lanes`, so a lane edited away or archived while expanded falls back
+    to the grid instead of rendering an empty surface.
+
+  7d-ii. Lane approvals and the composer dock — worker lane bridges start with
+
+    mode `'build'` (workers execute; only the supervisor starts `'ask'` /
+    `'read-only'`). That is what makes `TurnPermissionGrantStore.prepareRequest`
+    attach `allowAllForTurn`, so lane permission cards get the same
+    "allow all (this turn ONLY)" button as a solo Build-mode chat. Eligibility
+    is `kind === 'permission'` + a `turnId` + `mode === 'build'` +
+    `toolPolicy !== 'read-only'`; the grant is keyed `bridgeId\0turnId` and dies
+    with the turn, so it never outlives the turn that authorized it. Passing the
+    mode explicitly does not change provider behavior — every bridge already
+    treats an absent mode the same as `'build'`.
+    `AgentActivityOverlay` renders in a `lane-composer-dock` pinned above the
+    lane composer (mirroring solo's `composer-dock`) rather than inside the
+    scrolling thread, so a turn-blocking permission pause cannot be scrolled out
+    of view. The dock renders even when the composer is hidden (broadcast
+    distribution or Supervisor-owned input) so the pause stays answerable.
 
   7e. Supervisor reporting cadence — worker replies are fed back incrementally,
 

@@ -216,6 +216,7 @@ export function CrewSurface({
             messagesByTab={messagesByTab}
             ptyPanes={ptyPanes}
             onSendToLane={onSendToLane}
+            onBroadcast={onBroadcast}
             onClosePane={onClosePane}
             onSetLaneModel={onSetLaneModel}
             onSetLaneEffort={onSetLaneEffort}
