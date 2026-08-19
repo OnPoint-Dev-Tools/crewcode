@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="src/renderer/src/assets/crewcode-dark-version-logo.png" alt="CrewCoder" width="420" />
+<img src="src/renderer/src/assets/crewcode-dark-version-logo.png" alt="CrewCoder" width="250" />
 
 > **CrewCode is the control center for multi-agent software development.**
 >
