@@ -24,6 +24,8 @@ CrewCode is a free, open-source desktop ACE for developers who already work repo
 
 Instead of juggling terminals, worktrees, PR pages, browser tabs, and chat threads across several tools, CrewCode keeps the full workflow in one place.
 
+CrewCode is a desktop development environment that runs multiple AI coding agents in parallel within a single window. It integrates chat, real terminals, a code editor, and isolated git worktrees so each agent works on its own branch without conflicts. Developers can mix providers like Claude Code, Codex, OpenCode, Pi, and Ollama, switch models inline, and manage approvals via Mission Control. It’s open source, local-first, supports SSH workspaces, and offers a plugin platform for extensions.
+
 > **Pair CrewCode with [CrewCoder](https://github.com/OnPoint-Dev-Tools/crewcoder)** for an integrated agentic development workflow. CrewCode includes first-class CrewCoder support through ACP, so you can run and supervise CrewCoder directly from the app and ask it to create custom CrewCode plugins tailored to your workflow. See the [CrewCoder provider guide](./docs/crewcoder-provider.md) for setup details and the [plugin guide](./docs/plugins.md) to learn more about CrewCode plugins.
 
 ## Why CrewCode
