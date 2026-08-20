@@ -41,6 +41,12 @@ export interface HubMachineSummary {
   revokedAt: number | null
 }
 
+export interface HubMachineIdentity {
+  id: string
+  ownerUserId: string
+  revokedAt: number | null
+}
+
 interface UserRow { id: string; username: string; role: string; created_at: number }
 interface CredentialRow {
   id: string
@@ -108,6 +114,7 @@ export class HubStore {
         id TEXT PRIMARY KEY,
         owner_user_id TEXT NOT NULL REFERENCES local_users(id),
         public_key TEXT NOT NULL UNIQUE,
+        credential_digest TEXT UNIQUE,
         name TEXT NOT NULL,
         status TEXT NOT NULL DEFAULT 'offline',
         platform TEXT,
@@ -127,6 +134,11 @@ export class HubStore {
       CREATE INDEX IF NOT EXISTS browser_sessions_digest ON browser_sessions(token_digest);
       CREATE INDEX IF NOT EXISTS machines_owner ON machines(owner_user_id);
     `)
+    const machineColumns = this.db.prepare('PRAGMA table_info(machines)').all() as Array<{ name: string }>
+    if (!machineColumns.some(column => column.name === 'credential_digest')) {
+      this.db.exec('ALTER TABLE machines ADD COLUMN credential_digest TEXT')
+    }
+    this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS machines_credential_digest ON machines(credential_digest)')
   }
 
   close(): void { this.db.close() }
@@ -227,12 +239,48 @@ export class HubStore {
     return Number(result.changes) === 1
   }
 
-  machinesForUser(userId: string): HubMachineSummary[] {
+  createMachine(input: { userId: string; publicKey: string; name: string; platform: string | null; version: string | null; now: number }): { machine: HubMachineSummary; token: string } {
+    const id = randomBytes(16).toString('hex')
+    const secret = randomBytes(32).toString('base64url')
+    this.db.prepare("INSERT INTO machines(id, owner_user_id, public_key, credential_digest, name, status, platform, version, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, 'online', ?, ?, ?, ?)")
+      .run(id, input.userId, input.publicKey, digest(secret), input.name, input.platform, input.version, input.now, input.now)
+    this.audit('hub.machine.enrolled', input.userId, id, { name: input.name, platform: input.platform }, input.now)
+    return {
+      machine: { id, name: input.name, status: 'online', platform: input.platform, version: input.version, createdAt: input.now, lastSeenAt: input.now, revokedAt: null },
+      token: `${id}.${secret}`,
+    }
+  }
+
+  authenticateMachine(token: string): HubMachineIdentity | null {
+    const separator = token.indexOf('.')
+    if (separator < 1) return null
+    const id = token.slice(0, separator)
+    const secret = token.slice(separator + 1)
+    const row = this.db.prepare('SELECT id, owner_user_id, revoked_at FROM machines WHERE id = ? AND credential_digest = ? AND revoked_at IS NULL')
+      .get(id, digest(secret)) as { id: string; owner_user_id: string; revoked_at: number | null } | undefined
+    return row ? { id: row.id, ownerUserId: row.owner_user_id, revokedAt: row.revoked_at } : null
+  }
+
+  heartbeatMachine(machineId: string, platform: string | null, version: string | null, now: number): boolean {
+    const result = this.db.prepare("UPDATE machines SET status = 'online', platform = ?, version = ?, last_seen_at = ? WHERE id = ? AND revoked_at IS NULL")
+      .run(platform, version, now, machineId)
+    return Number(result.changes) === 1
+  }
+
+  revokeMachine(userId: string, machineId: string, now: number): boolean {
+    const result = this.db.prepare("UPDATE machines SET revoked_at = ?, status = 'offline' WHERE id = ? AND owner_user_id = ? AND revoked_at IS NULL")
+      .run(now, machineId, userId)
+    if (Number(result.changes) !== 1) return false
+    this.audit('hub.machine.revoked', userId, machineId, {}, now)
+    return true
+  }
+
+  machinesForUser(userId: string, now = Date.now(), onlineWindowMs = 90_000): HubMachineSummary[] {
     const rows = this.db.prepare('SELECT id, name, status, platform, version, created_at, last_seen_at, revoked_at FROM machines WHERE owner_user_id = ? ORDER BY name COLLATE NOCASE').all(userId) as unknown as MachineRow[]
     return rows.map(row => ({
       id: row.id,
       name: row.name,
-      status: row.revoked_at ? 'revoked' : row.status === 'online' ? 'online' : 'offline',
+      status: row.revoked_at ? 'revoked' : row.last_seen_at !== null && row.last_seen_at > now - onlineWindowMs ? 'online' : 'offline',
       platform: row.platform,
       version: row.version,
       createdAt: row.created_at,

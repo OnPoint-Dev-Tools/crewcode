@@ -207,7 +207,17 @@ export function useWorkspaceTabs({ activeWs, workspaceName }: UseWorkspaceTabsOp
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeWs, wsTabs])
 
-  /** Point the active tab at a workspace's first tab — used on workspace switch. */
+  const getActiveTabIdForWorkspace = useCallback((wsId: string) => {
+    if (!wsId) return ''
+    const latest = persistedStateRef.current
+    const list = latest.wsTabs[wsId] ?? []
+    const current = latest.activeByWs[wsId]
+    return current && (list.some(tab => tab.id === current) || current === `${wsId}-chat`)
+      ? current
+      : (list[0]?.id ?? `${wsId}-chat`)
+  }, [])
+
+  /** Point the active tab at a workspace's last active tab. */
   const selectWorkspace = useCallback((wsId: string) => {
     const latest = persistedStateRef.current
     const list = latest.wsTabs[wsId] ?? []
@@ -543,10 +553,10 @@ export function useWorkspaceTabs({ activeWs, workspaceName }: UseWorkspaceTabsOp
   }, [wsTabs])
 
   return useMemo(() => ({
-    tabs, activeTab, activeTabId, setActiveTabId, setActiveTabInWorkspace, selectWorkspace, openTab, openTabInWorkspace, openPluginTab, openPluginTabInWorkspace, restoreChatTabInWorkspace, closeTab, closeTabInWorkspace,
+    tabs, activeTab, activeTabId, setActiveTabId, setActiveTabInWorkspace, getActiveTabIdForWorkspace, selectWorkspace, openTab, openTabInWorkspace, openPluginTab, openPluginTabInWorkspace, restoreChatTabInWorkspace, closeTab, closeTabInWorkspace,
     splitGroups, splitTabId, splitTabIds, splitPrimaryTabId, setSplitTab, closeSplitGroup, pinTab, unpinTab, renameTab, setTabColor, setTabUrl,
     setBrowserSessionMode, reorderTab, allTabIds, tabInfoById,
-  }), [tabs, activeTab, activeTabId, setActiveTabId, setActiveTabInWorkspace, selectWorkspace, openTab, openTabInWorkspace, openPluginTab, openPluginTabInWorkspace, restoreChatTabInWorkspace, closeTab, closeTabInWorkspace,
+  }), [tabs, activeTab, activeTabId, setActiveTabId, setActiveTabInWorkspace, getActiveTabIdForWorkspace, selectWorkspace, openTab, openTabInWorkspace, openPluginTab, openPluginTabInWorkspace, restoreChatTabInWorkspace, closeTab, closeTabInWorkspace,
     splitGroups, splitTabId, splitTabIds, splitPrimaryTabId, setSplitTab, closeSplitGroup, pinTab, unpinTab, renameTab, setTabColor, setTabUrl,
     setBrowserSessionMode, reorderTab, allTabIds, tabInfoById])
 }

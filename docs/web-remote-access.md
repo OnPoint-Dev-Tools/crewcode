@@ -261,10 +261,12 @@ AuditEvent(id, user_id?, machine_id?, browser_session_id?, type, created_at, met
 7. Implement the self-hosted `crewcode hub` process, local owner bootstrap,
    passkey sessions, machine registry, audit events, and signed single-use tickets.
    **Process/CLI, SQLite identity schema, passkey bootstrap/sign-in, browser sessions,
-   audit storage, and read-only machine-list skeleton are complete. Enrollment writes,
-   recovery, machine credentials, and signed connection tickets remain.**
+   audit storage, and machine registry are complete. Recovery and signed connection
+   tickets remain.**
 8. Implement `crewcode enroll`, persistent machine identity, outbound presence, and
-   explicit machine revoke/logout commands.
+   explicit machine revocation. **Enrollment, owner-only machine credentials,
+   outbound heartbeat presence, dashboard status, and revocation are complete.
+   Machine logout/credential rotation remain.**
 9. Implement the bounded Hub relay and a transport-neutral multiplexed tunnel with
    authenticated end-to-end browser-to-brain encryption.
 10. Replace the direct-only browser connection screen with local Hub sign-in,
@@ -302,24 +304,48 @@ require an explicit final public origin; non-loopback origins require HTTPS beca
 the origin is cryptographically bound to passkeys. Put a TLS reverse proxy or
 Tailscale HTTPS in front of the HTTP listener for network deployment.
 
+After signing in, select **Enroll a machine**. The Hub issues a memory-only,
+ten-minute, single-use token. On that machine run the displayed command and paste
+the token at the hidden prompt:
+
+```bash
+crewcode enroll --hub https://your-hub.example
+crewcode brain
+```
+
+Enrollment creates an Ed25519 machine identity plus a random bearer credential in
+`~/.crewcode/brain/hub-machine.json`, written with owner-only permissions. The Hub
+stores the public key and only a SHA-256 digest of the bearer secret. `crewcode brain`
+then makes outbound HTTPS heartbeat requests every 30 seconds; the dashboard marks a
+machine offline after 90 seconds without a successful heartbeat. Revoking it in the
+dashboard immediately rejects later heartbeats. Enrollment tokens are never written
+to the Hub database and are invalidated by Hub restart, expiry, first successful use,
+or a failed guess against their id.
+
+This presence process does **not** accept commands, expose workspaces, start agents,
+or establish a relay. The Ed25519 key is reserved for the later signed-ticket and
+encrypted-relay stages; current heartbeat authentication uses the separate random
+machine bearer credential over HTTPS.
+
 Planned direct-auth and remaining Hub commands:
 
 ```bash
 crewcode pair
 crewcode auth sessions
 crewcode auth revoke <session-id>
-crewcode enroll --hub <https-url>
 crewcode hub machines
 crewcode hub revoke <machine-id>
+crewcode brain logout
 ```
 
 The initial CLI distribution is implemented. From a checkout, run `npm run serve`;
 from a published package, run `npx crewcode@latest` or `crewcode serve`. It
 builds/serves the shared renderer, defaults to loopback, prints a single-use pairing
 URL, resolves installed provider CLIs without Electron, and shuts down cleanly on
-SIGINT/SIGTERM. The direct-auth, enrollment, machine-management, and relay commands
-above remain planned. `crewcode hub` has its own standalone setup/sign-in/machine-list
-screen; it does not yet mount the shared CrewCode workspace client.
+SIGINT/SIGTERM. The direct-auth CLI and remaining machine-management/relay commands above remain
+planned. Enrollment and dashboard revocation are implemented. `crewcode hub` has its
+own standalone setup/sign-in/machine-list screen; it does not yet mount the shared
+CrewCode workspace client.
 
 ## Current backend extraction
 

@@ -7,8 +7,9 @@ import { spawnSync } from 'child_process'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const args = process.argv.slice(2)
-const command = args[0] === 'hub' ? 'hub' : 'serve'
-const entry = join(root, 'out', 'main', command === 'hub' ? 'hub.js' : 'headless.js')
+const requested = args[0]
+const command = requested === 'hub' || requested === 'enroll' || requested === 'brain' ? requested : 'serve'
+const entry = join(root, 'out', 'main', command === 'hub' ? 'hub.js' : command === 'serve' ? 'headless.js' : 'brain.js')
 if (!existsSync(entry)) {
   console.error(`CrewCode ${command} build is missing. Run \`npm run build\` before starting from this checkout.`)
   process.exit(1)
@@ -19,8 +20,8 @@ if (!existsSync(entry)) {
 delete process.env.ELECTRON_RUN_AS_NODE
 const require = createRequire(import.meta.url)
 const module = require(entry)
-const run = command === 'hub' ? module.runHub : module.runHeadless
-run(command === 'hub' || args[0] === 'serve' ? args.slice(1) : args).catch(error => {
+const run = command === 'hub' ? module.runHub : command === 'serve' ? module.runHeadless : (argv => module.runBrainCommand(command, argv))
+run(command !== 'serve' || requested === 'serve' ? args.slice(1) : args).catch(error => {
   console.error(error?.message || String(error))
   process.exitCode = 1
 })

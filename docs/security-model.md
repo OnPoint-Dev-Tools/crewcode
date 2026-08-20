@@ -59,6 +59,37 @@ per-authenticated-session RPC bandwidth/request budget, remote execution custody
 not fully persisted, and public deployment still depends on correctly configured
 TLS/reverse-proxy infrastructure. Prefer loopback or a trusted tailnet.
 
+## Hub owner -> enrolled machine boundary
+
+**Boundary:** signing into the Hub must not silently enroll a machine or grant remote
+execution. A stolen/replayed enrollment link, database disclosure, cross-site
+request, or revoked machine credential must not produce lasting machine presence.
+
+**Enforcement:** only a valid owner browser session plus its rotated CSRF secret can
+issue an enrollment token. Tokens contain 256 bits of random secret, live only in
+Hub memory, expire after ten minutes, are single-use, and are consumed after a failed
+secret presentation for a known id. Issuance/enrollment requests are bounded by a
+per-peer limiter. Enrollment creates an Ed25519 identity on the brain and a separate
+256-bit bearer credential; the brain stores both in an owner-only atomic file while
+the Hub stores the public key and only SHA-256 of the bearer secret. Heartbeats are
+outbound HTTPS requests. Presence goes offline after 90 seconds without a successful
+heartbeat, and owner revocation immediately makes the bearer credential fail closed.
+Browser mutations retain exact-origin and CSRF enforcement.
+
+**Authority limit:** presence proves only that the enrolled process recently
+possessed its machine credential. It does not authorize commands, filesystem access,
+agent execution, a relay, or a connection ticket. The current Ed25519 key is reserved
+for later signed-ticket/relay work; heartbeats currently authenticate with the
+separate bearer credential over TLS.
+
+**Tests:** `hub-server.test.ts` covers CSRF, issue/enroll, replay rejection, stale
+presence, heartbeat, and revocation. `hub-machine-enrollment.test.ts` covers URL
+policy, argument-secret avoidance, credential validation, and owner-only file mode.
+
+**Residual limitation:** machine credential rotation/logout and recovery are not yet
+implemented. The long-running brain presence process requires an external service
+manager for automatic restart and does not yet use signed per-request challenges.
+
 ## Hop 1 — untrusted content -> agent
 
 **Boundary:** injected instructions in scraped/file/MCP content must not gain

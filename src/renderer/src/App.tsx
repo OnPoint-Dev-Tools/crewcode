@@ -333,11 +333,14 @@ export default function App() {
 
   // ── Tabs per workspace ───────────────────────────────────────────────────
   const {
-    tabs, activeTab, activeTabId, setActiveTabId, setActiveTabInWorkspace, selectWorkspace, openTab: handleNewTab, openTabInWorkspace, openPluginTab, restoreChatTabInWorkspace, closeTab, closeTabInWorkspace,
+    tabs, activeTab, activeTabId, setActiveTabId, setActiveTabInWorkspace, getActiveTabIdForWorkspace, selectWorkspace, openTab: handleNewTab, openTabInWorkspace, openPluginTab, restoreChatTabInWorkspace, closeTab, closeTabInWorkspace,
     splitGroups, splitTabIds, splitPrimaryTabId, setSplitTab, closeSplitGroup, pinTab, unpinTab, renameTab, setTabColor, setTabUrl,
     setBrowserSessionMode, reorderTab, allTabIds, tabInfoById,
   } = useWorkspaceTabs({ activeWs, workspaceName: activeWorkspace.name })
   const activeTabGitOpen = activeTabId ? (gitOpenByTab[activeTabId] ?? false) : false
+  const workspaceNavigationHistoryRef = useRef(EMPTY_WORKSPACE_NAVIGATION_HISTORY)
+  const workspaceDestinationByIdRef = useRef<Record<string, { tabId: string; sessionId?: string }>>({})
+  const tabNavigationHistoryByWorkspaceRef = useRef<Record<string, typeof EMPTY_WORKSPACE_NAVIGATION_HISTORY>>({})
   // App settings must remain reachable before the first server workspace is
   // registered. Workspace tabs cannot materialize without a workspace id, so
   // browser/empty-state settings use this app-level destination.
@@ -454,13 +457,20 @@ export default function App() {
 
   const handleWsSelect = useCallback((wsId: string) => {
     if (!wsId || wsId === activeWs) return
-    // Workspace swaps can remount heavy editor/browser panes; make rapid
-    // keyboard cycling interruptible so the shell stays responsive.
+    // Record the destination before starting the transition. Remote workspaces
+    // may mount slowly, and React can coalesce rapid transitions before their
+    // effects run; history must still include the workspace the user selected.
+    const remembered = workspaceDestinationByIdRef.current[wsId]
+    const tabId = remembered?.tabId || getActiveTabIdForWorkspace(wsId)
+    workspaceNavigationHistoryRef.current = recordWorkspaceVisit(
+      workspaceNavigationHistoryRef.current,
+      { wsId, tabId, sessionId: remembered?.sessionId },
+    )
     startTransition(() => {
       selectWorkspace(wsId)
       setActiveWs(wsId)
     })
-  }, [activeWs, selectWorkspace])
+  }, [activeWs, getActiveTabIdForWorkspace, selectWorkspace])
 
   const jumpToWorkspaceTab = useCallback((wsId: string, tabId: string) => {
     if (!wsId || !tabId) return
@@ -496,14 +506,16 @@ export default function App() {
   const sessions          = chatSessions.getSessions(activeTabId)
   const sessActive        = chatSessions.getActiveId(activeTabId)
   const activeSession     = chatSessions.getActiveSession(activeTabId)
-  const workspaceNavigationHistoryRef = useRef(EMPTY_WORKSPACE_NAVIGATION_HISTORY)
-  const tabNavigationHistoryByWorkspaceRef = useRef<Record<string, typeof EMPTY_WORKSPACE_NAVIGATION_HISTORY>>({})
   useEffect(() => {
     if (!activeWs || !activeTabId) return
     const visit = {
       wsId: activeWs,
       tabId: activeTabId,
       sessionId: activeTab?.kind === 'chat' ? (sessActive || undefined) : undefined,
+    }
+    workspaceDestinationByIdRef.current[activeWs] = {
+      tabId: visit.tabId,
+      sessionId: visit.sessionId,
     }
     workspaceNavigationHistoryRef.current = recordWorkspaceVisit(
       workspaceNavigationHistoryRef.current,
@@ -3118,7 +3130,7 @@ export default function App() {
         onClone={ws.cloneRepo}
         onInit={ws.initProject}
         onAddRemote={ws.addRemote}
-        onAdded={(id) => { setActiveWs(id); setDrawerOpen(false) }}
+        onAdded={(id) => { handleWsSelect(id); setDrawerOpen(false) }}
       />
 
       {crewSession && (

@@ -88,6 +88,29 @@ describe('useWorkspaceTabs plugin lifecycle', () => {
     hook.unmount()
   })
 
+  it('resolves the remembered or default tab for local and remote workspace ids', () => {
+    vi.unstubAllGlobals()
+    installStorage({
+      [STORAGE_KEY]: JSON.stringify({
+        wsTabs: {
+          local: [{ id: 'local-chat', kind: 'chat', label: 'Local', live: false }],
+          remote: [
+            { id: 'remote-chat', kind: 'chat', label: 'Remote', live: false },
+            { id: 'remote-terminal', kind: 'terminal', label: 'Terminal', live: false },
+          ],
+        },
+        activeByWs: { local: 'local-chat', remote: 'remote-terminal' },
+        splitMap: {},
+      }),
+    })
+    const hook = renderHook(useWorkspaceTabs, { activeWs: 'local', workspaceName: 'Local' })
+
+    expect(hook.result.current.getActiveTabIdForWorkspace('remote')).toBe('remote-terminal')
+    expect(hook.result.current.getActiveTabIdForWorkspace('new-remote')).toBe('new-remote-chat')
+
+    hook.unmount()
+  })
+
   it('allows multiple non-singleton plugin tab instances', () => {
     const hook = renderHook(useWorkspaceTabs, { activeWs: 'ws1', workspaceName: 'Workspace One' })
     const tab = pluginTab({ singleton: false })
