@@ -149,4 +149,66 @@ describe('remote access server', () => {
     expect(response.status).toBe(403)
     expect(await response.json()).toMatchObject({ ok: false, error: { code: 'FORBIDDEN' } })
   })
+
+  it('lists sanitized sessions and revokes them through authenticated RPC', async () => {
+    const server = await start()
+    const pair = await fetch(`${server.url}/api/v1/pair`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: server.pairingToken }) })
+    const { sessionToken } = await pair.json() as { sessionToken: string }
+    const sessionId = sessionToken.slice(0, sessionToken.indexOf('.'))
+    const rpc = (id: string, method: string, params: Record<string, unknown>) => fetch(`${server.url}/api/v1/rpc`, {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${sessionToken}` },
+      body: JSON.stringify({ protocolVersion: 1, id, method, params }),
+    })
+
+    const listed = await rpc('sessions', 'auth.sessions', {})
+    const listedBody = await listed.json()
+    expect(listedBody).toMatchObject({ ok: true, result: [{ id: sessionId, status: 'active' }] })
+    expect(JSON.stringify(listedBody)).not.toContain(sessionToken)
+    expect(await (await rpc('revoke', 'auth.revoke', { sessionId })).json()).toMatchObject({ ok: true, result: { revoked: true } })
+    expect((await rpc('after-revoke', 'workspaces.list', {})).status).toBe(401)
+  })
+
+  it('restores device sessions when the server restarts with the same data directory', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'crewcode-remote-persist-'))
+    running = await startRemoteAccessServer({ dataDir, allowedWorkspaceRoots: [tmpdir()] })
+    const pair = await fetch(`${running.url}/api/v1/pair`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: running.pairingToken }) })
+    const { sessionToken } = await pair.json() as { sessionToken: string }
+    await running.close()
+    running = await startRemoteAccessServer({ dataDir, allowedWorkspaceRoots: [tmpdir()] })
+
+    const response = await fetch(`${running.url}/api/v1/rpc`, {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${sessionToken}` },
+      body: JSON.stringify({ protocolVersion: 1, id: 'restored', method: 'workspaces.list', params: {} }),
+    })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ ok: true, id: 'restored' })
+  })
+
+  it('rejects cross-origin browser API requests while allowing exact same-origin requests', async () => {
+    const server = await start()
+    const rejected = await fetch(`${server.url}/api/v1/pair`, {
+      method: 'POST', headers: { 'content-type': 'application/json', origin: 'https://evil.example' },
+      body: JSON.stringify({ token: server.pairingToken }),
+    })
+    expect(rejected.status).toBe(403)
+
+    const accepted = await fetch(`${server.url}/api/v1/pair`, {
+      method: 'POST', headers: { 'content-type': 'application/json', origin: server.url },
+      body: JSON.stringify({ token: server.pairingToken }),
+    })
+    expect(accepted.status).toBe(200)
+  })
+
+  it('rate limits repeated pairing attempts by peer address', async () => {
+    const server = await start()
+    const statuses: number[] = []
+    for (let index = 0; index < 11; index += 1) {
+      const response = await fetch(`${server.url}/api/v1/pair`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: 'invalid.token' }),
+      })
+      statuses.push(response.status)
+    }
+    expect(statuses.slice(0, 10)).toEqual(Array(10).fill(401))
+    expect(statuses[10]).toBe(429)
+  })
 })

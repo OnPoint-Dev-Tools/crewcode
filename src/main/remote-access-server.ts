@@ -12,6 +12,13 @@ import {
 } from '../shared/remote-access-types'
 import { FilesystemService } from './filesystem-service'
 import { RemoteAccessAuth } from './remote-access-auth'
+import {
+  browserOriginAllowed,
+  REMOTE_PAIR_ATTEMPTS_PER_WINDOW,
+  REMOTE_UNAUTHENTICATED_ATTEMPTS_PER_WINDOW,
+  remotePeerKey,
+  RemoteAccessRateLimiter,
+} from './remote-access-security'
 import { WorkspaceService } from './workspace-service'
 import { PtyService } from './pty-service'
 import { AgentBridgeService, type AgentPathResolver } from './agents/bridge-service'
@@ -35,6 +42,8 @@ export interface RemoteAccessServerOptions {
   resolveAgentPath?: AgentPathResolver
   /** Host directories that paired browsers may discover/register/create under. */
   allowedWorkspaceRoots?: string[]
+  /** Exact HTTPS/HTTP browser origins accepted when a reverse proxy changes Host. */
+  publicOrigins?: string[]
 }
 
 export interface RunningRemoteAccessServer {
@@ -126,7 +135,9 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
   const ptyService = new PtyService()
   const transcriptService = new TranscriptService(options.dataDir)
   const agentService = new AgentBridgeService(options.resolveAgentPath ?? (() => null))
-  const auth = options.auth ?? new RemoteAccessAuth()
+  const auth = options.auth ?? new RemoteAccessAuth({ storePath: join(options.dataDir, 'remote-access-sessions.json') })
+  const pairingLimiter = new RemoteAccessRateLimiter(REMOTE_PAIR_ATTEMPTS_PER_WINDOW)
+  const unauthenticatedLimiter = new RemoteAccessRateLimiter(REMOTE_UNAUTHENTICATED_ATTEMPTS_PER_WINDOW)
   const allowedWorkspaceRoots = (options.allowedWorkspaceRoots?.length ? options.allowedWorkspaceRoots : [homedir()])
     .map(root => realpathSync(root))
   const allowedPath = (candidate: unknown): string => {
@@ -162,6 +173,8 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
     return { worktrees: parsePorcelainWorktrees(result.stdout ?? '', cwd) }
   }
   const handlers = new Map<string, RpcHandler>([
+    ['auth.sessions', () => auth.list()],
+    ['auth.revoke', params => ({ revoked: auth.revoke(String(params.sessionId ?? '')) })],
     ['workspaces.list', () => workspaceService.list()],
     ['workspaces.inspectPath', params => {
       const path = allowedPath(params.path)
@@ -280,11 +293,21 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
   const server: Server = createServer(async (request, response) => {
     try {
       const pathname = new URL(request.url ?? '/', 'http://localhost').pathname
+      if (pathname.startsWith('/api/') && !browserOriginAllowed(request, options.publicOrigins)) {
+        sendJson(response, 403, { error: remoteError('FORBIDDEN', 'browser origin is not allowed') })
+        return
+      }
       if (request.method === 'GET' && pathname === '/api/v1/capabilities') {
         sendJson(response, 200, capabilitySnapshot())
         return
       }
       if (request.method === 'POST' && pathname === '/api/v1/pair') {
+        const limited = pairingLimiter.consume(remotePeerKey(request))
+        if (!limited.allowed) {
+          response.setHeader('retry-after', String(limited.retryAfterSeconds))
+          sendJson(response, 429, { error: remoteError('FORBIDDEN', `too many pairing attempts; retry in ${limited.retryAfterSeconds}s`) })
+          return
+        }
         const body = await readJson(request) as { token?: unknown }
         const exchanged = auth.exchange(typeof body.token === 'string' ? body.token : '')
         if (exchanged.error) sendJson(response, 401, { error: remoteError('UNAUTHENTICATED', exchanged.error) })
@@ -293,7 +316,9 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
       }
       if (request.method === 'POST' && pathname === '/api/v1/attachments') {
         if (!auth.authenticate(bearer(request))) {
-          sendJson(response, 401, { error: remoteError('UNAUTHENTICATED', 'valid device session required') })
+          const limited = unauthenticatedLimiter.consume(remotePeerKey(request))
+          if (!limited.allowed) response.setHeader('retry-after', String(limited.retryAfterSeconds))
+          sendJson(response, limited.allowed ? 401 : 429, { error: remoteError('UNAUTHENTICATED', limited.allowed ? 'valid device session required' : `too many authentication attempts; retry in ${limited.retryAfterSeconds}s`) })
           return
         }
         const url = new URL(request.url ?? '/', 'http://localhost')
@@ -314,7 +339,9 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
       }
       if (request.method === 'POST' && pathname === '/api/v1/rpc') {
         if (!auth.authenticate(bearer(request))) {
-          sendJson(response, 401, { error: remoteError('UNAUTHENTICATED', 'valid device session required') })
+          const limited = unauthenticatedLimiter.consume(remotePeerKey(request))
+          if (!limited.allowed) response.setHeader('retry-after', String(limited.retryAfterSeconds))
+          sendJson(response, limited.allowed ? 401 : 429, { error: remoteError('UNAUTHENTICATED', limited.allowed ? 'valid device session required' : `too many authentication attempts; retry in ${limited.retryAfterSeconds}s`) })
           return
         }
         const body = await readJson(request) as Partial<CrewCodeRemoteRequest>
@@ -357,8 +384,9 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
     const pathname = new URL(request.url ?? '/', 'http://localhost').pathname
     const protocols = String(request.headers['sec-websocket-protocol'] ?? '').split(',').map(value => value.trim())
     const token = protocols.find(value => value !== 'crewcode.v1') ?? ''
-    if (pathname !== '/api/v1/events' || !protocols.includes('crewcode.v1') || !auth.authenticate(token)) {
-      socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n')
+    if (pathname !== '/api/v1/events' || !browserOriginAllowed(request, options.publicOrigins) || !protocols.includes('crewcode.v1') || !auth.authenticate(token)) {
+      const limited = unauthenticatedLimiter.consume(remotePeerKey(request))
+      socket.write(`HTTP/1.1 ${limited.allowed ? '401 Unauthorized' : '429 Too Many Requests'}\r\nConnection: close\r\n${limited.allowed ? '' : `Retry-After: ${limited.retryAfterSeconds}\r\n`}\r\n`)
       socket.destroy()
       return
     }

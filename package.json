@@ -149,7 +149,7 @@
       "fix-node-pty-permissions": "node scripts/fix-node-pty-permissions.mjs",
       "postinstall": "npm run fix-node-pty-permissions",
       "install-electron": "node node_modules/electron/install.js",
-      "sync-plugin-api": "node scripts/sync-plugin-api-helper.mjs",
+      "sync-plugin-api": "node packages/crewcode-plugin-api/scripts/sync-vendored.mjs",
       "crewcode": "node packages/crewcode-plugin-cli/bin/crewcode.mjs",
       "codemirror:install": "node packages/crew-codemirror/bin/cm.js install",
       "codemirror:build": "node packages/crew-codemirror/bin/cm.js build",
