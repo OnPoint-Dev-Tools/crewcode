@@ -1,0 +1,70 @@
+# Maintainer: OnPoint Tools <Logix_Creations.Work@proton.me>
+
+pkgname=crewcode-bin
+pkgver=0.2.1
+pkgrel=1
+pkgdesc='Desktop environment for orchestrating AI coding agents across local project worktrees'
+arch=('x86_64')
+url='https://github.com/OnPoint-Dev-Tools/crewcode'
+license=('Apache-2.0')
+depends=(
+  'alsa-lib'
+  'at-spi2-core'
+  'cairo'
+  'dbus'
+  'expat'
+  'glib2'
+  'glibc'
+  'gtk3'
+  'libcups'
+  'libdrm'
+  'libgcc'
+  'libnotify'
+  'libsecret'
+  'libx11'
+  'libxcb'
+  'libxcomposite'
+  'libxdamage'
+  'libxext'
+  'libxfixes'
+  'libxkbcommon'
+  'libxrandr'
+  'libxss'
+  'libxtst'
+  'mesa'
+  'nspr'
+  'nss'
+  'pango'
+  'systemd-libs'
+  'util-linux-libs'
+  'xdg-utils'
+)
+optdepends=(
+  'git: local repository and worktree operations'
+  'github-cli: GitHub pull request integration'
+  'libappindicator: system tray integration'
+)
+provides=('crewcode')
+conflicts=('crewcode')
+options=('!strip')
+
+_deb="CrewCode-${pkgver}-amd64.deb"
+source_x86_64=(
+  "${_deb}::https://github.com/OnPoint-Dev-Tools/crewcode/releases/download/v${pkgver}/${_deb}"
+)
+noextract=("${_deb}")
+sha256sums_x86_64=(
+  'd8ed0ecce54ebfda70cc5563f5edaba0ec0f671bc1690556895a32d33f92c3c6'
+)
+
+package() {
+  bsdtar -xOf "${srcdir}/${_deb}" data.tar.xz |
+    bsdtar -xf - -C "${pkgdir}"
+
+  install -d "${pkgdir}/usr/bin"
+  ln -s /opt/CrewCode/crewcode "${pkgdir}/usr/bin/crewcode"
+
+  install -d "${pkgdir}/usr/share/licenses/${pkgname}"
+  ln -s /opt/CrewCode/resources/licenses/LICENSE \
+    "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}

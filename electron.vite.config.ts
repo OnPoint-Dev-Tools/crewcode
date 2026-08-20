@@ -23,6 +23,7 @@ export default defineConfig({
         input: {
           index: resolve('src/main/index.ts'),
           headless: resolve('src/main/headless.ts'),
+          hub: resolve('src/main/hub.ts'),
         },
       },
     }

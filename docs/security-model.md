@@ -34,6 +34,31 @@ re-decided at each hop's gate, not carried forward as context.
 - Production renderer CSP locks `default-src 'self'`, `connect-src 'self' data: blob:`
   (`src/main/index.ts:89`), so a compromised renderer cannot open arbitrary sockets.
 
+## Remote browser -> headless brain boundary
+
+**Boundary:** a network browser must not acquire privileged RPC authority through a
+replayed pairing link, stolen persisted file, cross-origin request, or unbounded
+credential guessing.
+
+**Enforcement:** `RemoteAccessAuth` keeps pairing credentials memory-only,
+short-lived, and single-use. Device session files contain SHA-256 digests rather than
+bearer tokens, are written atomically with owner-only permissions, survive restart,
+and enforce 30-day absolute plus 7-day idle expiry. Authenticated `auth.sessions` and
+`auth.revoke` RPC expose only sanitized metadata. HTTP and WebSocket browser requests
+must match the request's exact origin or a CLI-configured `--public-origin`.
+Pairing and failed-session attempts use bounded per-peer fixed-window limits. The
+brain still revalidates registered workspace roots for filesystem, Git, PTY, and
+agent operations; transport authentication does not widen filesystem scope.
+
+**Tests:** `remote-access-auth.test.ts`, `remote-access-security.test.ts`, and
+`remote-access-server.test.ts` cover persistence/restart, expiry, revocation,
+corrupt-store refusal, origin rejection, rate limiting, and workspace denial.
+
+**Residual limitation:** the direct server does not yet have a general
+per-authenticated-session RPC bandwidth/request budget, remote execution custody is
+not fully persisted, and public deployment still depends on correctly configured
+TLS/reverse-proxy infrastructure. Prefer loopback or a trusted tailnet.
+
 ## Hop 1 — untrusted content -> agent
 
 **Boundary:** injected instructions in scraped/file/MCP content must not gain

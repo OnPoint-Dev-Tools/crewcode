@@ -64,6 +64,29 @@ gh release list
 gh release edit v0.1.1 --draft=false
 ```
 
+## Updating the Linux web installer
+
+The universal Linux installer is pinned to one stable release instead of trusting
+a mutable `latest` download. After publishing a new stable release:
+
+1. Update the version, Debian SHA-256, and AppImage SHA-256 in
+   `scripts/install-linux.sh`. Obtain digests from the published GitHub assets,
+   not from a local build with the same filename.
+2. Update `packaging/arch/PKGBUILD` and regenerate its `.SRCINFO`.
+3. Run the installer's `--dry-run` checks and isolated Arch, Debian, and AppImage
+   method tests.
+4. Copy the verified script byte-for-byte to `public/install` in the separate
+   `CjLogic/crewcode-website` repository, build that site, and verify
+   `dist/install` still matches.
+5. Deploy the website and confirm
+   `https://crewcode.logixhub.icu/install` starts with `#!/bin/sh` and does not
+   return the SPA HTML fallback.
+
+The public installer refuses root execution, prompts before installation, and
+uses native packages on Arch/Debian with a user-local AppImage fallback. Do not
+replace the pinned checksums with `SKIP` or runtime parsing of an unsigned
+`latest` response.
+
 ## Release channels
 
 Two trains, and the distinction is **prerelease vs not** — not electron-builder

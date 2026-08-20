@@ -1308,6 +1308,26 @@ export default function App() {
     appliedModes.markDelivered(sessionId, mode),
     [appliedModes],
   )
+  const canvasModePromptControl = useCallback((paneId: string) => {
+    const session = chatSessions.getActiveSession(paneId)
+    if (!session) return undefined
+    const locked = (useMessagesStore.getState().messagesByTab[session.id]?.length ?? 0) > 0
+      || lastDeliveredMode(session.id) !== undefined
+    return {
+      enabled: session.modePromptsEnabled ?? true,
+      locked,
+      onToggle: () => {
+        const current = chatSessions.getActiveSession(paneId)
+        if (!current) return
+        const currentLocked = (useMessagesStore.getState().messagesByTab[current.id]?.length ?? 0) > 0
+          || lastDeliveredMode(current.id) !== undefined
+        if (currentLocked) return
+        chatSessions.update(paneId, current.id, {
+          modePromptsEnabled: !(current.modePromptsEnabled ?? true),
+        })
+      },
+    }
+  }, [chatSessions, lastDeliveredMode])
   const [promptPickerOpen, setPromptPickerOpen] = useState(false)
 
   // ── Solo send ───────────────────────────────────────────────────────────
@@ -2306,6 +2326,7 @@ export default function App() {
             id: pane.id,
             kind: pane.kind,
             title: pane.title,
+            modePrompt: pane.kind === 'chat' ? canvasModePromptControl(pane.id) : undefined,
             content: pane.kind === 'chat' ? (
               <ChatPane
                 key={pane.id}
