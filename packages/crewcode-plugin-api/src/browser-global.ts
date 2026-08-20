@@ -1,4 +1,4 @@
-import { createCrewCodeApi } from './create-api'
+import { createCrewCodeApi } from './create-api.js'
 
 // Entry for the no-build browser helper (bundled to browser/crewcode-plugin-api.js).
 // Exposes the ready-to-use singleton plus the factory so authors can reconfigure

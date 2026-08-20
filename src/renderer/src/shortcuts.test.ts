@@ -59,6 +59,12 @@ describe('shortcut registry', () => {
     expect(promptPicker).toMatchObject({ group: 'navigation', act: 'Open prompt picker', keys: ['⌘', 'P'] })
   })
 
+  it('uses workspace-local tab cycling bindings and omits recent-chat navigation', () => {
+    expect(SHORTCUTS.find(s => s.id === 'next-tab')?.keys).toEqual(['⌃', '⇥'])
+    expect(SHORTCUTS.find(s => s.id === 'prev-tab')?.keys).toEqual(['⌃', '⇧', '⇥'])
+    expect(SHORTCUTS.some(s => (s.id as string) === 'next-chat' || (s.id as string) === 'prev-chat')).toBe(false)
+  })
+
   it('exposes rebindable component-local voice start and end actions', () => {
     expect(SHORTCUTS.find(s => s.id === 'start-voice')).toMatchObject({
       group: 'composer',

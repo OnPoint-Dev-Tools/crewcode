@@ -82,8 +82,14 @@ import { useTerminalSessions } from './hooks/useTerminalSessions'
 import { useTerminalUnreadSync, useClearPane } from './stores/terminal-unread-store'
 import { composerDraftActions } from './stores/composer-draft-store'
 import { useUserRequestsByTab } from './stores/bridge-activity-store'
-import { useChatRecency } from './hooks/useChatRecency'
 import { useCompletedChats } from './hooks/useCompletedChats'
+import {
+  EMPTY_WORKSPACE_NAVIGATION_HISTORY,
+  moveInTabHistory,
+  moveInWorkspaceHistory,
+  recordTabVisit,
+  recordWorkspaceVisit,
+} from './workspace-navigation-history'
 import { useCodeEditorSessions } from './hooks/useEditorSessions'
 import { terminalTabDisplay } from './terminal-tab-display'
 import { playNotificationSound, usesNativeNotificationSound } from './notifications/notification-sounds'
@@ -490,6 +496,24 @@ export default function App() {
   const sessions          = chatSessions.getSessions(activeTabId)
   const sessActive        = chatSessions.getActiveId(activeTabId)
   const activeSession     = chatSessions.getActiveSession(activeTabId)
+  const workspaceNavigationHistoryRef = useRef(EMPTY_WORKSPACE_NAVIGATION_HISTORY)
+  const tabNavigationHistoryByWorkspaceRef = useRef<Record<string, typeof EMPTY_WORKSPACE_NAVIGATION_HISTORY>>({})
+  useEffect(() => {
+    if (!activeWs || !activeTabId) return
+    const visit = {
+      wsId: activeWs,
+      tabId: activeTabId,
+      sessionId: activeTab?.kind === 'chat' ? (sessActive || undefined) : undefined,
+    }
+    workspaceNavigationHistoryRef.current = recordWorkspaceVisit(
+      workspaceNavigationHistoryRef.current,
+      visit,
+    )
+    tabNavigationHistoryByWorkspaceRef.current[activeWs] = recordTabVisit(
+      tabNavigationHistoryByWorkspaceRef.current[activeWs] ?? EMPTY_WORKSPACE_NAVIGATION_HISTORY,
+      visit,
+    )
+  }, [activeTab?.kind, activeTabId, activeWs, sessActive])
   const lastSoloSessionIdRef = useRef<string | null>(null)
   if (activeTab?.kind === 'chat' && sessActive) lastSoloSessionIdRef.current = sessActive
   const handleRenameWindowTab = useCallback((tabId: string, label: string) => {
@@ -807,12 +831,8 @@ export default function App() {
   // (useUnreadByPane) re-render on output.
   useTerminalUnreadSync(pty.panes, activeTabId)
   const clearPane = useClearPane()
-  // Counts (not message arrays) come straight from the store; this re-renders
-  // App only when a scope gains/loses a message, never on a streamed token.
-  // Two separate lists on purpose: recency drives next/prev-chat cycling, while
-  // completion drives the drawer's Completed section. Conflating them made the
-  // Completed list show chats that merely had a transcript.
-  const { rankByScope, touch: touchChatRecency } = useChatRecency()
+  // Completion metadata (not message arrays) comes straight from the store, so
+  // streamed tokens do not make App rebuild the drawer's Completed section.
   const {
     completedAtByScope,
     dismissedAtByScope,
@@ -837,19 +857,6 @@ export default function App() {
         wsName:  ws.workspaces.find(w => w.id === p.wsId)?.name ?? '',
       }))
   }, [pty.panes, tabInfoById, ws.workspaces])
-
-  // Recently-active chats, newest first — powers next/prev-chat cycling only.
-  const recentChats = useMemo(() => {
-    const entries: { sessionId: string; tabId: string; wsId: string; rank: number }[] = []
-    for (const workspace of ws.workspaces) {
-      for (const session of sessionsByWorkspace[workspace.id] ?? []) {
-        const rank = rankByScope[session.id] ?? 0
-        if (rank === 0) continue
-        entries.push({ sessionId: session.id, tabId: session.tabId, wsId: workspace.id, rank })
-      }
-    }
-    return entries.sort((a, b) => b.rank - a.rank).slice(0, 6)
-  }, [ws.workspaces, sessionsByWorkspace, rankByScope])
 
   // Chat sessions that have actually finished an agent turn, newest first
   // (capped). The drawer passively hides entries after one hour; keep timestamps
@@ -1037,9 +1044,8 @@ export default function App() {
       restoreChatTabInWorkspace(targetWs.id, targetWs.name, session.tabId)
       jumpToWorkspaceTab(targetWs.id, session.tabId)
     }
-    touchChatRecency(session.id)
     window.setTimeout(() => window.dispatchEvent(new CustomEvent('crewcode:focus-composer')), 80)
-  }, [chatSessions, jumpToWorkspaceTab, restoreChatTabInWorkspace, touchChatRecency, workspaceByChatTabId, ws.workspaces])
+  }, [chatSessions, jumpToWorkspaceTab, restoreChatTabInWorkspace, workspaceByChatTabId, ws.workspaces])
 
   // Flat, cross-workspace view of the archive for the Archive page.
   const archivedEntries = useMemo<ArchivedEntry[]>(() => {
@@ -1097,8 +1103,7 @@ export default function App() {
     if (targetWsId) jumpToWorkspaceTab(targetWsId, chatTabId)
     else setActiveTabId(chatTabId)
     if (session) chatSessions.activate(session.tabId, session.id)
-    touchChatRecency(scopeId)
-  }, [chatSessions, jumpToWorkspaceTab, restoreChatTabInWorkspace, sessionById, setActiveTabId, tabInfoById, touchChatRecency, workspaceByChatTabId, ws.workspaces])
+  }, [chatSessions, jumpToWorkspaceTab, restoreChatTabInWorkspace, sessionById, setActiveTabId, tabInfoById, workspaceByChatTabId, ws.workspaces])
 
   const voiceNotificationSource = useCallback((scopeId: string): { chatName: string; workspaceName?: string } => {
     const session = sessionById[scopeId]
@@ -1205,8 +1210,6 @@ export default function App() {
       const preview = replyPreview(reply.text)
       if (!preview) return
 
-      // A finished turn counts as both recent (for cycling) and completed.
-      touchChatRecency(scopeId)
       completeChatRecency(scopeId)
       show({
         type: 'info',
@@ -1224,7 +1227,7 @@ export default function App() {
         queueNativeNotification({ chatName, preview, scopeId })
       }
     })
-  }, [activeWs, completeChatRecency, touchChatRecency, navigateToChatScope, queueNativeNotification, sessionById, show, subscribeBridgeTurnEnd, tabInfoById, workspaceByChatTabId, ws.workspaces])
+  }, [activeWs, completeChatRecency, navigateToChatScope, queueNativeNotification, sessionById, show, subscribeBridgeTurnEnd, tabInfoById, workspaceByChatTabId, ws.workspaces])
 
   const workspaceAgentStatus = useMemo<Record<string, AgentActivityState | undefined>>(() => {
     const byWorkspace: Record<string, AgentActivityState | undefined> = {}
@@ -1941,37 +1944,34 @@ export default function App() {
   // dispatching a synthetic keydown matching their chord — the local
   // listener at window level picks them up. The global useGlobalShortcuts
   // hook skips LOCAL_SHORTCUTS so we never double-handle a real keypress.
-  // Cycle the most-recently-active chats (across workspaces), newest first. The
-  // active chat anchors the position; if it isn't in the recency list we start
-  // from one end so the first press still moves. We deliberately don't bump
-  // recency while cycling — that would re-sort the list mid-cycle.
-  const cycleRecentChat = useCallback((delta: 1 | -1) => {
-    const list = recentChats
-    if (list.length === 0) return
-    const idx = list.findIndex(c => c.tabId === activeTabId)
-    const from = idx === -1 ? (delta === 1 ? -1 : 0) : idx
-    const next = list[((from + delta) % list.length + list.length) % list.length]
-    if (!next) return
-    if (next.wsId !== activeWs) handleWsSelect(next.wsId)
-    setActiveTabInWorkspace(next.wsId, next.tabId)
-  }, [recentChats, activeTabId, activeWs, handleWsSelect, setActiveTabInWorkspace])
+  // Workspace navigation behaves like browser back/forward history. Each entry
+  // remembers the tab and active chat session that was visible in that workspace.
+  const navigateWorkspaceHistory = useCallback((delta: -1 | 1) => {
+    const moved = moveInWorkspaceHistory(
+      workspaceNavigationHistoryRef.current,
+      delta,
+      new Set(ws.workspaces.map(workspace => workspace.id)),
+    )
+    if (!moved.visit) return
+    workspaceNavigationHistoryRef.current = moved.history
+    const target = moved.visit
+    startTransition(() => {
+      setActiveTabInWorkspace(target.wsId, target.tabId)
+      setActiveWs(target.wsId)
+    })
+    if (target.sessionId) chatSessions.activate(target.tabId, target.sessionId)
+  }, [chatSessions, setActiveTabInWorkspace, ws.workspaces])
 
-  const cycleWorkspace = useCallback((delta: 1 | -1) => {
-    const list = ws.workspaces
-    if (list.length <= 1) return
-    const idx = list.findIndex(workspace => workspace.id === activeWs)
-    const from = idx === -1 ? (delta === 1 ? -1 : 0) : idx
-    const next = list[((from + delta) % list.length + list.length) % list.length]
-    if (next) handleWsSelect(next.id)
-  }, [activeWs, handleWsSelect, ws.workspaces])
-
-  const cycleTab = useCallback((delta: 1 | -1) => {
-    if (tabs.length <= 1) return
-    const idx  = tabs.findIndex(t => t.id === activeTabId)
-    if (idx === -1) return
-    const next = tabs[(idx + delta + tabs.length) % tabs.length]
-    if (next) setActiveTabId(next.id)
-  }, [tabs, activeTabId, setActiveTabId])
+  const navigateTabHistory = useCallback((delta: -1 | 1) => {
+    if (!activeWs) return
+    const history = tabNavigationHistoryByWorkspaceRef.current[activeWs]
+      ?? EMPTY_WORKSPACE_NAVIGATION_HISTORY
+    const moved = moveInTabHistory(history, delta, new Set(tabs.map(tab => tab.id)))
+    if (!moved.visit) return
+    tabNavigationHistoryByWorkspaceRef.current[activeWs] = moved.history
+    setActiveTabId(moved.visit.tabId)
+    if (moved.visit.sessionId) chatSessions.activate(moved.visit.tabId, moved.visit.sessionId)
+  }, [activeWs, chatSessions, setActiveTabId, tabs])
 
   const openInEditor = useCallback(() => {
     const path = activeWorkspace.path
@@ -2044,12 +2044,10 @@ export default function App() {
     switch (id) {
       case 'palette':                 setPaletteOpen(o => !o); return
       case 'workspaces':              setDrawerOpen(o => !o); return
-      case 'prev-chat':               cycleRecentChat(-1); return
-      case 'next-chat':               cycleRecentChat(1); return
-      case 'next-workspace':          cycleWorkspace(1); return
-      case 'prev-workspace':          cycleWorkspace(-1); return
-      case 'next-tab':                cycleTab(1); return
-      case 'prev-tab':                cycleTab(-1); return
+      case 'next-workspace':          navigateWorkspaceHistory(1); return
+      case 'prev-workspace':          navigateWorkspaceHistory(-1); return
+      case 'next-tab':                navigateTabHistory(1); return
+      case 'prev-tab':                navigateTabHistory(-1); return
       case 'settings-search':         handleNewTab('settings'); return
       case 'prompt-picker':           setPromptPickerOpen(o => !o); return
       case 'split-terminal-right':    openTerminalSplit('right'); return
@@ -2104,7 +2102,7 @@ export default function App() {
     }
   }, [
     activeWorkspace.name, activeWorkspace.path, activeTabId, activeWs, sessActive,
-    chatSessions, cycleTab, cycleRecentChat, cycleWorkspace, handleCloseTab, handleNewTab, openInEditor,
+    chatSessions, navigateTabHistory, navigateWorkspaceHistory, handleCloseTab, handleNewTab, openInEditor,
     openTerminalSplit, pty, setAddOpen, setDrawerOpen, setPaletteOpen, setSetting, setTweak, startCanvasFromAnywhere, startCrewFromAnywhere,
     settings.appTheme, settings.shortcutOverrides, settings, tweaks.density, tweaks.showTerminal, ws, effectivePath,
   ])
@@ -2770,7 +2768,6 @@ export default function App() {
         // to that workspace explicitly instead of using the current-workspace setter.
         if (targetWsId) jumpToWorkspaceTab(targetWsId, session.tabId)
         chatSessions.activate(session.tabId, session.id)
-        touchChatRecency(session.id)
       }}
       onSessionAdd={(wsId) => {
         const targetWs = ws.workspaces.find(w => w.id === wsId)
@@ -2806,14 +2803,12 @@ export default function App() {
         if (targetWs) restoreChatTabInWorkspace(entry.wsId, targetWs.name, entry.tabId)
         jumpToWorkspaceTab(entry.wsId, entry.tabId)
         chatSessions.activate(entry.tabId, entry.sessionId)
-        touchChatRecency(entry.sessionId)
       }}
       onCompletedChatActivate={(entry) => {
         const targetWs = ws.workspaces.find(w => w.id === entry.wsId)
         if (targetWs) restoreChatTabInWorkspace(entry.wsId, targetWs.name, entry.tabId)
         jumpToWorkspaceTab(entry.wsId, entry.tabId)
         chatSessions.activate(entry.tabId, entry.sessionId)
-        touchChatRecency(entry.sessionId)
         // Opening it clears it from Completed until its next finished turn.
         dismissCompletedChat(entry.sessionId)
       }}

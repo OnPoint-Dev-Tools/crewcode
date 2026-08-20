@@ -1,9 +1,15 @@
 {
   "name": "crewcode-plugin-cli",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Command-line tool for scaffolding, developing, and packaging CrewCode plugins.",
   "license": "Apache-2.0",
   "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "keywords": [
     "crewcode",
     "plugin",
