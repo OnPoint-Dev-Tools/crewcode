@@ -22,6 +22,8 @@ describe('crewcode plugin CLI', () => {
     expect(manifest.name).toBe('My Panel')
     expect(manifest.$schema).toBe('https://crewcode-plugins.cortex-ai.icu/schemas/crewcode.plugin.schema.json')
     expect(existsSync(join(result.path, 'panel.html'))).toBe(true)
+    expect(readFileSync(join(result.path, 'crewcode-plugin-api.js')))
+      .toEqual(readFileSync(join(process.cwd(), 'packages', 'crewcode-plugin-api', 'browser', 'crewcode-plugin-api.js')))
   })
 
   it('installs a plugin for dev with copy mode', () => {

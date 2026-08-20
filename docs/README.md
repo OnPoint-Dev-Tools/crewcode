@@ -10,7 +10,8 @@ internal references).
 
 | Doc | What it covers |
 | --- | --- |
-| [getting-started.md](./getting-started.md) | Install (download placeholder + build from source), providers, first run |
+| [getting-started.md](./getting-started.md) | Install from a release or source, providers, first run |
+| [arch-linux-package.md](./arch-linux-package.md) | Build, upgrade, and uninstall the temporary manual Arch Linux package |
 | [keybindings.md](./keybindings.md) | Every shortcut, defaults per group, and the editable `~/.crewcode/keys.json` override file |
 | [tweaks-panel.md](./tweaks-panel.md) | The floating Layout panel: density and workspace dock presentation controls |
 | [system-monitor.md](./system-monitor.md) | CPU/memory pill and panel: per-workspace process usage, jump-to and kill controls |
@@ -59,8 +60,6 @@ internal references).
 
 ## Content gaps for the site
 
-- **Install links** — `getting-started.md` has a placeholder; swap in real
-  download links when installers are published.
 - **Notifications** — `notifications.md` is a developer API reference; if the
   notification bar needs user documentation, it's a couple of paragraphs, not
   that file.

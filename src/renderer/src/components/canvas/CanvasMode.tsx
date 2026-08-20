@@ -9,6 +9,11 @@ export interface CanvasPaneView {
   kind: CanvasPaneKind
   title: string
   content: ReactNode
+  modePrompt?: {
+    enabled: boolean
+    locked: boolean
+    onToggle: () => void
+  }
 }
 
 interface CanvasModeProps {
@@ -64,6 +69,27 @@ export function CanvasMode({ workspaceName, openChatCount, openTerminalCount, pa
               <div className="canvas-mode-pane-bar">
                 <span className="canvas-mode-pane-title"><Icon name={pane.kind === 'terminal' ? 'terminal' : 'threads'} size={12} /> {pane.title}</span>
                 <div className="canvas-mode-pane-actions">
+                  {pane.kind === 'chat' && pane.modePrompt && (
+                    <button
+                      type="button"
+                      className={`canvas-mode-pane-log canvas-mode-pane-prompt ${pane.modePrompt.enabled ? 'on' : ''}`}
+                      onClick={pane.modePrompt.onToggle}
+                      title={pane.modePrompt.locked
+                        ? `Mode prompt ${pane.modePrompt.enabled ? 'was enabled' : 'was disabled'} when this session started`
+                        : pane.modePrompt.enabled
+                          ? 'CrewCode mode prompt on — click to use only provider context for this session'
+                          : 'CrewCode mode prompt off — click to add mode guidance for this session'}
+                      aria-label="Inject CrewCode mode prompt for this Workbench chat"
+                      aria-pressed={pane.modePrompt.enabled}
+                      disabled={pane.modePrompt.locked}
+                    >
+                      <Icon name="bot" size={12} />
+                      <span>prompt</span>
+                      <span className="canvas-mode-pane-toggle-track" aria-hidden>
+                        <span className="canvas-mode-pane-toggle-thumb" />
+                      </span>
+                    </button>
+                  )}
                   {pane.kind === 'chat' && (
                     <button
                       type="button"

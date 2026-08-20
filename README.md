@@ -195,6 +195,52 @@ CrewCode is strongest today for:
 4. watch output in chat, terminal panes, and Mission Control
 5. inspect diffs, commit changes, open or merge PRs, or discard work
 
+## Install on Linux
+
+The installer detects Arch-based and Debian-based distributions and uses their
+native package manager. Other x86_64 Linux distributions receive a user-local
+AppImage installation.
+
+Download and review the installer before running it:
+
+```bash
+curl --proto '=https' --tlsv1.2 -fsSLo install-crewcode.sh \
+  https://crewcode.logixhub.icu/install
+less install-crewcode.sh
+sh install-crewcode.sh
+```
+
+Or use the convenience one-liner after reviewing the
+[installer source](./scripts/install-linux.sh):
+
+```bash
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://crewcode.logixhub.icu/install | sh
+```
+
+The installer verifies the selected `v0.2.1` release artifact with SHA-256 and
+prompts before invoking a package manager or writing user-local application
+files. It refuses to run as root. Use `sh install-crewcode.sh --dry-run` to see
+the selected method without changing files.
+
+### Manual Arch Linux package
+
+Until `crewcode-bin` is available in the AUR, Arch users can instead build and
+install the pacman-managed package directly from this repository:
+
+```bash
+sudo pacman -S --needed base-devel git
+git clone https://github.com/OnPoint-Dev-Tools/crewcode.git
+cd crewcode/packaging/arch
+less PKGBUILD       # review the package recipe before building
+makepkg -si
+```
+
+The PKGBUILD downloads CrewCode's official x86_64 release artifact, verifies its
+SHA-256 checksum, and repackages it for pacman. Arch does not install the Debian
+package directly. See the [Arch Linux package guide](./docs/arch-linux-package.md)
+for upgrade, uninstall, and maintainer instructions.
+
 ## Development
 
 ```bash

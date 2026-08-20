@@ -6,15 +6,36 @@ chat, terminals, a code editor, and git review in one window.
 
 ## Install
 
-<!-- TODO(release): replace this section with download links once installers are published. -->
+Download the latest stable Linux, macOS, or Windows artifact from
+[GitHub Releases](https://github.com/OnPoint-Dev-Tools/crewcode/releases/latest).
 
-> [!NOTE]
-> Official installers for **Linux (AppImage/deb), macOS (dmg), and Windows**
-> are coming soon — download links will appear here.
+On x86_64 Linux, download and review the universal installer before running it:
+
+```bash
+curl --proto '=https' --tlsv1.2 -fsSLo install-crewcode.sh \
+  https://crewcode.logixhub.icu/install
+less install-crewcode.sh
+sh install-crewcode.sh
+```
+
+The installer uses pacman on Arch-based systems, apt on Debian-based systems,
+and a user-local AppImage elsewhere. It verifies the pinned release checksum,
+refuses root execution, and prompts before installation. The convenience form
+is:
+
+```bash
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://crewcode.logixhub.icu/install | sh
+```
+
+Arch Linux users can alternatively build a pacman-managed `crewcode-bin` package
+using the [manual Arch package instructions](./arch-linux-package.md). The recipe
+verifies and repackages CrewCode's official release artifact; it does not install
+a Debian package directly.
 
 ### Build from source (contributors)
 
-Requirements: Node.js 20+, git.
+Requirements: Node.js 22.16 or newer, git.
 
 ```bash
 git clone https://github.com/OnPoint-Dev-Tools/crewcode.git
