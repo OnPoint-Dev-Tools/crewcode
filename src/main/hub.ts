@@ -1,4 +1,5 @@
 import { homedir } from 'os'
+import { existsSync } from 'fs'
 import { join, resolve } from 'path'
 import { startHubServer } from './hub-server'
 
@@ -72,10 +73,15 @@ export function terminalLink(label: string, url: string, isTerminal = Boolean(pr
   return isTerminal ? `\u001B]8;;${url}\u0007${label}\u001B]8;;\u0007` : url
 }
 
+function defaultWebRoot(): string | undefined {
+  const candidates = [resolve(__dirname, '../renderer'), resolve(__dirname, '../../out/renderer')]
+  return candidates.find(candidate => existsSync(join(candidate, 'index.html')))
+}
+
 export async function runHub(argv = process.argv.slice(2)): Promise<void> {
   const parsed = parseHubOptions(argv)
   if ('help' in parsed) { console.log(usage()); return }
-  const hub = await startHubServer(parsed)
+  const hub = await startHubServer({ ...parsed, webRoot: defaultWebRoot() })
   console.log(`CrewCode Hub listening on ${hub.url}`)
   console.log(`Hub browser origin: ${hub.publicOrigin}`)
   if (hub.bootstrapUrl) {

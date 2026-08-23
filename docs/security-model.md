@@ -76,19 +76,41 @@ outbound HTTPS requests. Presence goes offline after 90 seconds without a succes
 heartbeat, and owner revocation immediately makes the bearer credential fail closed.
 Browser mutations retain exact-origin and CSRF enforcement.
 
-**Authority limit:** presence proves only that the enrolled process recently
-possessed its machine credential. It does not authorize commands, filesystem access,
-agent execution, a relay, or a connection ticket. The current Ed25519 key is reserved
-for later signed-ticket/relay work; heartbeats currently authenticate with the
-separate bearer credential over TLS.
+**Connection and execution gates:** only an authenticated Hub browser session plus
+CSRF can issue a 60-second memory-only ticket for one owned, active, relay-connected
+machine. Ticket ids are one-shot even after a wrong-secret guess. The authenticated
+outbound Brain WebSocket and exact-origin browser WebSocket are paired only for that
+machine; the relay bounds frame size and buffered output, applies a shared per-connection
+token bucket (240-frame/8 MiB burst, refilling at 60 frames and 2 MiB per second),
+and never accepts arbitrary destinations. Browser and Brain then use ephemeral P-256 ECDH. The Brain signs the
+handshake transcript with its enrolled Ed25519 key, and ordered application frames
+use direction-separated HKDF/AES-256-GCM keys. The Hub sees routing metadata and
+handshake public values, but not RPC, source, terminal, prompt, or response plaintext.
+
+Hub identity still does not grant execution. `crewcode brain` grants no RPC scope by
+default and requires explicit local `--workspace-root` plus repeatable
+`--allow-scope` settings. Each decrypted method is classified at the Brain and must
+be included in both the ticket request and local grant. The reused backend then
+revalidates registered workspace roots for filesystem, Git, PTY, and agent calls.
 
 **Tests:** `hub-server.test.ts` covers CSRF, issue/enroll, replay rejection, stale
 presence, heartbeat, and revocation. `hub-machine-enrollment.test.ts` covers URL
-policy, argument-secret avoidance, credential validation, and owner-only file mode.
+policy, argument-secret avoidance, credential validation, owner-only file mode, and
+Brain CLI grants. `hub-relay.test.ts` covers ticket expiry/one-shot behavior,
+authenticated relay routing, Ed25519-authenticated E2EE, scoped read success, local
+scope denial, per-connection traffic rejection, and ticket replay rejection.
+`hub-relay-client.test.ts` covers explicit fresh-ticket reconnect without RPC replay.
 
 **Residual limitation:** machine credential rotation/logout and recovery are not yet
-implemented. The long-running brain presence process requires an external service
-manager for automatic restart and does not yet use signed per-request challenges.
+implemented. Relay traffic is bounded per connection, but durable bandwidth metrics
+and broader aggregate abuse accounting are not implemented. Browser relay loss now
+detaches Brain-owned terminals and agents instead of stopping them. A fresh encrypted
+connection can explicitly reclaim stable resource ids, with up to 100 owned resources
+per user and 1,000 events / 1 MiB of detached evidence buffered per resource;
+interrupted RPCs are never replayed.
+Execution custody is still process-resident rather than crash durable: Brain process,
+VPS, revocation, or persistent Brain-to-Hub relay loss can stop execution without a
+complete remote halt journal. Attachment tunneling is also not implemented.
 
 ## Hop 1 — untrusted content -> agent
 

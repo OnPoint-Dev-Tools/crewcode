@@ -23,6 +23,9 @@ import { WorkspaceService } from './workspace-service'
 import { PtyService } from './pty-service'
 import { AgentBridgeService, type AgentPathResolver } from './agents/bridge-service'
 import { headlessAgentRegistry, listHeadlessAgentModels } from './headless-agent-resolver'
+import { readMcpConfig } from './mcp-config-service'
+import { getGhStatus, getGitHubStatus, runGh } from './github-service'
+import { createVoiceClientSecret, synthesizeRemoteVoiceText, transcribeRemoteVoiceAudio, voiceProviderAvailability } from './voice-provider-auth'
 import { TranscriptService, type TranscriptBatchEntry } from './transcript-service'
 import { parsePorcelainWorktrees } from './worktree-list-parse'
 import { addWorktree, removeWorktree } from './worktree-ops'
@@ -56,6 +59,19 @@ export interface RunningRemoteAccessServer {
 }
 
 type RpcHandler = (params: Record<string, unknown>) => unknown | Promise<unknown>
+
+const MAX_REMOTE_VOICE_AUDIO_BYTES = 8 * 1024 * 1024
+
+function decodeRemoteVoiceAudio(value: unknown): Uint8Array | null {
+  if (typeof value !== 'string' || value.length === 0 || value.length > Math.ceil(MAX_REMOTE_VOICE_AUDIO_BYTES * 4 / 3) + 8) return null
+  const bytes = Buffer.from(value, 'base64')
+  return bytes.byteLength > 0 && bytes.byteLength <= MAX_REMOTE_VOICE_AUDIO_BYTES ? new Uint8Array(bytes) : null
+}
+
+function remoteMcpServers(value: unknown) {
+  const ids = new Set(Array.isArray(value) ? value.map(String) : [])
+  return readMcpConfig().servers.filter(server => ids.has(server.id))
+}
 
 function remoteError(code: CrewCodeRemoteError['code'], message: string): CrewCodeRemoteError {
   return { code, message }
@@ -99,7 +115,10 @@ function capabilitySnapshot(): CrewCodeServerCapabilities {
     protocolVersion: CREWCODE_REMOTE_PROTOCOL_VERSION,
     runtime: 'server',
     platform: process.platform,
-    features: { workspaces: true, filesystem: true, git: true, terminals: true, agents: true },
+    features: {
+      workspaces: true, filesystem: true, git: true, terminals: true, agents: true,
+      attachments: true, mcp: true, github: true, voice: true, editorFormat: true,
+    },
   }
 }
 
@@ -201,6 +220,27 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
     ['workspaces.setFolder', params => workspaceService.setFolder(String(params.id ?? ''), typeof params.folder === 'string' ? params.folder : null)],
     ['agents.registry', () => headlessAgentRegistry()],
     ['agents.listModels', params => listHeadlessAgentModels(String(params.provider ?? ''))],
+    // Browser clients may inspect the Brain-owned registry, but never submit
+    // executable MCP commands or environment values of their own.
+    ['mcp.list', () => readMcpConfig()],
+    ['voice.availability', () => {
+      const availability = voiceProviderAvailability()
+      return { ...availability, local: { configured: false, available: false, reason: 'Brain-local voice is not exposed to browser clients yet.' } }
+    }],
+    ['voice.clientSecret', params => createVoiceClientSecret(params.request as Parameters<typeof createVoiceClientSecret>[0])],
+    ['voice.transcribe', params => {
+      const provider = params.provider === 'openai' || params.provider === 'xai' ? params.provider : null
+      const audio = decodeRemoteVoiceAudio(params.audioBase64)
+      if (!provider || !audio) return { ok: false, error: 'Invalid remote dictation request.' }
+      return transcribeRemoteVoiceAudio(provider, audio)
+    }],
+    ['voice.synthesize', async params => {
+      const provider = params.provider === 'openai' || params.provider === 'xai' ? params.provider : null
+      if (!provider || typeof params.text !== 'string' || typeof params.voice !== 'string') return { ok: false, error: 'Invalid remote speech request.' }
+      const result = await synthesizeRemoteVoiceText(provider, params.text, params.voice)
+      if (!result.ok || !result.audio) return result
+      return { ...result, audio: Buffer.from(result.audio).toString('base64') }
+    }],
     ['transcripts.loadAll', () => transcriptService.loadAll()],
     ['transcripts.mtimes', () => transcriptService.mtimes()],
     ['transcripts.save', params => transcriptService.save(String(params.scopeId ?? ''), params.messages)],
@@ -227,6 +267,7 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
     ['fs.readFile', params => filesystemService.readFile(registeredRoot(params), String(params.sub ?? ''))],
     ['fs.readDataUrl', params => filesystemService.readDataUrl(registeredRoot(params), String(params.sub ?? ''))],
     ['fs.writeFile', params => filesystemService.writeFile(registeredRoot(params), String(params.sub ?? ''), String(params.text ?? ''))],
+    ['fs.format', params => filesystemService.format(registeredRoot(params), String(params.sub ?? ''), String(params.text ?? ''))],
     ['fs.mkdir', params => filesystemService.mkdir(registeredRoot(params), String(params.sub ?? ''))],
     ['fs.delete', params => filesystemService.delete(registeredRoot(params), String(params.sub ?? ''))],
     ['fs.rename', params => filesystemService.rename(registeredRoot(params), String(params.sub ?? ''), String(params.newName ?? ''))],
@@ -244,6 +285,11 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
     ['git.pull', params => gitService.simple(registeredRoot({ root: params.cwd }), 'pull')],
     ['git.fetch', params => gitService.simple(registeredRoot({ root: params.cwd }), 'fetch')],
     ['git.init', params => gitService.simple(registeredRoot({ root: params.cwd }), 'init')],
+    ['github.status', params => getGitHubStatus(registeredRoot({ root: params.cwd }))],
+    ['gh.status', () => getGhStatus()],
+    ['gh.prCreate', params => runGh(registeredRoot({ root: params.cwd }), ['pr', 'create', '--fill'])],
+    ['gh.prMerge', params => runGh(registeredRoot({ root: params.cwd }), ['pr', 'merge', String(Number(params.number)), '--squash'])],
+    ['gh.prApprove', params => runGh(registeredRoot({ root: params.cwd }), ['pr', 'review', String(Number(params.number)), '--approve'])],
     ['git.checkout', params => gitService.checkout(registeredRoot({ root: params.cwd }), String(params.branch ?? ''), false)],
     ['git.createBranch', params => gitService.checkout(registeredRoot({ root: params.cwd }), String(params.name ?? ''), true)],
     ['git.merge', params => gitService.merge(registeredRoot({ root: params.cwd }), String(params.ref ?? ''))],
@@ -276,6 +322,10 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
         conversationKey: typeof params.conversationScopeKey === 'string' ? `web:${params.conversationScopeKey}` : undefined,
         freshSession: params.freshSession === true,
         suppressProviderHistoryReplay: params.suppressProviderHistoryReplay === true,
+        // Resolve opaque selections against the Brain's local registry. This is
+        // intentionally not `params.mcpServers`: accepting command/env objects
+        // from a browser would turn bridge.start into arbitrary execution.
+        mcpServers: remoteMcpServers(params.mcpServerIds),
       }
       return agentService.start(opts)
     }],

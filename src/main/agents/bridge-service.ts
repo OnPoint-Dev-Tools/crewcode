@@ -68,6 +68,20 @@ export class AgentBridgeService {
   async start(rawOpts: BridgeStartOpts): Promise<{ ok?: boolean; error?: string }> {
     if (!rawOpts.bridgeId || !rawOpts.cwd) return { error: 'bridgeId and cwd are required' }
     if (!REMOTE_AGENT_PROVIDERS.has(rawOpts.provider)) return { error: 'agent provider is not available over remote access' }
+    const existing = this.bridges.get(rawOpts.bridgeId)
+    if (existing && !rawOpts.freshSession) {
+      // Remote clients use stable bridge ids so they can reassert attachment
+      // after a browser reconnect. A duplicate start must not stop an active
+      // provider turn. Refuse contradictory immutable configuration instead of
+      // changing execution authority underneath the existing bridge.
+      const sameExecution = existing.opts.provider === rawOpts.provider
+        && existing.opts.cwd === rawOpts.cwd
+        && existing.opts.model === rawOpts.model
+        && existing.opts.conversationKey === rawOpts.conversationKey
+      return sameExecution
+        ? { ok: true }
+        : { error: 'bridge already exists with different execution configuration; stop it before restarting' }
+    }
     await this.stop(rawOpts.bridgeId)
     const remote = isRemoteRoot(rawOpts.cwd)
     const path = HTTP_ONLY_PROVIDERS.has(rawOpts.provider)

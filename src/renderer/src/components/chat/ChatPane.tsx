@@ -9,7 +9,7 @@ import { ExternalDirectoriesModal } from './ExternalDirectoriesModal'
 import { CrewBranch } from './CrewBranch'
 import { GitSidebar } from '../git/GitSidebar'
 import { TurnChangesDrawer } from '../thread/TurnChangesDrawer'
-import type { useGitSidebar } from '../../hooks/useGitSidebar'
+import { useGitSidebar, type GitAuthCredentials, type GitAuthRequest, type GitSigningRequest } from '../../hooks/useGitSidebar'
 import { MODE_FROM_SETTINGS, MODE_TO_LEVEL, normalizeModeLevel } from '../../app-constants'
 import { titleFromFirstMessage } from '../../hooks/useChatSessions'
 import { useComposerSend } from '../../hooks/useComposerSend'
@@ -86,7 +86,12 @@ interface ChatPaneProps {
   setGitOpen: (open: boolean) => void
   github?: GitHubStatus | null
   dirtyCount?: number
-  git: ReturnType<typeof useGitSidebar>
+  currentWorktreeId: string | null
+  onSwitchWorktree: (id: string | null) => void
+  onGitAskAgent?: (text: string, targetTabId?: string) => void
+  onRequestGitAuth?: (request: GitAuthRequest) => Promise<GitAuthCredentials | null>
+  onRequestSigningPassphrase?: (request: GitSigningRequest) => Promise<string | null>
+  alwaysCommitUnsigned?: boolean
   gitWidth: number
   setGitWidth: React.Dispatch<React.SetStateAction<number>>
   onOpenGitFileDiff: (path: string, staged: boolean) => void
@@ -159,7 +164,12 @@ export function ChatPane({
   setGitOpen,
   github,
   dirtyCount = 0,
-  git,
+  currentWorktreeId,
+  onSwitchWorktree,
+  onGitAskAgent,
+  onRequestGitAuth,
+  onRequestSigningPassphrase,
+  alwaysCommitUnsigned,
   gitWidth,
   setGitWidth,
   onOpenGitFileDiff,
@@ -191,6 +201,21 @@ export function ChatPane({
   const termWidth = externalTermWidth ?? fallbackTermWidth
   const setTermWidth = externalSetTermWidth ?? setFallbackTermWidth
   const threadRef = useRef<HTMLDivElement>(null)
+  // Each mounted chat owns a path-scoped Git controller. It stays dormant while
+  // its sidebar is closed, avoiding polling/fetch work for hidden Workbench panes.
+  const git = useGitSidebar({
+    repoPath: effectivePath,
+    workspacePath: workspace.path,
+    mainBranch: workspace.branch ?? 'main',
+    currentWorktreeId,
+    enabled: gitOpen,
+    onSwitchWorktree,
+    onAskAgent: onGitAskAgent,
+    onWorktreesChanged,
+    onRequestGitAuth,
+    onRequestSigningPassphrase,
+    alwaysCommitUnsigned,
+  })
   const appliedSkills = useAppliedSkillsBySession()
   const appliedModes = useAppliedModesBySession()
 
@@ -560,7 +585,9 @@ export function ChatPane({
     })
   }, [bridges, sessActive, activeAgentId, setMessages])
 
-  const currentGitBranch = git.state.branch || effectiveBranch
+  // The selected worktree is authoritative. A sibling pane's Git refresh must
+  // never override this pane's composer branch label.
+  const currentGitBranch = worktreeBranch ?? effectiveBranch
 
   const openBranchInWorktree = useCallback(async (ref: string, opts?: { createFrom?: string }) => {
     const branch = ref.replace(/^origin\//, '')

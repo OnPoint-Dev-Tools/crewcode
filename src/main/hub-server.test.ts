@@ -3,7 +3,8 @@ import { mkdtempSync, readFileSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { startHubServer, type RunningHubServer } from './hub-server'
+import { hubRelayExpiryReason, startHubServer, type RunningHubServer } from './hub-server'
+import { HUB_RELAY_ABSOLUTE_TIMEOUT_MS, HUB_RELAY_IDLE_TIMEOUT_MS } from '../shared/hub-relay-types'
 import { HubEnrollmentIssuer, HUB_ENROLLMENT_TTL_MS } from './hub-machine-enrollment'
 import { HubStore } from './hub-store'
 
@@ -105,6 +106,18 @@ describe('Hub store', () => {
     expect(reopened.owner()?.username).toBe('Owner')
     expect(reopened.credentialsForUser(owner.id)[0]?.publicKey).toEqual(new Uint8Array([1, 2, 3]))
     reopened.close()
+  })
+})
+
+describe('Hub relay expiry', () => {
+  it('expires idle connections and enforces an absolute lifetime despite activity', () => {
+    const connection = { openedAt: 1_000, lastActivityAt: 1_000 }
+    expect(hubRelayExpiryReason(connection, 1_000 + HUB_RELAY_IDLE_TIMEOUT_MS - 1)).toBeNull()
+    expect(hubRelayExpiryReason(connection, 1_000 + HUB_RELAY_IDLE_TIMEOUT_MS)).toBe('idle timeout')
+
+    connection.lastActivityAt = 1_000 + HUB_RELAY_ABSOLUTE_TIMEOUT_MS - 1
+    expect(hubRelayExpiryReason(connection, 1_000 + HUB_RELAY_ABSOLUTE_TIMEOUT_MS - 1)).toBeNull()
+    expect(hubRelayExpiryReason(connection, 1_000 + HUB_RELAY_ABSOLUTE_TIMEOUT_MS)).toBe('absolute timeout')
   })
 })
 

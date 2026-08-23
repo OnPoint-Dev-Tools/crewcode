@@ -94,6 +94,8 @@ import { useCodeEditorSessions } from './hooks/useEditorSessions'
 import { terminalTabDisplay } from './terminal-tab-display'
 import { playNotificationSound, usesNativeNotificationSound } from './notifications/notification-sounds'
 import { playSelectionSpeech, useSelectionSpeechState } from './voice/selection-speech-playback'
+import { resolveSelectedWorktree, worktreeSelectionKey } from './surface-worktree-selection'
+import { isSurfaceOpen, setSurfaceOpen, type SurfaceOpenState } from './surface-ui-state'
 
 import type { Message, TweakConfig, AgentInfo, AgentProviderId, ModeLevel, Session, Tab, GitHubStatus, Command } from './types'
 import type { PluginOpenContext, RegisteredPluginBrowserAction, RegisteredPluginChatAction, RegisteredPluginChatHeaderItem, RegisteredPluginEditorAction, RegisteredPluginGitLens, RegisteredPluginMissionWidget, RegisteredPluginSidebarPanel, RegisteredPluginStatusItem, RegisteredPluginTab, RegisteredPluginTerminalWatcher } from '../../shared/plugin-types'
@@ -121,12 +123,12 @@ interface CanvasPaneState {
 }
 
 const ACTIVE_WORKSPACE_STORAGE = 'crewcode:activeWorkspaceId'
-const ACTIVE_WORKTREE_STORAGE = 'crewcode:activeWorktreeIds:v1'
+const SURFACE_WORKTREE_STORAGE = 'crewcode:surfaceWorktreeIds:v1'
 const GIT_OPEN_STORAGE = 'crewcode:gitOpenByTab:v1'
 const GIT_WIDTH_STORAGE = 'crewcode:gitWidthByTab:v1'
 const CHAT_UI_STORAGE = 'crewcode:chatUiByTab:v1'
 const WORKBENCH_PANES_STORAGE = 'crewcode:workbenchPanesByTab:v1'
-const CHANGES_DRAWER_STORAGE = 'crewcode:changesDrawerOpenByWorkspace:v1'
+const CHANGES_DRAWER_STORAGE = 'crewcode:changesDrawerOpenBySurface:v1'
 
 function readLastActiveWorkspaceId(): string {
   try { return localStorage.getItem(ACTIVE_WORKSPACE_STORAGE) ?? '' } catch { return '' }
@@ -300,13 +302,10 @@ export default function App() {
 
   const activeWorkspace = ws.workspaces.find(w => w.id === activeWs) ?? EMPTY_WS
 
-  // ── Worktree selection per workspace ─────────────────────────────────────
-  const [activeWorktreeIds, setActiveWorktreeIds] = useLocalStorageJsonState<Record<string, string | null>>(ACTIVE_WORKTREE_STORAGE, {})
-  const activeWorktreeId = activeWorktreeIds[activeWs] ?? null
-  const activeWorktree   = activeWorkspace.worktrees?.find(wt => wt.id === activeWorktreeId) ?? null
-  const effectivePath    = activeWorktree?.path   ?? activeWorkspace.path
-  const effectiveBranch  = activeWorktree?.branch ?? activeWorkspace.branch ?? '—'
-  const effectiveDirty   = activeWorktree?.dirty  ?? activeWorkspace.dirty ?? 0
+  // Worktree choices are keyed by the surface that owns them (chat session or
+  // non-chat tab), never by workspace. A missing selection means the primary
+  // checkout, so newly-added workspaces naturally start on their main branch.
+  const [surfaceWorktreeIds, setSurfaceWorktreeIds] = useLocalStorageJsonState<Record<string, string | null>>(SURFACE_WORKTREE_STORAGE, {})
 
   const [gitOpenByTab, setGitOpenByTab] = useLocalStorageJsonState<Record<string, boolean>>(GIT_OPEN_STORAGE, {})
   const setGitOpenForTab = useCallback((tabId: string, next: boolean | ((prev: boolean) => boolean)) => {
@@ -326,11 +325,6 @@ export default function App() {
       return { ...prev, [tabId]: value }
     })
   }, [setGitWidthByTab])
-  const selectWorktreeForActiveWs = useCallback(
-    (id: string | null) => setActiveWorktreeIds(prev => ({ ...prev, [activeWs]: id })),
-    [activeWs],
-  )
-
   // ── Tabs per workspace ───────────────────────────────────────────────────
   const {
     tabs, activeTab, activeTabId, setActiveTabId, setActiveTabInWorkspace, getActiveTabIdForWorkspace, selectWorkspace, openTab: handleNewTab, openTabInWorkspace, openPluginTab, restoreChatTabInWorkspace, closeTab, closeTabInWorkspace,
@@ -506,6 +500,34 @@ export default function App() {
   const sessions          = chatSessions.getSessions(activeTabId)
   const sessActive        = chatSessions.getActiveId(activeTabId)
   const activeSession     = chatSessions.getActiveSession(activeTabId)
+  const worktreeSurfaceId = worktreeSelectionKey(activeTabId, activeTab?.kind, sessActive)
+  const requestedWorktreeId = worktreeSurfaceId ? surfaceWorktreeIds[worktreeSurfaceId] : null
+  const activeWorktree = resolveSelectedWorktree(requestedWorktreeId, activeWorkspace.worktrees ?? [])
+  const activeWorktreeId = activeWorktree?.id ?? null
+  const effectivePath    = activeWorktree?.path   ?? activeWorkspace.path
+  const effectiveBranch  = activeWorktree?.branch ?? activeWorkspace.branch ?? '—'
+  const effectiveDirty   = activeWorktree?.dirty  ?? activeWorkspace.dirty ?? 0
+  const selectWorktreeForActiveSurface = useCallback((id: string | null) => {
+    if (!worktreeSurfaceId) return
+    setSurfaceWorktreeIds(prev => ({ ...prev, [worktreeSurfaceId]: id }))
+  }, [setSurfaceWorktreeIds, worktreeSurfaceId])
+  const worktreeForChatSurface = useCallback((surfaceTabId: string) => {
+    const sessionId = chatSessions.getActiveId(surfaceTabId)
+    const key = worktreeSelectionKey(surfaceTabId, 'chat', sessionId)
+    const selected = resolveSelectedWorktree(surfaceWorktreeIds[key], activeWorkspace.worktrees ?? [])
+    return {
+      key,
+      id: selected?.id ?? null,
+      path: selected?.path ?? activeWorkspace.path,
+      branch: selected?.branch ?? activeWorkspace.branch ?? '—',
+      worktreeBranch: selected?.branch ?? null,
+      dirty: selected?.dirty ?? activeWorkspace.dirty ?? 0,
+    }
+  }, [activeWorkspace.branch, activeWorkspace.dirty, activeWorkspace.path, activeWorkspace.worktrees, chatSessions, surfaceWorktreeIds])
+  const selectWorktreeForKey = useCallback((key: string, id: string | null) => {
+    if (!key) return
+    setSurfaceWorktreeIds(prev => prev[key] === id ? prev : { ...prev, [key]: id })
+  }, [setSurfaceWorktreeIds])
   useEffect(() => {
     if (!activeWs || !activeTabId) return
     const visit = {
@@ -633,12 +655,10 @@ export default function App() {
   const codeEditors = useCodeEditorSessions()
   const [pendingGitDiff, setPendingGitDiff] = useState<{ title: string; diff: string } | null>(null)
   const [editorInitialFile, setEditorInitialFile] = useState<string | null>(null)
-  const [changesDrawerOpenByWorkspace, setChangesDrawerOpenByWorkspace] = useLocalStorageJsonState<Record<string, boolean>>(CHANGES_DRAWER_STORAGE, {})
-  const changesDrawerOpen = activeWs ? (changesDrawerOpenByWorkspace[activeWs] ?? false) : false
-  const setChangesDrawerOpen = useCallback((open: boolean) => {
-    if (!activeWs) return
-    setChangesDrawerOpenByWorkspace(prev => ({ ...prev, [activeWs]: open }))
-  }, [activeWs])
+  const [changesDrawerOpenBySurface, setChangesDrawerOpenBySurface] = useLocalStorageJsonState<SurfaceOpenState>(CHANGES_DRAWER_STORAGE, {})
+  const setChangesDrawerOpenForSurface = useCallback((surfaceId: string, open: boolean) => {
+    setChangesDrawerOpenBySurface(prev => setSurfaceOpen(prev, surfaceId, open))
+  }, [setChangesDrawerOpenBySurface])
 
   const [github, setGithub] = useState<GitHubStatus | null>(null)
   useEffect(() => {
@@ -681,24 +701,27 @@ export default function App() {
   }, [])
 
   // Git sidebar — conflict resolution drops a prompt into the composer.
+  const handleGitAskAgent = useCallback((text: string, targetTabId?: string) => {
+    // Route the conflict prompt: a fresh chat tab, a chosen existing one (focus
+    // it), or — when no target is given (crew path) — the currently active tab.
+    let destId: string | undefined
+    if (targetTabId === NEW_CHAT_TARGET) destId = handleNewTab('chat')
+    else if (targetTabId) { setActiveTabId(targetTabId); destId = targetTabId }
+    else destId = activeTabIdRef.current
+    if (!destId) return
+    composerDraftActions().set(destId, text)
+  }, [handleNewTab, setActiveTabId])
   const git = useGitSidebar({
     repoPath:          effectivePath,
     workspacePath:     activeWorkspace.path,
     mainBranch:        activeWorkspace.branch ?? 'main',
     currentWorktreeId: activeWorktreeId,
-    enabled:           (activeTabGitOpen || activeTab?.kind === 'git') && !!activeWs,
-    onSwitchWorktree:  selectWorktreeForActiveWs,
-    onAskAgent:        (text, targetTabId) => {
-      // Route the conflict prompt: a fresh chat tab, a chosen existing one (focus
-      // it), or — when no target is given (crew path) — the currently active tab.
-      let destId: string | undefined
-      if (targetTabId === NEW_CHAT_TARGET) destId = handleNewTab('chat')
-      else if (targetTabId) { setActiveTabId(targetTabId); destId = targetTabId }
-      else destId = activeTabIdRef.current
-      if (!destId) return
-      composerDraftActions().set(destId, text)
-    },
-    onWorktreesChanged: () => { if (activeWs) ws.refreshWorktrees(activeWs) },
+    // Chat, writer, and Workbench panes own path-scoped Git controllers below.
+    // Keep this shared controller dormant for those surfaces to avoid duplicate polling.
+    enabled:           (activeTab?.kind === 'git' || (activeTabGitOpen && !['chat', 'crew', 'writer', 'canvas'].includes(activeTab?.kind ?? ''))) && !!activeWs,
+    onSwitchWorktree:  selectWorktreeForActiveSurface,
+    onAskAgent:        handleGitAskAgent,
+    onWorktreesChanged: () => activeWs ? ws.refreshWorktrees(activeWs) : undefined,
     onRequestGitAuth: requestGitAuth,
     onRequestSigningPassphrase: requestSigningPassphrase,
     alwaysCommitUnsigned: settings.alwaysCommitUnsigned,
@@ -2256,8 +2279,10 @@ export default function App() {
     const setTabGitOpen = (open: boolean) => setGitOpenForTab(tabId, open)
     const setTabGitWidth = (next: number | ((prev: number) => number)) => setGitWidthForTab(tabId, next)
 
-    // Tab-specific session lookups
+    // Tab-specific session and worktree lookups. Split/workbench surfaces may
+    // render alongside the active outer tab, so they must never inherit its cwd.
     const tabActiveSession = chatSessions.getActiveSession(tabId)
+    const tabWorktree = worktreeForChatSurface(tabId)
 
     // Tab-specific chat state
     const tabAgentId = tabActiveSession?.agentId ?? settings.defaultAgent ?? 'pi'
@@ -2332,7 +2357,9 @@ export default function App() {
           workspaceName={activeWorkspace.name}
           openChatCount={canvasPanes.filter(pane => pane.kind === 'chat').length}
           openTerminalCount={canvasPanes.filter(pane => pane.kind === 'terminal').length}
-          panes={canvasPanes.map(pane => ({
+          panes={canvasPanes.map(pane => {
+            const paneWorktree = worktreeForChatSurface(pane.id)
+            return {
             id: pane.id,
             kind: pane.kind,
             title: pane.title,
@@ -2343,9 +2370,9 @@ export default function App() {
                 tabId={pane.id}
                 activeWs={activeWs}
                 workspace={activeWorkspace}
-                effectivePath={effectivePath}
-                effectiveBranch={effectiveBranch}
-                worktreeBranch={activeWorktree?.branch}
+                effectivePath={paneWorktree.path}
+                effectiveBranch={paneWorktree.branch}
+                worktreeBranch={paneWorktree.worktreeBranch}
                 agents={agents}
                 chatSessions={chatSessions}
                 bridges={bridges}
@@ -2385,8 +2412,13 @@ export default function App() {
                 gitOpen={gitOpenByTab[pane.id] ?? false}
                 setGitOpen={(open) => setGitOpenForTab(pane.id, open)}
                 github={github}
-                dirtyCount={effectiveDirty}
-                git={git}
+                dirtyCount={paneWorktree.dirty}
+                currentWorktreeId={paneWorktree.id}
+                onSwitchWorktree={(id) => selectWorktreeForKey(paneWorktree.key, id)}
+                onGitAskAgent={handleGitAskAgent}
+                onRequestGitAuth={requestGitAuth}
+                onRequestSigningPassphrase={requestSigningPassphrase}
+                alwaysCommitUnsigned={settings.alwaysCommitUnsigned}
                 gitWidth={gitWidthByTab[pane.id] ?? 380}
                 setGitWidth={(w) => setGitWidthForTab(pane.id, w)}
                 onOpenGitFileDiff={openGitFileDiff}
@@ -2407,8 +2439,8 @@ export default function App() {
                 onPluginTerminalWatcher={(target, paneId) => runPluginActionTarget(target, { source: 'terminal-watcher', terminalPaneId: paneId })}
                 setPendingGitDiff={setPendingGitDiff}
                 onWorktreesChanged={() => ws.refreshWorktrees(activeWs)}
-                changesDrawerOpen={changesDrawerOpen}
-                setChangesDrawerOpen={setChangesDrawerOpen}
+                changesDrawerOpen={isSurfaceOpen(changesDrawerOpenBySurface, pane.id)}
+                setChangesDrawerOpen={(open) => setChangesDrawerOpenForSurface(pane.id, open)}
               />
             ) : (
               <div className="full-term canvas-full-term">
@@ -2431,7 +2463,8 @@ export default function App() {
                 />
               </div>
             ),
-          }))}
+          }
+          })}
           onNewChat={() => addCanvasPane(tabId, 'chat')}
           onNewTerminal={() => addCanvasPane(tabId, 'terminal')}
           onClosePane={(paneId) => closeCanvasPane(tabId, paneId)}
@@ -2445,9 +2478,9 @@ export default function App() {
           tabId={tabId}
           activeWs={activeWs}
           workspace={activeWorkspace}
-          effectivePath={effectivePath}
-          effectiveBranch={effectiveBranch}
-          worktreeBranch={activeWorktree?.branch}
+          effectivePath={tabWorktree.path}
+          effectiveBranch={tabWorktree.branch}
+          worktreeBranch={tabWorktree.worktreeBranch}
           agents={agents}
           chatSessions={chatSessions}
           bridges={bridges}
@@ -2486,8 +2519,13 @@ export default function App() {
           gitOpen={tabGitOpen}
           setGitOpen={setTabGitOpen}
           github={github}
-          dirtyCount={effectiveDirty}
-          git={git}
+          dirtyCount={tabWorktree.dirty}
+          currentWorktreeId={tabWorktree.id}
+          onSwitchWorktree={(id) => selectWorktreeForKey(tabWorktree.key, id)}
+          onGitAskAgent={handleGitAskAgent}
+          onRequestGitAuth={requestGitAuth}
+          onRequestSigningPassphrase={requestSigningPassphrase}
+          alwaysCommitUnsigned={settings.alwaysCommitUnsigned}
           gitWidth={tabGitWidth}
           setGitWidth={setTabGitWidth}
           onOpenGitFileDiff={openGitFileDiff}
@@ -2508,8 +2546,8 @@ export default function App() {
           onPluginTerminalWatcher={(target, paneId) => runPluginActionTarget(target, { source: 'terminal-watcher', terminalPaneId: paneId })}
           setPendingGitDiff={setPendingGitDiff}
           onWorktreesChanged={() => ws.refreshWorktrees(activeWs)}
-          changesDrawerOpen={changesDrawerOpen}
-          setChangesDrawerOpen={setChangesDrawerOpen}
+          changesDrawerOpen={isSurfaceOpen(changesDrawerOpenBySurface, tabId)}
+          setChangesDrawerOpen={(open) => setChangesDrawerOpenForSurface(tabId, open)}
         />
       )
     }
@@ -2633,9 +2671,9 @@ export default function App() {
           tabId={tabId}
           activeWs={activeWs}
           workspace={activeWorkspace}
-          effectivePath={effectivePath}
-          effectiveBranch={effectiveBranch}
-          worktreeBranch={activeWorktree?.branch}
+          effectivePath={tabWorktree.path}
+          effectiveBranch={tabWorktree.branch}
+          worktreeBranch={tabWorktree.worktreeBranch}
           agents={agents}
           chatSessions={chatSessions}
           bridges={bridges}
@@ -2670,8 +2708,13 @@ export default function App() {
           gitOpen={tabGitOpen}
           setGitOpen={setTabGitOpen}
           github={github}
-          dirtyCount={effectiveDirty}
-          git={git}
+          dirtyCount={tabWorktree.dirty}
+          currentWorktreeId={tabWorktree.id}
+          onSwitchWorktree={(id) => selectWorktreeForKey(tabWorktree.key, id)}
+          onGitAskAgent={handleGitAskAgent}
+          onRequestGitAuth={requestGitAuth}
+          onRequestSigningPassphrase={requestSigningPassphrase}
+          alwaysCommitUnsigned={settings.alwaysCommitUnsigned}
           gitWidth={tabGitWidth}
           setGitWidth={setTabGitWidth}
           onOpenGitFileDiff={openGitFileDiff}
@@ -2685,8 +2728,8 @@ export default function App() {
           termLayout={pty.getTabLayout(tabId)}
           onTermLayoutChange={(layout) => pty.setTabLayout(tabId, layout)}
           setPendingGitDiff={setPendingGitDiff}
-          changesDrawerOpen={changesDrawerOpen}
-          setChangesDrawerOpen={setChangesDrawerOpen}
+          changesDrawerOpen={isSurfaceOpen(changesDrawerOpenBySurface, tabId)}
+          setChangesDrawerOpen={(open) => setChangesDrawerOpenForSurface(tabId, open)}
         />
       )
     }

@@ -82,7 +82,7 @@ export interface UseGitSidebarArgs {
   enabled:           boolean                      // only fetch while the sidebar is open
   onSwitchWorktree:  (id: string | null) => void  // App owns worktree selection
   onAskAgent?:       (text: string, targetTabId?: string) => void  // delegate a task to a chat tab's agent
-  onWorktreesChanged?: () => void                 // worktree added/removed — refresh app state
+  onWorktreesChanged?: () => void | Promise<void> // worktree added/removed — refresh app state
   onRequestGitAuth?: (request: GitAuthRequest) => Promise<GitAuthCredentials | null>
   // Resolve a commit signing-key passphrase, or null if the user declines signing.
   onRequestSigningPassphrase?: (request: GitSigningRequest) => Promise<string | null>
@@ -322,8 +322,6 @@ export function useGitSidebar(args: UseGitSidebarArgs): UseGitSidebarResult {
       const branch = ref.replace(/^origin\//, '')
       const wt = worktreesRef.current.find(w => w.branch === branch || w.branch === ref)
       if (wt) {
-        // Branches with registered worktrees should behave like VS Code: open
-        // that checkout instead of mutating the currently visible one.
         onSwitchWorktree(wt.id)
         showBanner({ kind: '', text: `opened worktree ${wt.branch}`, auto: 2500 })
         return
@@ -333,10 +331,43 @@ export function useGitSidebar(args: UseGitSidebarArgs): UseGitSidebarResult {
         showBanner({ kind: '', text: `opened ${mainBranch}`, auto: 2500 })
         return
       }
-      runAction(`checkout ${ref}…`, () => window.electronAPI!.gitCheckout(repoPath, ref), `on ${ref}`)
+      // Never checkout another branch into this surface's current directory:
+      // that directory may be the primary checkout or belong to another chat.
+      // Materialize/open a worktree so branch changes remain surface-local.
+      runAction(
+        `opening ${ref} in a worktree…`,
+        async () => {
+          const created = await window.electronAPI!.worktreeCreate(
+            workspacePath,
+            branch,
+            undefined,
+            ref.startsWith('origin/') ? ref : undefined,
+          )
+          if (created.error || !created.path) return created
+          const listed = await window.electronAPI!.worktreeList(workspacePath)
+          const next = listed.worktrees?.find(candidate => candidate.path === created.path || candidate.branch === branch)
+          await onWorktreesChanged?.()
+          if (next) onSwitchWorktree(next.id)
+          return next ? { ok: true } : { error: `created ${branch}, but could not resolve its worktree` }
+        },
+        `opened ${branch} in its own worktree`,
+      )
     },
-    onCreateBranch: (name) =>
-      runAction(`creating ${name}…`, () => window.electronAPI!.gitCreateBranch(repoPath, name), `on ${name}`),
+    onCreateBranch: (name) => {
+      runAction(
+        `creating ${name} in a worktree…`,
+        async () => {
+          const created = await window.electronAPI!.worktreeCreate(workspacePath, name)
+          if (created.error || !created.path) return created
+          const listed = await window.electronAPI!.worktreeList(workspacePath)
+          const next = listed.worktrees?.find(candidate => candidate.path === created.path || candidate.branch === name)
+          await onWorktreesChanged?.()
+          if (next) onSwitchWorktree(next.id)
+          return next ? { ok: true } : { error: `created ${name}, but could not resolve its worktree` }
+        },
+        `created ${name} in its own worktree`,
+      )
+    },
 
     onStageFile:   (p) => runAction('staging…',   () => window.electronAPI!.gitStage(repoPath, [p]),   'staged'),
     onUnstageFile: (p) => runAction('unstaging…', () => window.electronAPI!.gitUnstage(repoPath, [p]), 'unstaged'),

@@ -1,6 +1,7 @@
 import { ipcMain, BrowserWindow, shell } from 'electron'
 import { spawn, spawnSync, ChildProcess } from 'child_process'
 import { publishRepository, type PublishRepoOpts } from './github-publish'
+import { ghAvailable, getGhStatus, runGh } from './github-service'
 
 export interface GhStatus {
   available: boolean
@@ -17,30 +18,6 @@ export interface GhAuthEvent {
   url?:  string         // verification URL
   text?: string         // raw log line for the output type
   error?: string
-}
-
-function ghAvailable(): boolean {
-  try {
-    const r = spawnSync('gh', ['--version'], { encoding: 'utf8' })
-    return r.status === 0
-  } catch {
-    return false
-  }
-}
-
-function ghStatus(): GhStatus {
-  if (!ghAvailable()) {
-    return { available: false, loggedIn: false, user: null, host: null, raw: '', error: 'gh CLI not found in PATH' }
-  }
-  const r = spawnSync('gh', ['auth', 'status'], { encoding: 'utf8' })
-  const raw = (r.stdout ?? '') + (r.stderr ?? '')
-  // `gh auth status` exits 0 when logged in, non-zero when not.
-  const loggedIn = r.status === 0
-  const userMatch = raw.match(/account\s+(\S+)/i) ?? raw.match(/Logged in to\s+(\S+)\s+as\s+(\S+)/i)
-  const hostMatch = raw.match(/Logged in to\s+(\S+)/i)
-  const user = userMatch ? (userMatch[2] ?? userMatch[1]) : null
-  const host = hostMatch ? hostMatch[1] : null
-  return { available: true, loggedIn, user, host, raw }
 }
 
 let activeLogin: ChildProcess | null = null
@@ -116,15 +93,6 @@ function logout(): { ok: boolean; error?: string } {
   return { ok: true }
 }
 
-/** Run a gh subcommand in a repo and collapse the result into { ok, output, error }. */
-function runGh(cwd: string, args: string[]): { ok: boolean; output: string; error?: string } {
-  if (!ghAvailable()) return { ok: false, output: '', error: 'gh CLI not found in PATH' }
-  const r = spawnSync('gh', args, { cwd, encoding: 'utf8' })
-  const output = ((r.stdout ?? '') + (r.stderr ?? '')).trim()
-  if (r.status !== 0) return { ok: false, output, error: output || `gh ${args[0]} ${args[1]} failed` }
-  return { ok: true, output }
-}
-
 export type RepoCreateOpts = PublishRepoOpts
 
 /** Publish a local folder completely, including its first commit and push. */
@@ -140,7 +108,7 @@ function repoCreate(cwd: string, opts: RepoCreateOpts): { ok: boolean; output: s
 }
 
 export function registerGhIpc(): void {
-  ipcMain.handle('gh:status', () => ghStatus())
+  ipcMain.handle('gh:status', () => getGhStatus())
   ipcMain.handle('gh:loginStart', () => startLogin())
   ipcMain.handle('gh:loginCancel', () => cancelLogin())
   ipcMain.handle('gh:logout', () => logout())

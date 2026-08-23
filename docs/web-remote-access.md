@@ -64,14 +64,35 @@ pairing URL, exchanges it for a brain-local session, and talks directly to that
 brain. This mode is for loopback, LAN, or a trusted tailnet. It requires a reachable
 address and does not provide account login or machine discovery.
 
-### Self-hosted Hub mode (identity foundation implemented)
+### Self-hosted Hub mode (encrypted relay preview implemented)
 
-The first Hub slice is implemented as the separate `crewcode hub` process. It
-provides durable local identity storage, first-owner passkey bootstrap, passkey
-sign-in, revocable browser sessions, audit events, and an authenticated machine-list
-skeleton. Machine enrollment, outbound brain presence, connection tickets, relay,
-end-to-end browser-to-brain encryption, and the shared renderer adapter remain
-planned; the current Hub cannot remotely control a brain yet.
+The separate `crewcode hub` process now provides durable local identity storage,
+first-owner passkey bootstrap, passkey sign-in, revocable browser sessions, machine
+enrollment/presence, short-lived one-shot connection tickets, a bounded outbound
+relay, and an end-to-end encrypted browser-to-Brain transport. The Hub dashboard can
+open the shared renderer for an online machine. Workspace, terminal, and agent RPC
+use the existing typed web-client adapter through the encrypted tunnel.
+
+This is still a preview: recovery codes, live dashboard updates, persisted remote
+crash-durable execution custody, attachment tunneling, cross-device chat discovery,
+and durable bandwidth accounting remain incomplete. Per-connection frame and byte
+token buckets are enforced. Browser disconnect now detaches Brain-owned agents and
+terminals; a fresh encrypted connection explicitly reclaims known stable resource ids
+and replays only bounded observed events, never interrupted RPC requests or prompts.
+The browser discovers same-owner execution routes before the shared App mounts and
+buffers reclaimed events until chat subscribers are ready. If an earlier connection
+already consumed the detached event window, a completed execution can recover its
+latest assistant reply from the Brain-local conversation store over an owner-checked,
+agent-scoped encrypted RPC. The browser persists only the opaque chat/resource route
+needed to request that recovery across a full page close; it contains no credential
+or added authority. Recovery events use stable ids and are idempotent in chat.
+The Brain dashboard reports running/completed/blocked/failed/interrupted executions.
+This survives browser/network loss while the Brain process and its persistent Hub
+relay remain alive. A Brain/VPS restart still interrupts active execution and does
+not replay the unobserved prompt. After reconnect, CrewCode can recover the latest
+persisted assistant reply and an explicit new user prompt idempotently reasserts the
+stable bridge, creating a replacement provider process only when the Brain's
+process-local execution registry is gone.
 
 A user runs one always-on **CrewCode Hub** on a Linux desktop, headless server,
 NAS, or other trusted host. The Hub serves the React application, local sign-in,
@@ -162,9 +183,11 @@ never evidence that a command or agent turn completed.
 1. The signed-in browser selects a machine.
 2. The Hub issues a very short-lived, single-use connection ticket bound to the
    local user, browser session, machine id, requested protocol, and random nonce.
-3. The browser and brain connect through the Hub relay. The brain validates the
-   signed ticket and rejects expired, replayed, revoked, wrong-audience, or
-   unauthorized-user tickets.
+3. The browser presents the opaque ticket once to the Hub relay. The Hub consumes
+   it, revalidates machine ownership/revocation, and sends immutable user/session/
+   scope claims over the machine-authenticated outbound channel. Expired, replayed,
+   wrong-machine, offline, or revoked tickets are rejected. Tickets are memory-only,
+   not self-contained bearer claims or durable signed tokens.
 4. The browser and brain perform an authenticated end-to-end handshake using the
    enrolled machine public key and a browser ephemeral key before privileged RPC is
    enabled.
@@ -268,10 +291,19 @@ AuditEvent(id, user_id?, machine_id?, browser_session_id?, type, created_at, met
    outbound heartbeat presence, dashboard status, and revocation are complete.
    Machine logout/credential rotation remain.**
 9. Implement the bounded Hub relay and a transport-neutral multiplexed tunnel with
-   authenticated end-to-end browser-to-brain encryption.
+   authenticated end-to-end browser-to-brain encryption. **Preview complete:**
+   one-shot 60-second tickets, outbound authenticated WebSocket relay, P-256 ephemeral
+   ECDH, enrolled Ed25519 Brain authentication, HKDF/AES-256-GCM ordered frames,
+   30-minute idle and 8-hour absolute connection expiry, backpressure/frame bounds,
+   per-connection frame/byte token buckets, and typed RPC/event multiplexing are
+   implemented. Explicit fresh-ticket browser reconnect preserves UI state without
+   replaying interrupted operations and reclaims known Brain-owned terminal/agent
+   ids. Stable web bridge ids allow the same remote thread to reattach after a page
+   reload. Cross-device thread discovery and Brain-process restart recovery remain.
 10. Replace the direct-only browser connection screen with local Hub sign-in,
     machine list/status, machine selection, reconnect, and revocation UI while
-    retaining an explicit direct-pairing route.
+    retaining an explicit direct-pairing route. **Initial machine selection and shared
+    renderer launch are complete; automatic reconnect and live status remain.**
 11. Persist remote execution custody and test disconnect, restart, revocation,
     replay, cross-user isolation, relay compromise, and backpressure behavior.
 12. Move the desktop application onto the same backend contract.
@@ -316,16 +348,30 @@ crewcode brain
 Enrollment creates an Ed25519 machine identity plus a random bearer credential in
 `~/.crewcode/brain/hub-machine.json`, written with owner-only permissions. The Hub
 stores the public key and only a SHA-256 digest of the bearer secret. `crewcode brain`
-then makes outbound HTTPS heartbeat requests every 30 seconds; the dashboard marks a
-machine offline after 90 seconds without a successful heartbeat. Revoking it in the
-dashboard immediately rejects later heartbeats. Enrollment tokens are never written
+then maintains an authenticated outbound WebSocket relay and sends HTTPS heartbeats
+every 30 seconds; the dashboard marks a machine offline after 90 seconds without a
+successful heartbeat. Revoking it closes active relay sessions and rejects later
+heartbeats. Enrollment tokens are never written
 to the Hub database and are invalidated by Hub restart, expiry, first successful use,
 or a failed guess against their id.
 
-This presence process does **not** accept commands, expose workspaces, start agents,
-or establish a relay. The Ed25519 key is reserved for the later signed-ticket and
-encrypted-relay stages; current heartbeat authentication uses the separate random
-machine bearer credential over HTTPS.
+Remote authority is disabled by default. Enable only explicit Brain-local roots and
+scopes, for example:
+
+```bash
+crewcode brain \
+  --workspace-root ~/developing \
+  --allow-scope workspace:read \
+  --allow-scope workspace:write \
+  --allow-scope terminal \
+  --allow-scope agent
+```
+
+Hub sign-in and ticket scope requests cannot widen these grants. Every RPC method is
+classified again at the Brain and filesystem/PTY/agent operations retain registered-
+workspace enforcement. The enrolled Ed25519 identity signs each ephemeral P-256
+handshake; HKDF-derived AES-256-GCM keys encrypt ordered application frames so the Hub
+routes ciphertext rather than source, terminal, prompt, or response content.
 
 Planned direct-auth and remaining Hub commands:
 
@@ -342,10 +388,9 @@ The initial CLI distribution is implemented. From a checkout, run `npm run serve
 from a published package, run `npx crewcode@latest` or `crewcode serve`. It
 builds/serves the shared renderer, defaults to loopback, prints a single-use pairing
 URL, resolves installed provider CLIs without Electron, and shuts down cleanly on
-SIGINT/SIGTERM. The direct-auth CLI and remaining machine-management/relay commands above remain
-planned. Enrollment and dashboard revocation are implemented. `crewcode hub` has its
-own standalone setup/sign-in/machine-list screen; it does not yet mount the shared
-CrewCode workspace client.
+SIGINT/SIGTERM. The direct-auth CLI and remaining machine-management commands above
+remain planned. Enrollment, dashboard revocation, machine selection, and shared
+CrewCode workspace-client launch through the encrypted Hub relay are implemented.
 
 ## Current backend extraction
 
@@ -359,6 +404,11 @@ are now Electron transport adapters for those operations. Native folder pickers,
 attachment handling, formatting, and destructive filesystem mutations remain in
 the Electron adapter until their browser API and validation contracts are added.
 
+Hub-relayed attachment tunneling is not implemented. The browser can list the
+Brain-owned MCP registry and select entries by opaque id; `bridge.start` resolves
+those ids server-side and never accepts executable MCP command or environment
+definitions from the browser.
+
 `PtyService` now owns process lifecycle independently of Electron. Both Electron
 IPC and the remote server adapt that service. Browser terminal creation is
 restricted to registered workspace roots, commands use authenticated HTTP RPC,
@@ -370,4 +420,19 @@ providers. The reusable service now persists provider resume IDs and normalized 
 user/assistant transcript fallback, and exposes provider compaction. Complex
 cross-provider handoff summaries and every desktop-only surface still live in the
 Electron application; browser chat intentionally uses the same bridge contract
-without pretending unsupported desktop controls are available.
+without pretending unsupported desktop controls are available. Prompt acceptance is
+not treated as turn completion: the browser keeps the Stop control active until an
+authoritative terminal bridge event arrives. Provider model discovery uses the same
+authenticated RPC and keeps curated fallback choices visible while that asynchronous
+discovery is pending or unavailable. The GitHub sidebar can read Brain-local `gh`
+status, pull requests, workflow runs, and issues, and can create/merge/approve pull
+requests inside registered workspaces without exposing the Brain's GitHub token.
+Browser voice supports Brain-configured OpenAI/xAI realtime client secrets,
+dictation, and speech; permanent keys remain server-side, remote key mutation is
+denied, and remote audio is bounded to 8 MiB. Browser editor formatting is routed to
+workspace-local Prettier through the sandboxed filesystem service.
+
+Delegation/Crew lifecycle transport, plugin iframe asset/capability routing,
+Brain-local voice sidecars, remote GitHub login/logout/repository publishing, file
+watch events, and language-server framing remain incomplete browser work. They must
+not be represented as enabled merely because the shared desktop UI mounts.

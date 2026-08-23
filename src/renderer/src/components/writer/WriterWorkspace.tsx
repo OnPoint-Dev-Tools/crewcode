@@ -40,7 +40,7 @@ import { PierreDiff } from '../diff/PierreDiff'
 import { Icon } from '../ui/Icon'
 import type { AgentInfo, GitHubStatus, Message, Workspace } from '../../types'
 import type { CustomCommand, Prompt, Skill } from '../../types/prompts'
-import type { useGitSidebar } from '../../hooks/useGitSidebar'
+import type { GitAuthCredentials, GitAuthRequest, GitSigningRequest } from '../../hooks/useGitSidebar'
 import type { Layout } from '../../hooks/useTerminalSessions'
 
 const WRITER_PROMPT_STORAGE = 'crewcode:writerWorkspace:systemPrompt:v1'
@@ -197,7 +197,12 @@ interface WriterWorkspaceProps {
   setGitOpen: (open: boolean) => void
   github?: GitHubStatus | null
   dirtyCount?: number
-  git: ReturnType<typeof useGitSidebar>
+  currentWorktreeId: string | null
+  onSwitchWorktree: (id: string | null) => void
+  onGitAskAgent?: (text: string, targetTabId?: string) => void
+  onRequestGitAuth?: (request: GitAuthRequest) => Promise<GitAuthCredentials | null>
+  onRequestSigningPassphrase?: (request: GitSigningRequest) => Promise<string | null>
+  alwaysCommitUnsigned?: boolean
   gitWidth: number
   setGitWidth: React.Dispatch<React.SetStateAction<number>>
   onOpenGitFileDiff: (path: string, staged: boolean) => void

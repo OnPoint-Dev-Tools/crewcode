@@ -1,8 +1,20 @@
 import { createPublicKey } from 'crypto'
 import { createServer, type IncomingMessage, type ServerResponse } from 'http'
-import { join } from 'path'
+import { randomBytes } from 'crypto'
+import { WebSocket, WebSocketServer } from 'ws'
+import { extname, join, normalize, sep } from 'path'
+import { existsSync, readFileSync, statSync } from 'fs'
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/server'
 import { remotePeerKey, RemoteAccessRateLimiter } from './remote-access-security'
+import { HubConnectionTicketIssuer } from './hub-connection-tickets'
+import { HubRelayTrafficLimiter } from './hub-relay-limits'
+import {
+  HUB_RELAY_ABSOLUTE_TIMEOUT_MS,
+  HUB_RELAY_IDLE_TIMEOUT_MS,
+  HUB_RELAY_MAX_FRAME_BYTES,
+  type BrainAccessScope,
+  type HubRelayControlFrame,
+} from '../shared/hub-relay-types'
 import { HubAuth } from './hub-auth'
 import { HubEnrollmentIssuer, HUB_MACHINE_ONLINE_WINDOW_MS } from './hub-machine-enrollment'
 import { HubStore, type HubSession } from './hub-store'
@@ -10,14 +22,23 @@ import { HubStore, type HubSession } from './hub-store'
 const MAX_BODY_BYTES = 1024 * 1024
 const HUB_AUTH_ATTEMPTS_PER_MINUTE = 30
 const HUB_MACHINE_ATTEMPTS_PER_MINUTE = 60
+const HUB_MAX_CONNECTIONS_PER_MACHINE = 4
+const HUB_MAX_CONNECTIONS_PER_USER = 8
+const HUB_RELAY_EXPIRY_SWEEP_MS = 30_000
+const HUB_LATE_BRAIN_FRAME_GRACE_MS = 30_000
+const HUB_MAX_RECENTLY_RELEASED_CONNECTIONS = 1_000
 const SESSION_COOKIE_HTTP = 'crewcode_hub_session'
 const SESSION_COOKIE_HTTPS = '__Host-crewcode_hub_session'
+const HUB_BROWSER_RELAY_PROTOCOL = 'crewcode.browser.v1'
+const HUB_BRAIN_RELAY_PROTOCOL = 'crewcode.brain.v1'
+const VALID_BRAIN_SCOPES = new Set<BrainAccessScope>(['workspace:read', 'workspace:write', 'terminal', 'agent'])
 
 export interface HubServerOptions {
   host?: string
   port?: number
   dataDir: string
   publicOrigin?: string
+  webRoot?: string
   now?: () => number
 }
 
@@ -73,6 +94,22 @@ function boundedString(value: unknown, field: string, maximum: number, nullable 
   const normalized = value.trim()
   if (!normalized || normalized.length > maximum) throw new Error(`${field} must contain 1 to ${maximum} characters`)
   return normalized
+}
+
+export function hubRelayExpiryReason(
+  connection: { openedAt: number; lastActivityAt: number },
+  at: number,
+): 'idle timeout' | 'absolute timeout' | null {
+  if (at - connection.openedAt >= HUB_RELAY_ABSOLUTE_TIMEOUT_MS) return 'absolute timeout'
+  if (at - connection.lastActivityAt >= HUB_RELAY_IDLE_TIMEOUT_MS) return 'idle timeout'
+  return null
+}
+
+function requestedBrainScopes(value: unknown): BrainAccessScope[] {
+  if (!Array.isArray(value) || value.length > VALID_BRAIN_SCOPES.size) throw new Error('requestedScopes must be a bounded array')
+  const scopes = value.map(item => String(item) as BrainAccessScope)
+  if (scopes.some(scope => !VALID_BRAIN_SCOPES.has(scope)) || new Set(scopes).size !== scopes.length) throw new Error('requestedScopes contains an invalid or duplicate scope')
+  return scopes
 }
 
 function machinePublicKey(value: unknown): string {
@@ -142,12 +179,31 @@ const creation=o=>({...o,challenge:bytes(o.challenge),user:{...o.user,id:bytes(o
 const request=o=>({...o,challenge:bytes(o.challenge),allowCredentials:(o.allowCredentials||[]).map(c=>({...c,id:bytes(c.id)}))});
 const authError=e=>{const message=e&&e.message?e.message:String(e);if(!window.isSecureContext)return'Passkeys require a secure browser context. Open the exact localhost URL printed by CrewCode, or use the configured HTTPS Hub origin.';if(message.includes('InsecureLocalhostNotAllowed'))return'This browser or passkey provider refuses passkeys over HTTP localhost. For local testing, try current Chrome or Chromium. Otherwise run the Hub at its final HTTPS origin and create the passkey there.';return message};
 function view(name){for(const id of ['setup','signin','dashboard'])$(id).hidden=id!==name}
-async function refresh(){error.textContent='';const s=await json('/api/v1/hub/status');if(!s.ownerConfigured){view('setup');status.textContent=location.hash.includes('bootstrap=')?'Register the first owner passkey.':'Open the one-time setup URL printed by crewcode hub.';return}try{const me=await json('/api/v1/hub/session');csrf=me.csrf;view('dashboard');status.textContent='Hub ready';$('username').textContent=me.user.username;const m=await json('/api/v1/hub/machines'),list=$('machines');list.textContent='';if(!m.machines.length)list.textContent='No machines enrolled yet.';for(const x of m.machines){const row=document.createElement('div');row.className='machine';const label=document.createElement('span');label.textContent=x.name+' · '+x.status+(x.platform?' · '+x.platform:'');row.append(label);if(x.status!=='revoked'){const revoke=document.createElement('button');revoke.className='quiet';revoke.textContent='Revoke';revoke.onclick=async()=>{try{await json('/api/v1/hub/machines/'+encodeURIComponent(x.id)+'/revoke',{method:'POST',headers:{'x-crewcode-csrf':csrf},body:'{}'});await refresh()}catch(e){error.textContent=e.message}};row.append(revoke)}list.append(row)}}catch{view('signin');status.textContent='Sign in to view your machines.'}}
+async function refresh(){error.textContent='';const s=await json('/api/v1/hub/status');if(!s.ownerConfigured){view('setup');status.textContent=location.hash.includes('bootstrap=')?'Register the first owner passkey.':'Open the one-time setup URL printed by crewcode hub.';return}try{const me=await json('/api/v1/hub/session');csrf=me.csrf;view('dashboard');status.textContent='Hub ready';$('username').textContent=me.user.username;const m=await json('/api/v1/hub/machines'),list=$('machines');list.textContent='';if(!m.machines.length)list.textContent='No machines enrolled yet.';for(const x of m.machines){const row=document.createElement('div');row.className='machine';const label=document.createElement('span');label.textContent=x.name+' · '+x.status+(x.platform?' · '+x.platform:'');row.append(label);const actions=document.createElement('span');if(x.status==='online'){const open=document.createElement('button');open.textContent='Open';open.onclick=()=>{location.href='/app?machine='+encodeURIComponent(x.id)};actions.append(open)}if(x.status!=='revoked'){const revoke=document.createElement('button');revoke.className='quiet';revoke.textContent='Revoke';revoke.onclick=async()=>{try{await json('/api/v1/hub/machines/'+encodeURIComponent(x.id)+'/revoke',{method:'POST',headers:{'x-crewcode-csrf':csrf},body:'{}'});await refresh()}catch(e){error.textContent=e.message}};actions.append(revoke)}row.append(actions);list.append(row)}}catch{view('signin');status.textContent='Sign in to view your machines.'}}
 $('setup-button').onclick=async()=>{try{error.textContent='';const token=new URLSearchParams(location.hash.slice(1)).get('bootstrap')||'';const username=$('owner').value;const start=await json('/api/v1/hub/bootstrap/options',{method:'POST',body:JSON.stringify({token,username})});const credential=await navigator.credentials.create({publicKey:creation(start.options)});const done=await json('/api/v1/hub/bootstrap/verify',{method:'POST',body:JSON.stringify({token,username,flowId:start.flowId,response:credentialJSON(credential)})});csrf=done.csrf;history.replaceState(null,'',location.pathname);await refresh()}catch(e){error.textContent=authError(e)}};
 $('signin-button').onclick=async()=>{try{error.textContent='';const start=await json('/api/v1/hub/auth/options',{method:'POST',body:'{}'});const credential=await navigator.credentials.get({publicKey:request(start.options)});const done=await json('/api/v1/hub/auth/verify',{method:'POST',body:JSON.stringify({flowId:start.flowId,response:credentialJSON(credential)})});csrf=done.csrf;await refresh()}catch(e){error.textContent=authError(e)}};
 $('enrollment-button').onclick=async()=>{try{error.textContent='';const issued=await json('/api/v1/hub/enrollments',{method:'POST',headers:{'x-crewcode-csrf':csrf},body:'{}'}),out=$('enrollment');out.hidden=false;out.textContent='Enrollment token (single use; do not share):\\n'+issued.token+'\\n\\nRun on the machine within 10 minutes, then paste the token when prompted:\\ncrewcode enroll --hub '+location.origin}catch(e){error.textContent=e.message}};
 $('logout-button').onclick=async()=>{try{await json('/api/v1/hub/logout',{method:'POST',headers:{'x-crewcode-csrf':csrf},body:'{}'});csrf='';$('enrollment').hidden=true;$('enrollment').textContent='';await refresh()}catch(e){error.textContent=e.message}};
 refresh().catch(e=>{status.textContent='Could not connect';error.textContent=e.message});})();`
+
+function serveHubApp(webRoot: string | undefined, pathname: string, response: ServerResponse): boolean {
+  if (!webRoot || (pathname !== '/app' && !pathname.startsWith('/assets/'))) return false
+  const candidate = pathname === '/app' ? join(webRoot, 'index.html') : normalize(join(webRoot, pathname.replace(/^\/+/, '')))
+  const normalizedRoot = normalize(webRoot)
+  if (candidate !== normalizedRoot && !candidate.startsWith(normalizedRoot + sep)) return false
+  if (!existsSync(candidate) || !statSync(candidate).isFile()) return false
+  const mime: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2' }
+  const body = readFileSync(candidate)
+  response.writeHead(200, {
+    'content-type': mime[extname(candidate)] ?? 'application/octet-stream',
+    'content-length': body.byteLength,
+    'cache-control': pathname === '/app' ? 'no-store' : 'public, max-age=300',
+    'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+    'x-content-type-options': 'nosniff',
+  })
+  response.end(body)
+  return true
+}
 
 function serveAsset(pathname: string, response: ServerResponse): boolean {
   let body: string
@@ -175,6 +231,7 @@ export async function startHubServer(options: HubServerOptions): Promise<Running
   const authLimiter = new RemoteAccessRateLimiter(HUB_AUTH_ATTEMPTS_PER_MINUTE)
   const machineLimiter = new RemoteAccessRateLimiter(HUB_MACHINE_ATTEMPTS_PER_MINUTE)
   const enrollments = new HubEnrollmentIssuer(now)
+  const tickets = new HubConnectionTicketIssuer(now)
   let publicOrigin = options.publicOrigin ?? ''
   let auth: HubAuth
 
@@ -186,6 +243,50 @@ export async function startHubServer(options: HubServerOptions): Promise<Running
   const validCsrf = (request: IncomingMessage, session: HubSession): boolean => {
     const csrf = typeof request.headers['x-crewcode-csrf'] === 'string' ? request.headers['x-crewcode-csrf'] : ''
     return store.validateCsrf(session.id, csrf)
+  }
+
+  const brainSockets = new Map<string, WebSocket>()
+  const relaySockets = new Set<WebSocket>()
+  const relayPeer = new WeakMap<IncomingMessage, { kind: 'brain'; machineId: string } | { kind: 'browser'; ticket: string }>()
+  const relayConnections = new Map<string, {
+    machineId: string
+    userId: string
+    browserSessionId: string
+    brain: WebSocket
+    browser: WebSocket
+    openedAt: number
+    lastActivityAt: number
+    traffic: HubRelayTrafficLimiter
+  }>()
+  const recentlyReleasedBrowserConnections = new Map<string, number>()
+  const rememberReleasedBrowserConnection = (connectionId: string): void => {
+    recentlyReleasedBrowserConnections.delete(connectionId)
+    recentlyReleasedBrowserConnections.set(connectionId, now())
+    while (recentlyReleasedBrowserConnections.size > HUB_MAX_RECENTLY_RELEASED_CONNECTIONS) {
+      const oldest = recentlyReleasedBrowserConnections.keys().next().value as string | undefined
+      if (!oldest) break
+      recentlyReleasedBrowserConnections.delete(oldest)
+    }
+  }
+
+  const terminateRelayConnection = (
+    connectionId: string,
+    connection: (typeof relayConnections extends Map<string, infer Value> ? Value : never),
+    code: number,
+    reason: string,
+    auditType: string,
+    metadata: Record<string, unknown> = {},
+  ): void => {
+    if (connection.brain.readyState === WebSocket.OPEN) {
+      connection.brain.send(JSON.stringify({ type: 'close', connectionId, reason } satisfies HubRelayControlFrame))
+    }
+    if (connection.browser.readyState === WebSocket.OPEN) connection.browser.close(code, reason)
+    relayConnections.delete(connectionId)
+    store.audit(auditType, connection.userId, connection.machineId, {
+      connectionId,
+      browserSessionId: connection.browserSessionId,
+      ...metadata,
+    }, now())
   }
 
   const server = createServer(async (request, response) => {
@@ -251,6 +352,21 @@ export async function startHubServer(options: HubServerOptions): Promise<Running
         sendJson(response, 200, { machines: store.machinesForUser(session.userId, now(), HUB_MACHINE_ONLINE_WINDOW_MS) })
         return
       }
+      const ticketMatch = request.method === 'POST' ? pathname.match(/^\/api\/v1\/hub\/machines\/([a-f0-9]{32})\/tickets$/) : null
+      if (ticketMatch) {
+        const session = currentSession(request)
+        if (!session) { sendJson(response, 401, { error: 'valid Hub session required' }); return }
+        if (!validCsrf(request, session)) { sendJson(response, 403, { error: 'valid CSRF token required' }); return }
+        const machine = store.machineAuthorityForUser(session.userId, ticketMatch[1])
+        if (!machine) { sendJson(response, 404, { error: 'active machine not found' }); return }
+        if (!brainSockets.has(machine.id)) { sendJson(response, 409, { error: 'machine relay is offline' }); return }
+        const body = await readJson(request)
+        const requestedScopes = requestedBrainScopes(body.requestedScopes)
+        const issued = tickets.issue({ userId: session.userId, browserSessionId: session.id, machineId: machine.id, requestedScopes })
+        store.audit('hub.connection.ticket-issued', session.userId, machine.id, { browserSessionId: session.id, requestedScopes, expiresAt: issued.expiresAt }, now())
+        sendJson(response, 201, { ...issued, machineId: machine.id, machinePublicKey: machine.publicKey, requestedScopes })
+        return
+      }
       if (request.method === 'POST' && pathname === '/api/v1/hub/enrollments') {
         const session = currentSession(request)
         if (!session) { sendJson(response, 401, { error: 'valid Hub session required' }); return }
@@ -289,6 +405,12 @@ export async function startHubServer(options: HubServerOptions): Promise<Running
         if (!session) { sendJson(response, 401, { error: 'valid Hub session required' }); return }
         if (!validCsrf(request, session)) { sendJson(response, 403, { error: 'valid CSRF token required' }); return }
         if (!store.revokeMachine(session.userId, revokeMatch[1], now())) { sendJson(response, 404, { error: 'active machine not found' }); return }
+        brainSockets.get(revokeMatch[1])?.close(4003, 'machine revoked')
+        for (const [connectionId, connection] of relayConnections) {
+          if (connection.machineId !== revokeMatch[1]) continue
+          connection.browser.close(4003, 'machine revoked')
+          relayConnections.delete(connectionId)
+        }
         sendJson(response, 200, { ok: true })
         return
       }
@@ -301,12 +423,156 @@ export async function startHubServer(options: HubServerOptions): Promise<Running
         sendJson(response, 200, { ok: true })
         return
       }
+      if (request.method === 'GET' && serveHubApp(options.webRoot, pathname, response)) return
       if (request.method === 'GET' && serveAsset(pathname, response)) return
       sendJson(response, 404, { error: 'route not found' })
     } catch (error) {
       sendJson(response, 400, { error: (error as Error).message })
     }
   })
+
+  const websocketServer = new WebSocketServer({
+    noServer: true,
+    handleProtocols: protocols => protocols.has(HUB_BRAIN_RELAY_PROTOCOL)
+      ? HUB_BRAIN_RELAY_PROTOCOL
+      : protocols.has(HUB_BROWSER_RELAY_PROTOCOL) ? HUB_BROWSER_RELAY_PROTOCOL : false,
+  })
+  server.on('upgrade', (request, socket, head) => {
+    const pathname = new URL(request.url ?? '/', 'http://localhost').pathname
+    const protocols = String(request.headers['sec-websocket-protocol'] ?? '').split(',').map(value => value.trim()).filter(Boolean)
+    const protocol = protocols.find(value => value === HUB_BRAIN_RELAY_PROTOCOL || value === HUB_BROWSER_RELAY_PROTOCOL)
+    const credential = protocols.find(value => value !== protocol) ?? ''
+    if (pathname !== '/api/v1/hub/relay' || !protocol || !credential) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n')
+      socket.destroy()
+      return
+    }
+    if (protocol === HUB_BRAIN_RELAY_PROTOCOL) {
+      const machine = store.authenticateMachine(credential)
+      if (!machine) { socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'); socket.destroy(); return }
+      relayPeer.set(request, { kind: 'brain', machineId: machine.id })
+    } else {
+      if (!hubBrowserOriginAllowed(request, publicOrigin)) { socket.write('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n'); socket.destroy(); return }
+      relayPeer.set(request, { kind: 'browser', ticket: credential })
+    }
+    websocketServer.handleUpgrade(request, socket, head, ws => websocketServer.emit('connection', ws, request))
+  })
+  websocketServer.on('connection', (socket, request) => {
+    const peer = relayPeer.get(request)
+    if (!peer) { socket.close(4001, 'relay authentication missing'); return }
+    relaySockets.add(socket)
+    if (peer.kind === 'brain') {
+      const previous = brainSockets.get(peer.machineId)
+      if (previous && previous !== socket) previous.close(4000, 'replaced by a newer brain relay')
+      brainSockets.set(peer.machineId, socket)
+      socket.send(JSON.stringify({ type: 'brainReady', machineId: peer.machineId } satisfies HubRelayControlFrame))
+    } else {
+      const claims = tickets.consume(peer.ticket)
+      if (!claims) { socket.close(4001, 'invalid or expired connection ticket'); return }
+      const brain = brainSockets.get(claims.machineId)
+      const machine = store.machineAuthorityForUser(claims.userId, claims.machineId)
+      if (!brain || brain.readyState !== WebSocket.OPEN || !machine) { socket.close(4004, 'machine relay is offline'); return }
+      const activeConnections = [...relayConnections.values()]
+      if (activeConnections.filter(connection => connection.machineId === claims.machineId).length >= HUB_MAX_CONNECTIONS_PER_MACHINE
+        || activeConnections.filter(connection => connection.userId === claims.userId).length >= HUB_MAX_CONNECTIONS_PER_USER) {
+        socket.close(4008, 'relay connection limit reached')
+        return
+      }
+      const connectionId = randomBytes(16).toString('hex')
+      const openedAt = now()
+      relayConnections.set(connectionId, {
+        machineId: claims.machineId, userId: claims.userId, browserSessionId: claims.browserSessionId,
+        brain, browser: socket, openedAt, lastActivityAt: openedAt,
+        traffic: new HubRelayTrafficLimiter(openedAt),
+      })
+      const connect: HubRelayControlFrame = { type: 'connect', connectionId, userId: claims.userId, browserSessionId: claims.browserSessionId, requestedScopes: claims.requestedScopes }
+      const ready: HubRelayControlFrame = { type: 'ready', connectionId, machineId: claims.machineId, machinePublicKey: machine.publicKey, requestedScopes: claims.requestedScopes }
+      brain.send(JSON.stringify(connect))
+      socket.send(JSON.stringify(ready))
+      store.audit('hub.connection.opened', claims.userId, claims.machineId, { connectionId, browserSessionId: claims.browserSessionId }, now())
+    }
+    socket.on('message', (raw, binary) => {
+      const encoded = Array.isArray(raw) ? Buffer.concat(raw) : Buffer.from(raw as ArrayBuffer)
+      if (binary || encoded.byteLength > HUB_RELAY_MAX_FRAME_BYTES) { socket.close(4009, 'relay frame rejected'); return }
+      let frame: HubRelayControlFrame
+      try { frame = JSON.parse(encoded.toString()) as HubRelayControlFrame } catch { socket.close(4002, 'invalid relay frame'); return }
+      if (!frame || !('connectionId' in frame) || typeof frame.connectionId !== 'string') { socket.close(4002, 'invalid relay frame'); return }
+      const connectionId = frame.connectionId
+      const connection = relayConnections.get(connectionId)
+      if (!connection) {
+        // A browser close and an in-flight Brain RPC result can cross in
+        // transit. Drop late opaque frames only for bounded connection ids the
+        // Hub itself recently released; arbitrary unknown ids still fail closed.
+        const releasedAt = recentlyReleasedBrowserConnections.get(connectionId)
+        if (peer.kind === 'brain' && releasedAt !== undefined && now() - releasedAt < HUB_LATE_BRAIN_FRAME_GRACE_MS) return
+        if (releasedAt !== undefined) recentlyReleasedBrowserConnections.delete(connectionId)
+        socket.close(4004, 'unknown relay connection')
+        return
+      }
+      const fromBrowser = socket === connection.browser
+      const allowed = fromBrowser
+        ? frame.type === 'clientHello' || frame.type === 'encrypted' || frame.type === 'close'
+        : socket === connection.brain && (frame.type === 'serverHello' || frame.type === 'encrypted' || frame.type === 'close')
+      if (!allowed) { socket.close(4003, 'relay direction is not allowed'); return }
+      const receivedAt = now()
+      const trafficLimit = connection.traffic.consume(encoded.byteLength, receivedAt)
+      if (trafficLimit) {
+        terminateRelayConnection(connectionId, connection, 4011, trafficLimit, 'hub.connection.rate-limited', {
+          reason: trafficLimit,
+          frameBytes: encoded.byteLength,
+          direction: fromBrowser ? 'browser-to-brain' : 'brain-to-browser',
+        })
+        return
+      }
+      connection.lastActivityAt = receivedAt
+      const target = fromBrowser ? connection.brain : connection.browser
+      if (target.readyState !== WebSocket.OPEN || target.bufferedAmount > HUB_RELAY_MAX_FRAME_BYTES * 4) {
+        socket.close(4010, 'relay backpressure limit reached')
+        target.close(4010, 'relay backpressure limit reached')
+        relayConnections.delete(frame.connectionId)
+        return
+      }
+      target.send(encoded.toString())
+      if (frame.type === 'close') {
+        if (fromBrowser) rememberReleasedBrowserConnection(connectionId)
+        relayConnections.delete(connectionId)
+      }
+    })
+    socket.on('close', () => {
+      relaySockets.delete(socket)
+      if (peer.kind === 'brain' && brainSockets.get(peer.machineId) === socket) brainSockets.delete(peer.machineId)
+      for (const [connectionId, connection] of relayConnections) {
+        if (connection.brain !== socket && connection.browser !== socket) continue
+        if (connection.brain === socket) {
+          if (connection.browser.readyState === WebSocket.OPEN) connection.browser.close(4000, 'Brain relay disconnected')
+        } else if (connection.brain.readyState === WebSocket.OPEN) {
+          // The Brain socket is the machine's persistent outbound transport and
+          // can multiplex browser sessions. Closing one browser must release
+          // only that logical session, not disconnect the enrolled machine.
+          rememberReleasedBrowserConnection(connectionId)
+          connection.brain.send(JSON.stringify({ type: 'close', connectionId, reason: 'browser disconnected' } satisfies HubRelayControlFrame))
+        }
+        relayConnections.delete(connectionId)
+      }
+    })
+  })
+
+  const relayExpirySweep = setInterval(() => {
+    const at = now()
+    for (const [connectionId, releasedAt] of recentlyReleasedBrowserConnections) {
+      if (at - releasedAt >= HUB_LATE_BRAIN_FRAME_GRACE_MS) recentlyReleasedBrowserConnections.delete(connectionId)
+    }
+    for (const [connectionId, connection] of relayConnections) {
+      const reason = hubRelayExpiryReason(connection, at)
+      if (!reason) continue
+      terminateRelayConnection(connectionId, connection, 4000, reason, 'hub.connection.expired', {
+        reason,
+        openedAt: connection.openedAt,
+        lastActivityAt: connection.lastActivityAt,
+      })
+    }
+  }, HUB_RELAY_EXPIRY_SWEEP_MS)
+  relayExpirySweep.unref()
 
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject)
@@ -325,9 +591,14 @@ export async function startHubServer(options: HubServerOptions): Promise<Running
     url,
     publicOrigin,
     ...(bootstrap ? { bootstrapToken: bootstrap.token, bootstrapUrl: `${publicOrigin}/#bootstrap=${encodeURIComponent(bootstrap.token)}` } : {}),
-    close: () => new Promise<void>((resolve, reject) => server.close(error => {
-      store.close()
-      error ? reject(error) : resolve()
-    })),
+    close: () => new Promise<void>((resolve, reject) => {
+      clearInterval(relayExpirySweep)
+      for (const socket of relaySockets) socket.close(1001, 'Hub shutting down')
+      websocketServer.close()
+      server.close(error => {
+        store.close()
+        error ? reject(error) : resolve()
+      })
+    }),
   }
 }

@@ -1,0 +1,491 @@
+import { realpathSync } from 'fs'
+import { join } from 'path'
+import WebSocket from 'ws'
+import {
+  CREWCODE_REMOTE_PROTOCOL_VERSION,
+  type CrewCodeRemoteRequest,
+  type CrewCodeRemoteResponse,
+} from '../shared/remote-access-types'
+import {
+  type BrainAccessScope,
+  type HubRelayControlFrame,
+  type HubTunnelPlaintext,
+} from '../shared/hub-relay-types'
+import { resolveHeadlessAgentPath } from './headless-agent-resolver'
+import { loadConversation } from './agents/conversation-store'
+import type { MachineCredentialFile } from './hub-machine-enrollment'
+import { createBrainRelayCipher, type BrainRelayCipher } from './hub-relay-crypto'
+import { startRemoteAccessServer } from './remote-access-server'
+
+const READ_METHODS = new Set([
+  'workspaces.list', 'workspaces.inspectPath', 'fs.readDir', 'fs.readFile', 'fs.readDataUrl', 'fs.listFiles',
+  'git.status', 'git.diff', 'git.log', 'git.branches', 'git.remotes', 'worktrees.list',
+  'github.status', 'gh.status',
+])
+const WRITE_METHOD_PREFIXES = ['workspaces.', 'fs.', 'git.', 'worktrees.', 'gh.']
+const AGENT_METHOD_PREFIXES = ['bridge.', 'agents.', 'transcripts.', 'mcp.', 'voice.']
+
+interface RelaySession {
+  connectionId: string
+  userId: string
+  grantedScopes: Set<BrainAccessScope>
+  cipher?: BrainRelayCipher
+  expectedBrowserSequence: number
+  brainSequence: number
+}
+
+export interface BrainRelayOptions {
+  credential: MachineCredentialFile
+  dataDir: string
+  allowedWorkspaceRoots: string[]
+  allowedScopes: BrainAccessScope[]
+}
+
+export interface RunningBrainRelay {
+  close(): Promise<void>
+  closed: Promise<void>
+}
+
+export function brainScopeForMethod(method: string): BrainAccessScope | null {
+  if (READ_METHODS.has(method)) return 'workspace:read'
+  if (method.startsWith('pty.')) return 'terminal'
+  if (AGENT_METHOD_PREFIXES.some(prefix => method.startsWith(prefix))) return 'agent'
+  if (WRITE_METHOD_PREFIXES.some(prefix => method.startsWith(prefix))) return 'workspace:write'
+  return null
+}
+
+function deniedResponse(request: CrewCodeRemoteRequest, message: string): CrewCodeRemoteResponse {
+  return {
+    protocolVersion: CREWCODE_REMOTE_PROTOCOL_VERSION,
+    id: request.id,
+    ok: false,
+    error: { code: 'FORBIDDEN', message },
+  }
+}
+
+function latestAssistantMessageIndex(messages: Array<{ role: string; content: string }>): number {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]!
+    if (message.role === 'assistant' && message.content.trim()) return index
+  }
+  return -1
+}
+
+function websocketOrigin(origin: string): string {
+  const url = new URL(origin)
+  url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
+  url.pathname = '/api/v1/hub/relay'
+  return url.toString()
+}
+
+export async function startBrainRelay(options: BrainRelayOptions): Promise<RunningBrainRelay> {
+  const roots = options.allowedWorkspaceRoots.map(root => realpathSync(root))
+  const runtimeDataDir = join(options.dataDir, 'runtime')
+  // Agent persistence helpers also run in Electron, where they fall back to
+  // app.getPath(). A Brain is ordinary Node, so pin the same explicit runtime
+  // directory before any agent bridge can lazily open those stores.
+  process.env.CREWCODE_DATA_DIR = runtimeDataDir
+  const backend = await startRemoteAccessServer({
+    host: '127.0.0.1',
+    port: 0,
+    dataDir: runtimeDataDir,
+    allowedWorkspaceRoots: roots,
+    resolveAgentPath: resolveHeadlessAgentPath,
+  })
+  const pairResponse = await fetch(`${backend.url}/api/v1/pair`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: backend.pairingToken }),
+  })
+  const pair = await pairResponse.json() as { sessionToken?: string }
+  if (!pairResponse.ok || !pair.sessionToken) { await backend.close(); throw new Error('could not initialize the brain RPC boundary') }
+  const backendToken = pair.sessionToken
+  const eventSocket = new WebSocket(backend.url.replace(/^http/, 'ws') + '/api/v1/events', ['crewcode.v1', backendToken])
+  await new Promise<void>((resolve, reject) => { eventSocket.once('open', resolve); eventSocket.once('error', reject) })
+
+  const relay = new WebSocket(websocketOrigin(options.credential.hubOrigin), ['crewcode.brain.v1', options.credential.token])
+  const sessions = new Map<string, RelaySession>()
+  type ResourceOwner = {
+    userId: string
+    connectionId: string | null
+    createdAt: number
+    lastEventAt: number
+    status: 'idle' | 'running' | 'completed' | 'blocked' | 'failed' | 'interrupted'
+    cwd?: string
+    provider?: string
+    conversationScopeKey?: string
+    droppedEvents: number
+  }
+  const paneOwners = new Map<string, ResourceOwner>()
+  const bridgeOwners = new Map<string, ResourceOwner>()
+  const requestOwners = new Map<string, string>()
+  const detachedEvents = new Map<string, Array<{ channel: 'pty' | 'bridge'; event: unknown }>>()
+  // Keep a process-local semantic snapshot of the current/latest text turn even
+  // while it is attached. Browser close and Brain's logical `close` frame travel
+  // on different sockets, so a few final encrypted deltas can otherwise target
+  // the just-closed connection before detach is observed and disappear. A fresh
+  // explicit claim receives this replacement snapshot before later live deltas.
+  const bridgeTextSnapshots = new Map<string, { turnId: string; text: string }>()
+  const MAX_OWNED_RESOURCES_PER_USER = 100
+  const MAX_DETACHED_EVENTS_PER_RESOURCE = 1_000
+  const MAX_DETACHED_EVENT_BYTES_PER_RESOURCE = 1024 * 1024
+  const appendDetachedEvent = (resourceId: string, event: { channel: 'pty' | 'bridge'; event: unknown }): void => {
+    const events = [...(detachedEvents.get(resourceId) ?? []), event]
+    let bytes = events.reduce((total, item) => total + Buffer.byteLength(JSON.stringify(item)), 0)
+    let dropped = 0
+    while (events.length > MAX_DETACHED_EVENTS_PER_RESOURCE || bytes > MAX_DETACHED_EVENT_BYTES_PER_RESOURCE) {
+      const removed = events.shift()
+      if (!removed) break
+      bytes -= Buffer.byteLength(JSON.stringify(removed))
+      dropped += 1
+    }
+    const owner = bridgeOwners.get(resourceId) ?? paneOwners.get(resourceId)
+    if (owner) owner.droppedEvents += dropped
+    detachedEvents.set(resourceId, events)
+  }
+  const allowed = new Set(options.allowedScopes)
+  let closing = false
+  let backendClose: Promise<void> | null = null
+  const closeBackend = (): Promise<void> => {
+    backendClose ??= (async () => {
+      const sessionId = backendToken.slice(0, backendToken.indexOf('.'))
+      try {
+        await fetch(`${backend.url}/api/v1/rpc`, {
+          method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${backendToken}` },
+          body: JSON.stringify({ protocolVersion: CREWCODE_REMOTE_PROTOCOL_VERSION, id: 'brain-internal-revoke', method: 'auth.revoke', params: { sessionId } }),
+        })
+      } catch { /* the loopback boundary is already closing */ }
+      await backend.close()
+    })()
+    return backendClose
+  }
+  let closeResolve!: () => void
+  let relayReadyResolve!: () => void
+  const closed = new Promise<void>(resolve => { closeResolve = resolve })
+  const relayReady = new Promise<void>(resolve => { relayReadyResolve = resolve })
+
+  const sendEncrypted = (session: RelaySession, plaintext: HubTunnelPlaintext): void => {
+    if (!session.cipher || relay.readyState !== WebSocket.OPEN) return
+    const sequence = session.brainSequence++
+    const frame: HubRelayControlFrame = {
+      type: 'encrypted',
+      connectionId: session.connectionId,
+      sequence,
+      ciphertext: session.cipher.encryptBrain(sequence, JSON.stringify(plaintext)),
+    }
+    relay.send(JSON.stringify(frame))
+  }
+
+  const releaseSession = (connectionId: string): void => {
+    sessions.delete(connectionId)
+    // Browser transport custody is deliberately separate from execution custody.
+    // A dropped browser detaches its resources; only explicit bridge.stop,
+    // pty.kill, Brain shutdown, or authority revocation terminates them.
+    for (const owner of paneOwners.values()) if (owner.connectionId === connectionId) owner.connectionId = null
+    for (const owner of bridgeOwners.values()) if (owner.connectionId === connectionId) owner.connectionId = null
+  }
+
+  eventSocket.on('message', raw => {
+    let event: { channel?: 'pty' | 'bridge'; event?: unknown }
+    try { event = JSON.parse(raw.toString()) as typeof event } catch { return }
+    if (event.channel !== 'pty' && event.channel !== 'bridge') return
+    const eventRecord = event.event && typeof event.event === 'object' ? event.event as Record<string, unknown> : {}
+    const nestedRequest = eventRecord.request && typeof eventRecord.request === 'object' ? eventRecord.request as Record<string, unknown> : null
+    const resourceId = event.channel === 'pty' ? String(eventRecord.paneId ?? '') : String(eventRecord.bridgeId ?? nestedRequest?.bridgeId ?? '')
+    const owner = event.channel === 'pty' ? paneOwners.get(resourceId) : bridgeOwners.get(resourceId)
+    if (owner && nestedRequest && typeof nestedRequest.requestId === 'string') requestOwners.set(nestedRequest.requestId, resourceId)
+    if (!owner) return
+    owner.lastEventAt = Date.now()
+    if (event.channel === 'bridge') {
+      const type = String(eventRecord.type ?? '')
+      if (type === 'turn_start') {
+        owner.status = 'running'
+        const turnId = typeof eventRecord.turnId === 'string' ? eventRecord.turnId : ''
+        if (turnId) bridgeTextSnapshots.set(resourceId, { turnId, text: '' })
+      } else if (type === 'text_delta') {
+        const turnId = typeof eventRecord.turnId === 'string' ? eventRecord.turnId : ''
+        const delta = typeof eventRecord.delta === 'string' ? eventRecord.delta : ''
+        const snapshot = bridgeTextSnapshots.get(resourceId)
+        if (turnId && delta) {
+          const text = snapshot?.turnId === turnId ? snapshot.text + delta : delta
+          // Detached event history has the same 1 MiB resource bound. Cap the
+          // semantic replacement too rather than allowing provider text to grow
+          // without limit inside the always-on Brain process.
+          const bounded = Buffer.from(text).subarray(0, MAX_DETACHED_EVENT_BYTES_PER_RESOURCE).toString('utf8').replace(/\uFFFD$/, '')
+          bridgeTextSnapshots.set(resourceId, { turnId, text: bounded })
+        }
+      } else if (type === 'turn_end') owner.status = 'completed'
+      else if (type === 'user_request') owner.status = 'blocked'
+      else if (type === 'user_request_resolved' && owner.status === 'blocked') owner.status = 'running'
+      else if (type === 'error') owner.status = 'failed'
+      else if (type === 'closed') owner.status = owner.status === 'running' ? 'interrupted' : 'completed'
+      else if (type === 'ready' && owner.status === 'idle') owner.status = 'idle'
+    } else if (String(eventRecord.type ?? '') === 'exit') owner.status = 'completed'
+    const session = owner.connectionId ? sessions.get(owner.connectionId) : null
+    if (session) sendEncrypted(session, { type: 'event', channel: event.channel, event: event.event })
+    else appendDetachedEvent(resourceId, { channel: event.channel, event: event.event })
+  })
+
+  relay.on('message', async raw => {
+    let frame: HubRelayControlFrame
+    try { frame = JSON.parse(raw.toString()) as HubRelayControlFrame } catch { relay.close(4002, 'invalid Hub relay frame'); return }
+    if (frame.type === 'brainReady') { relayReadyResolve(); return }
+    if (frame.type === 'connect') {
+      const grantedScopes = frame.requestedScopes.filter(scope => allowed.has(scope))
+      sessions.set(frame.connectionId, { connectionId: frame.connectionId, userId: frame.userId, grantedScopes: new Set(grantedScopes), expectedBrowserSequence: 0, brainSequence: 0 })
+      return
+    }
+    if (!('connectionId' in frame)) return
+    const session = sessions.get(frame.connectionId)
+    if (!session) return
+    if (frame.type === 'clientHello') {
+      if (session.cipher) {
+        relay.send(JSON.stringify({ type: 'close', connectionId: frame.connectionId, reason: 'duplicate end-to-end handshake rejected' } satisfies HubRelayControlFrame))
+        sessions.delete(frame.connectionId)
+        return
+      }
+      try {
+        session.cipher = createBrainRelayCipher({ connectionId: frame.connectionId, clientKey: frame.key, machinePrivateKey: options.credential.privateKey })
+        const hello: HubRelayControlFrame = {
+          type: 'serverHello', connectionId: frame.connectionId, key: session.cipher.serverKey,
+          signature: session.cipher.signature, grantedScopes: [...session.grantedScopes],
+        }
+        relay.send(JSON.stringify(hello))
+      } catch {
+        relay.send(JSON.stringify({ type: 'close', connectionId: frame.connectionId, reason: 'end-to-end handshake rejected' } satisfies HubRelayControlFrame))
+        sessions.delete(frame.connectionId)
+      }
+      return
+    }
+    if (frame.type === 'close') { releaseSession(frame.connectionId); return }
+    if (frame.type !== 'encrypted' || !session.cipher) return
+    if (frame.sequence !== session.expectedBrowserSequence) {
+      relay.send(JSON.stringify({ type: 'close', connectionId: frame.connectionId, reason: 'encrypted frame sequence rejected' } satisfies HubRelayControlFrame))
+      releaseSession(frame.connectionId)
+      return
+    }
+    session.expectedBrowserSequence += 1
+    let plaintext: HubTunnelPlaintext
+    try { plaintext = JSON.parse(session.cipher.decryptBrowser(frame.sequence, frame.ciphertext)) as HubTunnelPlaintext } catch {
+      relay.send(JSON.stringify({ type: 'close', connectionId: frame.connectionId, reason: 'encrypted frame authentication failed' } satisfies HubRelayControlFrame))
+      releaseSession(frame.connectionId)
+      return
+    }
+    if (plaintext.type !== 'rpc') return
+    const request = plaintext.request
+    if (!request || request.protocolVersion !== CREWCODE_REMOTE_PROTOCOL_VERSION || typeof request.id !== 'string' || !request.id || typeof request.method !== 'string' || !request.params || typeof request.params !== 'object') {
+      relay.send(JSON.stringify({ type: 'close', connectionId: frame.connectionId, reason: 'invalid encrypted RPC envelope' } satisfies HubRelayControlFrame))
+      releaseSession(frame.connectionId)
+      return
+    }
+    const scope = brainScopeForMethod(request.method)
+    const params = request.params as Record<string, unknown>
+    const responseParams = params.response && typeof params.response === 'object' ? params.response as Record<string, unknown> : null
+    const responseRequestId = request.method === 'bridge.respondUserRequest' ? String(responseParams?.requestId ?? '') : ''
+    const resourceId = request.method.startsWith('pty.') ? String(params.paneId ?? '') : request.method.startsWith('bridge.') ? String(params.bridgeId ?? '') : ''
+    const ownerMap = request.method.startsWith('pty.') ? paneOwners : request.method.startsWith('bridge.') && request.method !== 'bridge.respondUserRequest' ? bridgeOwners : null
+    const createsResource = request.method === 'pty.create' || request.method === 'bridge.start'
+    const existingOwner = ownerMap && resourceId ? ownerMap.get(resourceId) : undefined
+    const ownedResourceCount = [...paneOwners.values(), ...bridgeOwners.values()].filter(owner => owner.userId === session.userId).length
+    const exceedsResourceLimit = createsResource && !existingOwner && ownedResourceCount >= MAX_OWNED_RESOURCES_PER_USER
+    const canAttach = existingOwner?.userId === session.userId
+      && (existingOwner.connectionId === null || existingOwner.connectionId === session.connectionId)
+    const wrongOwner = !!existingOwner && !canAttach
+    const missingOwner = !!ownerMap && !!resourceId && !createsResource && existingOwner?.connectionId !== session.connectionId
+    const requestResourceId = responseRequestId ? requestOwners.get(responseRequestId) : undefined
+    const requestOwner = requestResourceId ? bridgeOwners.get(requestResourceId) : undefined
+    const wrongRequestOwner = !!responseRequestId && requestOwner?.connectionId !== session.connectionId
+    let response: CrewCodeRemoteResponse
+    let replayResourceId = ''
+    if (!scope || !session.grantedScopes.has(scope)) {
+      response = deniedResponse(request, scope
+        ? `Brain authorization does not grant ${scope} for ${request.method}`
+        : `Brain authorization does not expose ${request.method}`)
+    } else if (request.method === 'bridge.list') {
+      const executions = [...bridgeOwners].filter(([, owner]) => owner.userId === session.userId).map(([bridgeId, owner]) => ({
+        bridgeId,
+        status: owner.status,
+        attached: owner.connectionId !== null,
+        cwd: owner.cwd,
+        provider: owner.provider,
+        conversationScopeKey: owner.conversationScopeKey,
+        createdAt: owner.createdAt,
+        lastEventAt: owner.lastEventAt,
+        droppedEvents: owner.droppedEvents,
+      }))
+      response = { protocolVersion: CREWCODE_REMOTE_PROTOCOL_VERSION, id: request.id, ok: true, result: { executions } }
+      sendEncrypted(session, { type: 'rpcResult', response })
+      return
+    } else if (request.method === 'bridge.recoverHistory') {
+      const conversationScopeKey = typeof params.conversationScopeKey === 'string' ? params.conversationScopeKey : ''
+      if (!resourceId || !conversationScopeKey || conversationScopeKey.length > 512) {
+        response = deniedResponse(request, 'A valid local chat scope is required for Brain history recovery')
+        sendEncrypted(session, { type: 'rpcResult', response })
+        return
+      }
+      // Machine enrollment is single-owner. The opaque scope comes from that
+      // owner's local browser state and is useful after a Brain restart has
+      // erased process-resident resource ownership while preserving its local
+      // conversation shard. Agent scope is still required above.
+      const history = loadConversation(`web:${conversationScopeKey}`)
+      const latestAssistantIndex = latestAssistantMessageIndex(history)
+      response = { protocolVersion: CREWCODE_REMOTE_PROTOCOL_VERSION, id: request.id, ok: true, result: { replayed: latestAssistantIndex !== -1 } }
+      sendEncrypted(session, { type: 'rpcResult', response })
+      if (latestAssistantIndex !== -1) {
+        sendEncrypted(session, {
+          type: 'event', channel: 'bridge',
+          event: { type: 'history_agent', bridgeId: resourceId, turnId: `recovered-${resourceId}-${latestAssistantIndex}`, text: history[latestAssistantIndex]!.content },
+        })
+      }
+      return
+    } else if (request.method === 'bridge.replayHistory') {
+      const owner = resourceId ? bridgeOwners.get(resourceId) : undefined
+      if (!owner || owner.userId !== session.userId || owner.connectionId !== session.connectionId || !owner.conversationScopeKey) {
+        response = deniedResponse(request, 'Brain session does not own this agent history')
+        sendEncrypted(session, { type: 'rpcResult', response })
+        return
+      }
+      const history = loadConversation(`web:${owner.conversationScopeKey}`)
+      const latestAssistantIndex = latestAssistantMessageIndex(history)
+      response = { protocolVersion: CREWCODE_REMOTE_PROTOCOL_VERSION, id: request.id, ok: true, result: { replayed: latestAssistantIndex !== -1 } }
+      sendEncrypted(session, { type: 'rpcResult', response })
+      if (latestAssistantIndex !== -1) {
+        sendEncrypted(session, {
+          type: 'event',
+          channel: 'bridge',
+          event: {
+            type: 'history_agent',
+            bridgeId: resourceId,
+            turnId: `recovered-${resourceId}-${latestAssistantIndex}`,
+            text: history[latestAssistantIndex]!.content,
+          },
+        })
+      }
+      return
+    } else if (request.method === 'bridge.claim' || request.method === 'pty.claim') {
+      const idsKey = request.method === 'bridge.claim' ? 'bridgeIds' : 'paneIds'
+      const claims = Array.isArray(params[idsKey]) ? (params[idsKey] as unknown[]).map(String).slice(0, 100) : []
+      const claimsMap = request.method === 'bridge.claim' ? bridgeOwners : paneOwners
+      const claimed: string[] = []
+      for (const id of claims) {
+        const owner = claimsMap.get(id)
+        if (!owner || owner.userId !== session.userId) continue
+        // A page refresh can establish its fresh encrypted session before Brain
+        // observes the old browser socket closing. Explicit same-owner claim is
+        // an atomic custody handoff; otherwise events keep targeting the stale
+        // connection and the refreshed page can neither receive nor prompt.
+        owner.connectionId = session.connectionId
+        claimed.push(id)
+      }
+      response = { protocolVersion: CREWCODE_REMOTE_PROTOCOL_VERSION, id: request.id, ok: true, result: { claimed } }
+      sendEncrypted(session, { type: 'rpcResult', response })
+      for (const id of claimed) {
+        for (const event of detachedEvents.get(id) ?? []) sendEncrypted(session, { type: 'event', channel: event.channel, event: event.event })
+        detachedEvents.delete(id)
+        const bridgeOwner = request.method === 'bridge.claim' ? bridgeOwners.get(id) : undefined
+        const snapshot = bridgeOwner && (bridgeOwner.status === 'running' || bridgeOwner.status === 'blocked')
+          ? bridgeTextSnapshots.get(id)
+          : undefined
+        if (snapshot?.text) {
+          sendEncrypted(session, {
+            type: 'event', channel: 'bridge',
+            event: { type: 'history_agent', bridgeId: id, turnId: snapshot.turnId, text: snapshot.text },
+          })
+        }
+      }
+      return
+    } else if (exceedsResourceLimit) {
+      response = deniedResponse(request, `Brain resource limit of ${MAX_OWNED_RESOURCES_PER_USER} terminals and agents reached`)
+    } else if (request.method === 'bridge.start' && params.freshSession !== true && existingOwner?.userId === session.userId) {
+      // Stable browser bridge ids make start an idempotent same-owner attach as
+      // well as a create operation. This is also the recovery fallback when a
+      // restored page misses its eager bridge.claim (for example, because the
+      // old socket still looked attached during startup). Explicit claim is an
+      // optimization for replaying buffered events, not a prerequisite for the
+      // owner's next prompt. Taking custody here is no broader than bridge.claim,
+      // which already permits an atomic same-owner handoff from a stale socket.
+      existingOwner.connectionId = session.connectionId
+      replayResourceId = resourceId
+      response = { protocolVersion: CREWCODE_REMOTE_PROTOCOL_VERSION, id: request.id, ok: true, result: { ok: true, attached: true } }
+    } else if (wrongOwner || missingOwner || wrongRequestOwner) {
+      response = deniedResponse(request, 'Brain session does not own this terminal or agent resource')
+    } else {
+      // Reserve caller-chosen resource ids before invoking the backend. PTY and
+      // agent implementations may emit their first event before create/start
+      // resolves; claiming afterward drops that event and leaves the UI stuck.
+      if (ownerMap && resourceId && createsResource) ownerMap.set(resourceId, {
+        userId: session.userId,
+        connectionId: session.connectionId,
+        createdAt: Date.now(),
+        lastEventAt: Date.now(),
+        status: 'idle',
+        cwd: typeof params.cwd === 'string' ? params.cwd : undefined,
+        provider: typeof params.provider === 'string' ? params.provider : undefined,
+        conversationScopeKey: typeof params.conversationScopeKey === 'string' ? params.conversationScopeKey : undefined,
+        droppedEvents: 0,
+      })
+      try {
+        const result = await fetch(`${backend.url}/api/v1/rpc`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${backendToken}` },
+          body: JSON.stringify(request),
+        })
+        response = await result.json() as CrewCodeRemoteResponse
+        const semanticResult = response.ok && response.result && typeof response.result === 'object'
+          ? response.result as { ok?: boolean; error?: unknown }
+          : null
+        const created = response.ok && semanticResult?.ok !== false && !semanticResult?.error
+        const reservedOwner = ownerMap && resourceId ? ownerMap.get(resourceId) : undefined
+        if (!created && ownerMap && resourceId && createsResource && reservedOwner?.connectionId === session.connectionId) ownerMap.delete(resourceId)
+        if (created && request.method === 'pty.create' && resourceId) detachedEvents.delete(resourceId)
+        if (response.ok && responseRequestId) requestOwners.delete(responseRequestId)
+        if (response.ok && (request.method === 'bridge.stop' || request.method === 'pty.kill') && ownerMap && resourceId) {
+          ownerMap.delete(resourceId)
+          detachedEvents.delete(resourceId)
+          if (request.method === 'bridge.stop') {
+            bridgeTextSnapshots.delete(resourceId)
+            for (const [requestId, ownerResourceId] of requestOwners) {
+              if (ownerResourceId === resourceId) requestOwners.delete(requestId)
+            }
+          }
+        }
+      } catch (error) {
+        const reservedOwner = ownerMap && resourceId ? ownerMap.get(resourceId) : undefined
+        if (ownerMap && resourceId && createsResource && reservedOwner?.connectionId === session.connectionId) ownerMap.delete(resourceId)
+        response = {
+          protocolVersion: CREWCODE_REMOTE_PROTOCOL_VERSION, id: request.id, ok: false,
+          error: { code: 'INTERNAL', message: `Brain RPC failed: ${(error as Error).message}` },
+        }
+      }
+    }
+    // A backend request may outlive its browser transport. Its execution and
+    // events remain in Brain custody, but the interrupted RPC result belongs to
+    // the released logical session and must never be emitted onto the shared
+    // Brain socket as an unknown/stale connection frame.
+    if (sessions.get(session.connectionId) !== session) return
+    sendEncrypted(session, { type: 'rpcResult', response })
+    if (replayResourceId) {
+      for (const event of detachedEvents.get(replayResourceId) ?? []) sendEncrypted(session, { type: 'event', channel: event.channel, event: event.event })
+      detachedEvents.delete(replayResourceId)
+    }
+  })
+
+  relay.on('close', () => {
+    sessions.clear()
+    eventSocket.close()
+    void closeBackend().finally(closeResolve)
+  })
+  await new Promise<void>((resolve, reject) => { relay.once('open', resolve); relay.once('error', reject) })
+  await relayReady
+
+  return {
+    closed,
+    async close() {
+      if (closing) return closed
+      closing = true
+      relay.close(1000, 'brain stopping')
+      eventSocket.close()
+      await closeBackend()
+      if (relay.readyState === WebSocket.CLOSED) closeResolve()
+      await closed
+    },
+  }
+}

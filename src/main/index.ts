@@ -16,6 +16,7 @@ import { getAgentKey, setAgentKey, hasAgentKey } from './agents/agent-keys'
 import { listModels } from './agents/model-detect'
 import { registerUpdaterIpc } from './updater'
 import { registerGhIpc, killActiveGhLogin } from './gh'
+import { getGitHubStatus } from './github-service'
 import { registerSshIpc, resolveSshAgentAtStartup, killManagedSshAgent } from './ssh'
 import { registerRemoteIpc, disconnectAllRemotes } from './remote/remote-ipc'
 import { registerCustomCommandsIpc } from './customCommands'
@@ -619,68 +620,4 @@ ipcMain.handle('browser:extractHover', (_e, args) => browserGrabManager.extractH
 
 // ─── GitHub status ────────────────────────────────────────────────────────────
 
-interface GitHubPR {
-  number: number
-  title:  string
-  state:  'OPEN' | 'CLOSED' | 'MERGED'
-  branch: string
-  url:    string
-}
-
-interface GitHubRun {
-  id:         number
-  name:       string
-  status:     'queued' | 'in_progress' | 'completed'
-  conclusion: 'success' | 'failure' | 'cancelled' | 'skipped' | null
-  branch:     string
-}
-
-function parseGitHubRemote(url: string): { owner: string; repo: string } | null {
-  const match = url.match(/github\.com[:/]([^/]+)\/([^/.]+)(?:\.git)?/)
-  if (!match) return null
-  return { owner: match[1], repo: match[2] }
-}
-
-ipcMain.handle('github:status', (_e, repoPath: string) => {
-  const ghCheck = spawnSync('which', ['gh'], { encoding: 'utf8' })
-  if (!ghCheck.stdout?.trim()) return { error: 'gh CLI not found' }
-
-  const cwd = expandHome(repoPath)
-
-  const remoteResult = spawnSync('git', ['remote', 'get-url', 'origin'], { cwd, encoding: 'utf8' })
-  const remoteUrl    = remoteResult.stdout?.trim() ?? ''
-
-  if (!remoteUrl.includes('github.com')) return { error: 'not a GitHub repo' }
-
-  const parsed = parseGitHubRemote(remoteUrl)
-  if (!parsed) return { error: 'could not parse GitHub remote URL' }
-  const { owner, repo } = parsed
-
-  let prs: GitHubPR[] = []
-  const prResult = spawnSync('gh', ['pr', 'list', '--json', 'number,title,headRefName,state,url', '--limit', '20'], { cwd, encoding: 'utf8' })
-  if (prResult.status === 0 && prResult.stdout) {
-    try {
-      const raw = JSON.parse(prResult.stdout) as Array<{ number: number; title: string; headRefName: string; state: string; url: string }>
-      prs = raw.map(pr => ({ number: pr.number, title: pr.title, state: pr.state as GitHubPR['state'], branch: pr.headRefName, url: pr.url }))
-    } catch (_err) { /* leave prs = [] */ }
-  }
-
-  let runs: GitHubRun[] = []
-  const runResult = spawnSync('gh', ['run', 'list', '--json', 'databaseId,name,status,conclusion,headBranch', '--limit', '10'], { cwd, encoding: 'utf8' })
-  if (runResult.status === 0 && runResult.stdout) {
-    try {
-      const raw = JSON.parse(runResult.stdout) as Array<{ databaseId: number; name: string; status: string; conclusion: string | null; headBranch: string }>
-      runs = raw.map(r => ({ id: r.databaseId, name: r.name, status: r.status as GitHubRun['status'], conclusion: r.conclusion as GitHubRun['conclusion'], branch: r.headBranch }))
-    } catch (_err) { /* leave runs = [] */ }
-  }
-
-  let issues = 0
-  const issueResult = spawnSync('gh', ['issue', 'list', '--state', 'open', '--json', 'number', '--limit', '100'], { cwd, encoding: 'utf8' })
-  if (issueResult.status === 0 && issueResult.stdout) {
-    try {
-      issues = (JSON.parse(issueResult.stdout) as unknown[]).length
-    } catch (_err) { /* leave issues = 0 */ }
-  }
-
-  return { owner, repo, prs, runs, issues }
-})
+ipcMain.handle('github:status', (_e, repoPath: string) => getGitHubStatus(expandHome(repoPath)))

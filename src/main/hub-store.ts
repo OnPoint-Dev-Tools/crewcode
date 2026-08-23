@@ -47,6 +47,10 @@ export interface HubMachineIdentity {
   revokedAt: number | null
 }
 
+export interface HubMachineAuthority extends HubMachineIdentity {
+  publicKey: string
+}
+
 interface UserRow { id: string; username: string; role: string; created_at: number }
 interface CredentialRow {
   id: string
@@ -259,6 +263,12 @@ export class HubStore {
     const row = this.db.prepare('SELECT id, owner_user_id, revoked_at FROM machines WHERE id = ? AND credential_digest = ? AND revoked_at IS NULL')
       .get(id, digest(secret)) as { id: string; owner_user_id: string; revoked_at: number | null } | undefined
     return row ? { id: row.id, ownerUserId: row.owner_user_id, revokedAt: row.revoked_at } : null
+  }
+
+  machineAuthorityForUser(userId: string, machineId: string): HubMachineAuthority | null {
+    const row = this.db.prepare('SELECT id, owner_user_id, public_key, revoked_at FROM machines WHERE id = ? AND owner_user_id = ? AND revoked_at IS NULL')
+      .get(machineId, userId) as { id: string; owner_user_id: string; public_key: string; revoked_at: number | null } | undefined
+    return row ? { id: row.id, ownerUserId: row.owner_user_id, publicKey: row.public_key, revokedAt: row.revoked_at } : null
   }
 
   heartbeatMachine(machineId: string, platform: string | null, version: string | null, now: number): boolean {

@@ -405,17 +405,41 @@ export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, br
         case 'history_agent': {
           closeThinkingSegment(ev.turnId)
           closeAgentSegment(ev.turnId)
-          setMessagesForTab(tabId, m => [...m, {
-            kind:      'agent',
-            time:      nowTime(),
-            blocks:    [],
-            text:      ev.text,
-            chunks:    appendStreamChunk(undefined, ev.text),
-            turnId:    ev.turnId,
-            processId: `${ev.turnId}-agent-history`,
-            streaming: false,
-            mode:      bridgeToModeRef.current[ev.bridgeId],
-          }])
+          setMessagesForTab(tabId, m => {
+            // A Brain claim sends a semantic replacement snapshot because final
+            // deltas can race the old browser socket closing. Collapse every
+            // persisted/detached fragment for this turn into one authoritative
+            // bubble, then let later live deltas append to that same bubble.
+            const existingIndex = m.findIndex(message => message.kind === 'agent' && message.turnId === ev.turnId)
+            if (existingIndex !== -1) {
+              const existing = m[existingIndex]!
+              if (existing.kind !== 'agent') return m
+              const next = m.filter((message, index) => index === existingIndex
+                || message.kind !== 'agent'
+                || message.turnId !== ev.turnId)
+              const replacementIndex = next.indexOf(existing)
+              next[replacementIndex] = {
+                ...existing,
+                text: ev.text,
+                chunks: appendStreamChunk(undefined, ev.text),
+                streaming: false,
+              }
+              st.agentBubbleByTurn[ev.turnId] = replacementIndex
+              return next
+            }
+            st.agentBubbleByTurn[ev.turnId] = m.length
+            return [...m, {
+              kind:      'agent',
+              time:      nowTime(),
+              blocks:    [],
+              text:      ev.text,
+              chunks:    appendStreamChunk(undefined, ev.text),
+              turnId:    ev.turnId,
+              processId: `${ev.turnId}-agent-history`,
+              streaming: false,
+              mode:      bridgeToModeRef.current[ev.bridgeId],
+            }]
+          })
           return
         }
 
@@ -795,6 +819,13 @@ export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, br
     }
   }, [setMessagesForTab, show])
 
+  /** Install event routing synchronously before a remote bridge can emit. */
+  const registerRoute = useCallback((bridgeId: string, tabId: string, cwd: string, mode?: ModeLevel) => {
+    bridgeToTabRef.current = { ...bridgeToTabRef.current, [bridgeId]: tabId }
+    bridgeToCwdRef.current = { ...bridgeToCwdRef.current, [bridgeId]: cwd }
+    if (mode) bridgeToModeRef.current = { ...bridgeToModeRef.current, [bridgeId]: mode }
+  }, [])
+
   const start = useCallback(async (
     bridgeId:   string,
     provider:   AgentProviderId,
@@ -812,7 +843,11 @@ export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, br
     stoppedBridgesRef.current.delete(bridgeId)
     const api = window.electronAPI
     if (!api) return { ok: false, error: 'electronAPI unavailable' }
-    return api.bridgeStart({ bridgeId, provider, cwd, externalDirectories, model, mode, toolPolicy, thinking, sessionKey, conversationScopeKey, freshSession, mcpServers })
+    try {
+      return await api.bridgeStart({ bridgeId, provider, cwd, externalDirectories, model, mode, toolPolicy, thinking, sessionKey, conversationScopeKey, freshSession, mcpServers })
+    } catch (error) {
+      return { ok: false, error: (error as Error).message }
+    }
   }, [])
 
   const prompt = useCallback(async (bridgeId: string, text: string, options?: ChatPromptOptions) => {
@@ -821,20 +856,17 @@ export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, br
     // provider's final text stream; some bridges emit turn_start after setup.
     st.pendingPromptStartedAt = Date.now()
     onRunningChange?.(bridgeId, true)
-    let queuedFollowUp = false
     try {
       const result = await (window.electronAPI?.bridgePrompt(bridgeId, text, options) ?? { ok: false, error: 'electronAPI unavailable' })
-      // An accepted follow-up resolves immediately while the current turn is
-      // still streaming (the bridge queues it). Clearing running here would
-      // flip the composer idle mid-turn and wipe pending permission overlays,
-      // so the next send goes out unqueued and the bridge rejects it.
-      queuedFollowUp = options?.streamingBehavior === 'followUp' && result.ok === true
+      // Browser RPC and some provider bridges acknowledge an accepted prompt
+      // before the turn finishes. Keep Stop available until an authoritative
+      // turn_end/error/closed event arrives; an RPC acknowledgement is not proof
+      // that execution settled. Rejections have no terminal turn to clear them.
+      if (!result.ok) onRunningChange?.(bridgeId, false)
       return result
-    } finally {
-      // The prompt IPC resolves after the provider's turn promise settles. Clear
-      // the UI's Stop state even if a terminal bridge event was dropped/raced.
-      // Queued follow-ups are the exception: turn_end owns the flag for them.
-      if (!queuedFollowUp) onRunningChange?.(bridgeId, false)
+    } catch (error) {
+      onRunningChange?.(bridgeId, false)
+      return { ok: false, error: (error as Error).message }
     }
   }, [onRunningChange])
 
@@ -872,5 +904,5 @@ export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, br
     delete stateRef.current[bridgeId]
   }, [onRunningChange])
 
-  return { start, prompt, compact, setMode, abort, stop, removeFollowUp }
+  return { start, prompt, compact, setMode, abort, stop, removeFollowUp, registerRoute }
 }

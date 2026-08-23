@@ -10,23 +10,41 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 
 import { useAgentBridge } from './useAgentBridge'
 import { bridgeActivity, useRunningByBridge } from '../stores/bridge-activity-store'
+import { getCrewCodeRuntime } from '../runtime/crewcode-client'
+import { claimedWebBridgeRoutes, forgetWebBridgeRoute, rememberWebBridgeRoutes, webBridgeRoutes } from '../runtime/web-bridge-routes'
 import type { AgentProviderId, AgentUserResponse, BridgeEvent, ChatPromptOptions, Message, ModeLevel } from '../types'
 import type { EffortLevel } from '../components/composer/EffortPicker'
 import type { McpServerConfig } from './useSettings'
 
 type BridgeToolPolicy = 'default' | 'read-only'
 
+function isWebRuntime(): boolean {
+  try { return getCrewCodeRuntime().kind === 'web' } catch { return false }
+}
+
+export function bridgeRuntimeId(tabId: string, agentId: string, web: boolean, at = Date.now()): string {
+  return web ? `br-${tabId}-${agentId}-remote` : `br-${tabId}-${agentId}-${at.toString(36)}`
+}
+
 interface UseBridgeRegistryOpts {
   setMessagesForTab: (tabId: string, updater: (prev: Message[]) => Message[]) => void
 }
 
 export function useBridgeRegistry({ setMessagesForTab }: UseBridgeRegistryOpts) {
+  // Runtime kind is immutable for the life of this mounted application. Capture
+  // it once so page teardown cannot accidentally fall through to desktop stop
+  // behavior if another parent cleanup has already dismantled web runtime state.
+  const webRuntime = useRef(isWebRuntime()).current
   // "tabId:agentId" → bridgeId, and the reverse bridgeId → tabId for routing.
-  const [bridgesByKey, setBridgesByKey] = useState<Record<string, string>>({})
-  const [bridgeToTab,  setBridgeToTab]  = useState<Record<string, string>>({})
+  const recoveredRoutes = useRef(webRuntime ? webBridgeRoutes() : []).current
+  const claimedRoutes = useRef(webRuntime ? claimedWebBridgeRoutes() : []).current
+  const [bridgesByKey, setBridgesByKey] = useState<Record<string, string>>(() => Object.fromEntries(
+    claimedRoutes.filter(route => route.provider).map(route => [`${route.tabId}:${route.provider}`, route.bridgeId]),
+  ))
+  const [bridgeToTab,  setBridgeToTab]  = useState<Record<string, string>>(() => Object.fromEntries(recoveredRoutes.map(route => [route.bridgeId, route.tabId])))
   // bridgeId → cwd, so the bridge event hook can read pre/post file snapshots
   // for the per-turn change tracker.
-  const [bridgeToCwd,  setBridgeToCwd]  = useState<Record<string, string>>({})
+  const [bridgeToCwd,  setBridgeToCwd]  = useState<Record<string, string>>(() => Object.fromEntries(recoveredRoutes.filter(route => route.cwd).map(route => [route.bridgeId, route.cwd!])))
   // bridgeId → mode that was in effect when the bridge was spawned. Used to
   // tag streamed agent bubbles so Plan-mode replies get the format toggle.
   const [bridgeToMode, setBridgeToMode] = useState<Record<string, ModeLevel>>({})
@@ -127,8 +145,12 @@ export function useBridgeRegistry({ setMessagesForTab }: UseBridgeRegistryOpts) 
   const liveRef = useRef<Record<string, string>>({})
   liveRef.current = bridgesByKey
   useEffect(() => () => {
+    // Closing a remote browser detaches from Brain-owned executions. Explicit
+    // tab/session removal still calls bridge.stop, but page teardown must not
+    // turn a temporary network lifecycle into an execution lifecycle.
+    if (webRuntime) return
     for (const id of Object.values(liveRef.current)) window.electronAPI?.bridgeStop(id)
-  }, [])
+  }, [webRuntime])
 
   /**
    * Return the bridge for (tabId, agentId), starting one if none exists.
@@ -158,6 +180,16 @@ export function useBridgeRegistry({ setMessagesForTab }: UseBridgeRegistryOpts) 
     const existing = bridgesByKey[key]
     const forceFresh = force || freshSession
     if (existing && !forceFresh) {
+      if (webRuntime) {
+        // Reassert the stable bridge before each explicit web prompt. Brain
+        // treats this as an idempotent attach while the execution exists; if
+        // Brain restarted and lost its process-local owner map, it creates the
+        // replacement bridge instead. The interrupted prompt is never replayed.
+        bridge.registerRoute(existing, tabId, cwd, mode)
+        const attached = await bridge.start(existing, provider, cwd, model, mode, effort, toolPolicy, key, tabId, mcpServers, false, externalDirectories)
+        if (attached.custodyHalt) bridgeActivity.setCustodyHalt(tabId, attached.custodyHalt)
+        if (attached.error) return { error: attached.error }
+      }
       if (mode) {
         setBridgeToMode(prev => prev[existing] === mode ? prev : { ...prev, [existing]: mode })
         bridge.setMode(existing, mode)
@@ -166,7 +198,14 @@ export function useBridgeRegistry({ setMessagesForTab }: UseBridgeRegistryOpts) 
     }
     if (existing && forceFresh) bridge.stop(existing)
 
-    const bridgeId = `br-${tabId}-${agentId}-${Date.now().toString(36)}`
+    // A stable remote id lets a newly authenticated browser runtime explicitly
+    // reclaim the same Brain-side execution without replaying its start/prompt.
+    const bridgeId = bridgeRuntimeId(tabId, agentId, webRuntime)
+    // React may batch the state updates below until after bridge.start has
+    // already emitted ready/turn/text events. Install routing synchronously so
+    // a fast remote provider cannot complete into an unmapped event sink.
+    bridge.registerRoute(bridgeId, tabId, cwd, mode)
+    if (webRuntime) rememberWebBridgeRoutes([{ bridgeId, tabId, cwd, provider }])
     setBridgeToTab(prev => ({ ...prev, [bridgeId]: tabId }))
     setBridgeToCwd(prev => ({ ...prev, [bridgeId]: cwd }))
     if (mode) setBridgeToMode(prev => ({ ...prev, [bridgeId]: mode }))
@@ -189,10 +228,11 @@ export function useBridgeRegistry({ setMessagesForTab }: UseBridgeRegistryOpts) 
       setBridgeToCwd(prev => { const n = { ...prev }; delete n[bridgeId]; return n })
       setBridgeToMode(prev => { const n = { ...prev }; delete n[bridgeId]; return n })
       bridgeActivity.clearBridges([bridgeId])
+      if (webRuntime) forgetWebBridgeRoute(bridgeId)
       return { error: r.error }
     }
     return { bridgeId }
-  }, [bridge, bridgesByKey])
+  }, [bridge, bridgesByKey, webRuntime])
 
   /** Stop and forget one bridge — used when model/effort change forces a respawn. */
   const dropBridge = useCallback((tabId: string, agentId: string) => {

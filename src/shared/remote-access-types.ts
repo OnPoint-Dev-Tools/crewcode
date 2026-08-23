@@ -12,6 +12,11 @@ export interface CrewCodeServerCapabilities {
     git: boolean
     terminals: boolean
     agents: boolean
+    attachments?: boolean
+    mcp?: boolean
+    github?: boolean
+    voice?: boolean
+    editorFormat?: boolean
   }
 }
 

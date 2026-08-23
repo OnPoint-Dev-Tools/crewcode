@@ -47,3 +47,5 @@ packaging/arch/pkg/
 packaging/arch/src/
 packaging/arch/*.deb
 packaging/arch/*.pkg.tar.*
+tester/
+test-workspace/

@@ -13,7 +13,9 @@ const PROVIDERS: Array<{ id: AgentProviderId; label: string }> = [
 ]
 
 export function WebAgentChat({ workspacePath, workspaceId, onClose }: { workspacePath: string; workspaceId: string; onClose: () => void }) {
-  const bridgeId = useRef(`web-chat-${workspaceId}-${Date.now().toString(36)}`)
+  // Stable browser identity allows a fresh authenticated page to reclaim the
+  // same Brain-owned execution instead of spawning or stopping it on teardown.
+  const bridgeId = useRef(`web-chat-${workspaceId}`)
   const [provider, setProvider] = useState<AgentProviderId>('crewcoder')
   const [rows, setRows] = useState<ChatRow[]>([])
   const [draft, setDraft] = useState('')
@@ -27,7 +29,16 @@ export function WebAgentChat({ workspacePath, workspaceId, onClose }: { workspac
       const eventBridgeId = event.type === 'user_request' ? event.request.bridgeId : event.bridgeId
       if (eventBridgeId !== bridgeId.current) return
       if (event.type === 'turn_start') setRunning(true)
-      else if (event.type === 'text_delta') {
+      else if (event.type === 'history_agent') {
+        // Reclaim sends an authoritative snapshot because final deltas may have
+        // raced the old page closing. Replace that turn rather than appending a
+        // duplicate or preserving only the partial text rendered before close.
+        setRows(current => {
+          const existing = current.findIndex(row => row.role === 'agent' && row.id === event.turnId)
+          if (existing === -1) return [...current, { id: event.turnId, role: 'agent', text: event.text }]
+          return current.map((row, index) => index === existing ? { ...row, text: event.text } : row)
+        })
+      } else if (event.type === 'text_delta') {
         setRows(current => {
           const last = current[current.length - 1]
           return last?.role === 'agent' ? [...current.slice(0, -1), { ...last, text: last.text + event.delta }] : [...current, { id: event.turnId, role: 'agent', text: event.delta }]
@@ -39,7 +50,9 @@ export function WebAgentChat({ workspacePath, workspaceId, onClose }: { workspac
       else if (event.type === 'user_request') setRequest(event.request)
       else if (event.type === 'user_request_resolved') setRequest(current => current?.requestId === event.requestId ? null : current)
     })
-    return () => { off(); api.bridgeStop(bridgeId.current) }
+    // Browser/component teardown only detaches event observation. Execution
+    // lifecycle belongs to Brain; explicit Stop/reset/removal actions terminate.
+    return () => { off() }
   }, [])
 
   const send = async () => {

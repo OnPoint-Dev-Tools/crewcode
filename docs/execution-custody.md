@@ -215,8 +215,25 @@ anything else is, by definition, unexplained.
 
 **Remote-access transport** (`src/main/agents/bridge-service.ts`) — partial.
 Mid-turn mode changes are refused and deferred, and orphaned permission requests
-are cancelled on close/abort/stop. It does **not** yet persist custody records or
-implement the halt/reauthorize lifecycle. Stated plainly rather than implied.
+are cancelled on explicit abort/stop or provider close. In Hub mode, browser relay
+loss now detaches rather than stopping Brain-owned agents and PTYs. The Brain keeps
+a bounded 1,000-event/1 MiB replay window per detached resource, caps each user at
+100 owned resources, exposes execution status, and permits the same authenticated
+owner with the required Brain-local scope
+to reclaim a stable resource id using a fresh encrypted connection. Reclaimed events
+are held until the browser chat subscriber and recovered execution route are ready,
+preventing a fast completed reply from falling between transport setup and App mount.
+Interrupted RPCs and prompts are never replayed. The completed conversation transcript remains in the
+Brain-local conversation store.
+
+This custody is currently **Brain-process-resident**, not crash durable. A Brain
+process stop, VPS restart, machine revocation, or loss of the persistent Brain-to-Hub
+relay closes the loopback backend and its provider processes. Remote access still
+does not persist the full halt/reauthorize journal described above, so such a loss
+must not be presented as a successfully completed turn. A fresh connection drops
+resource ids the restarted Brain could not actually reclaim. The next explicit user
+prompt may idempotently reassert the stable bridge and create a replacement provider
+process, but CrewCode never replays the interrupted prompt or infers its outcome.
 
 **Not yet covered:** terminal (PTY) panes, plugin capability sessions, and SSH
 host-key changes during a live session. Crew merges have their own equivalent

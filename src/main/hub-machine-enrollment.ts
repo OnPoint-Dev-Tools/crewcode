@@ -3,6 +3,8 @@ import { chmodSync, existsSync, linkSync, mkdirSync, readFileSync, rmSync, write
 import { hostname, platform } from 'os'
 import { dirname, join, resolve } from 'path'
 import { homedir } from 'os'
+import type { BrainAccessScope } from '../shared/hub-relay-types'
+import { startBrainRelay } from './hub-brain-relay'
 
 export const HUB_ENROLLMENT_TTL_MS = 10 * 60_000
 export const HUB_HEARTBEAT_INTERVAL_MS = 30_000
@@ -130,6 +132,8 @@ export interface BrainCliOptions {
   hubOrigin?: string
   token?: string
   name: string
+  allowedWorkspaceRoots: string[]
+  allowedScopes: BrainAccessScope[]
 }
 
 function valueAfter(argv: string[], index: number, flag: string): string {
@@ -144,17 +148,25 @@ export function parseBrainOptions(argv: string[], command: 'enroll' | 'brain', c
   let hubOrigin: string | undefined
   let token: string | undefined
   let name = hostname()
+  const allowedWorkspaceRoots: string[] = []
+  const allowedScopes: BrainAccessScope[] = []
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]
     if (arg === '--data-dir') dataDir = resolve(cwd, valueAfter(argv, index++, arg))
     else if (arg === '--hub') hubOrigin = normalizeHubUrl(valueAfter(argv, index++, arg))
     else if (arg === '--token') token = valueAfter(argv, index++, arg)
     else if (arg === '--name') name = valueAfter(argv, index++, arg).trim()
+    else if (arg === '--workspace-root' && command === 'brain') allowedWorkspaceRoots.push(resolve(cwd, valueAfter(argv, index++, arg)))
+    else if (arg === '--allow-scope' && command === 'brain') {
+      const scope = valueAfter(argv, index++, arg) as BrainAccessScope
+      if (scope !== 'workspace:read' && scope !== 'workspace:write' && scope !== 'terminal' && scope !== 'agent') throw new Error(`invalid Brain scope: ${scope}`)
+      if (!allowedScopes.includes(scope)) allowedScopes.push(scope)
+    }
     else throw new Error(`unknown option: ${arg}`)
   }
   if (!name || name.length > 80) throw new Error('machine name must contain 1 to 80 characters')
   if (command === 'enroll' && !hubOrigin) throw new Error('enroll requires --hub')
-  return { dataDir, hubOrigin, token, name }
+  return { dataDir, hubOrigin, token, name, allowedWorkspaceRoots, allowedScopes }
 }
 
 class HubRequestError extends Error {
@@ -224,7 +236,7 @@ async function hiddenEnrollmentToken(): Promise<string> {
 
 function brainUsage(command: 'enroll' | 'brain'): string {
   if (command === 'enroll') return `CrewCode machine enrollment\n\nUsage:\n  crewcode enroll --hub <https-origin> [--name <name>] [--data-dir <path>]\n\nThe enrollment token is requested without echo in an interactive terminal. It is\nsingle-use and expires after ten minutes. --token is available only for controlled\nautomation because command-line arguments may be exposed in process lists/history.`
-  return `CrewCode outbound brain presence\n\nUsage:\n  crewcode brain [--data-dir <path>]\n\nLoads the enrolled machine credential and sends authenticated outbound presence\nto its Hub. This milestone does not accept or execute remote commands.`
+  return `CrewCode outbound Brain relay\n\nUsage:\n  crewcode brain [--data-dir <path>] [--workspace-root <path>] [--allow-scope <scope>]\n\nScopes (repeatable): workspace:read, workspace:write, terminal, agent.\nThe Brain grants no remote RPC scope by default. Workspace roots and scopes are\nBrain-local authorization; signing in to the Hub cannot widen them.`
 }
 
 export async function runBrainCommand(command: 'enroll' | 'brain', argv: string[]): Promise<void> {
@@ -236,29 +248,57 @@ export async function runBrainCommand(command: 'enroll' | 'brain', argv: string[
     const credential = await enrollMachine(parsed)
     console.log(`Enrolled machine ${credential.machineId} with ${credential.hubOrigin}.`)
     console.log(`Credential stored at ${machineCredentialPath(parsed.dataDir)}.`)
-    console.log('Run `crewcode brain` to maintain outbound presence. Remote command execution is not enabled.')
+    console.log('Run `crewcode brain` with explicit workspace roots and scopes to enable the outbound relay.')
     return
   }
 
+  if (parsed.allowedScopes.length > 0 && parsed.allowedWorkspaceRoots.length === 0) {
+    throw new Error('remote scopes require at least one explicit --workspace-root')
+  }
   const credential = readMachineCredential(machineCredentialPath(parsed.dataDir))
   let stopped = false
+  let activeRelay: Awaited<ReturnType<typeof startBrainRelay>> | null = null
   let wake: (() => void) | undefined
-  const shutdown = (): void => { stopped = true; wake?.() }
+  const shutdown = (): void => {
+    stopped = true
+    wake?.()
+    void activeRelay?.close()
+  }
   process.once('SIGINT', shutdown)
   process.once('SIGTERM', shutdown)
-  console.log(`CrewCode brain presence connecting outbound to ${credential.hubOrigin}.`)
-  console.log('Remote command execution is not enabled.')
+  console.log(`CrewCode Brain connecting outbound to ${credential.hubOrigin}.`)
+  console.log(parsed.allowedScopes.length
+    ? `Brain-local grants: ${parsed.allowedScopes.join(', ')} under ${parsed.allowedWorkspaceRoots.join(', ')}.`
+    : 'Brain-local grants: none. Hub users can connect, but all privileged RPC is denied.')
+
   while (!stopped) {
-    try { await sendHeartbeat(credential) }
-    catch (error) {
-      console.error(`Heartbeat failed: ${(error as Error).message}`)
+    try {
+      await sendHeartbeat(credential)
+      activeRelay = await startBrainRelay({
+        credential,
+        dataDir: parsed.dataDir,
+        allowedWorkspaceRoots: parsed.allowedWorkspaceRoots,
+        allowedScopes: parsed.allowedScopes,
+      })
+      console.log('Authenticated outbound relay connected.')
+      const heartbeat = setInterval(() => {
+        void sendHeartbeat(credential).catch(error => {
+          console.error(`Heartbeat failed: ${(error as Error).message}`)
+          if (error instanceof HubRequestError && error.status === 401) void activeRelay?.close()
+        })
+      }, HUB_HEARTBEAT_INTERVAL_MS)
+      await activeRelay.closed
+      clearInterval(heartbeat)
+      activeRelay = null
+    } catch (error) {
+      console.error(`Brain relay failed: ${(error as Error).message}`)
       if (error instanceof HubRequestError && error.status === 401) {
-        console.error('Machine authority was rejected or revoked; presence is stopping.')
+        console.error('Machine authority was rejected or revoked; Brain is stopping.')
         return
       }
     }
     if (!stopped) await new Promise<void>(resolve => {
-      const timer = setTimeout(resolve, HUB_HEARTBEAT_INTERVAL_MS)
+      const timer = setTimeout(resolve, 5_000)
       wake = () => { clearTimeout(timer); resolve() }
     })
     wake = undefined

@@ -29,8 +29,9 @@ interface BridgesLike {
 }
 
 interface PtyLike {
-  addAgent: (wsId: string, tabId: string, agentId: string, name: string, cwd: string, shell?: string | null) => { paneId: string; live?: boolean }
+  addAgent: (wsId: string, tabId: string, agentId: string, name: string, cwd: string, shell?: string | null) => { paneId: string; live?: boolean; cwd?: string }
   write: (paneId: string, text: string) => void
+  close?: (paneId: string) => void
 }
 
 export interface UseComposerSendOpts {
@@ -48,7 +49,7 @@ export interface UseComposerSendOpts {
   effectivePath: string
   bridges: BridgesLike
   pty: PtyLike
-  activeAgentPane: { paneId: string; live?: boolean } | null
+  activeAgentPane: { paneId: string; live?: boolean; cwd?: string } | null
 
   /** Skills currently enabled in the library (any kind, all agents). */
   enabledSkills: Skill[]
@@ -131,6 +132,20 @@ export function useComposerSend(opts: UseComposerSendOpts) {
 
   // Mode is per-turn behavior. Do not respawn the bridge here: the next send
   // updates the live bridge's mode and injects a mode-change instruction.
+
+  // A session's selected worktree is part of its runtime identity. Reusing a
+  // bridge launched in a sibling/previous cwd would make the UI say one branch
+  // while tools still edit another checkout.
+  const prevPathRef = useRef({ sessActive, activeAgentId, effectivePath })
+  useEffect(() => {
+    const prev = prevPathRef.current
+    const sameRuntime = prev.sessActive === sessActive && prev.activeAgentId === activeAgentId
+    prevPathRef.current = { sessActive, activeAgentId, effectivePath }
+    if (sessActive && sameRuntime && prev.effectivePath !== effectivePath) {
+      bridges.dropBridge(sessActive, activeAgentId)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectivePath, sessActive, activeAgentId])
 
   // Effort is just a launch flag; respawn the bridge but keep provider context.
   const prevEffortRef = useRef({ sessActive, activeAgentId, effort })
@@ -245,6 +260,12 @@ export function useComposerSend(opts: UseComposerSendOpts) {
         return
       }
       let pane = activeAgentPane
+      // Terminal providers cannot change cwd in place. Retire an agent pane
+      // launched for the old worktree before forwarding the next command.
+      if (pane?.live && pane.cwd && pane.cwd !== effectivePath) {
+        pty.close?.(pane.paneId)
+        pane = null
+      }
       if (!pane || !pane.live) pane = pty.addAgent(activeWs, activeTabId, agent.id, agent.name, effectivePath, agent.path)
       setMessages(m => [...m, { kind: 'system', time, tone: 'info', text: `${agent.name} compaction requested. Continue after the provider reports completion.` }])
       pty.write(pane.paneId, '/compact\n')

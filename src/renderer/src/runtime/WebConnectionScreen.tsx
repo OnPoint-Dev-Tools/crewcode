@@ -3,7 +3,14 @@ import type { CrewCodeServerCapabilities } from '../../../shared/remote-access-t
 import App from '../App'
 import { SettingsProvider } from '../hooks/useSettings'
 import { NotificationsProvider } from '../hooks/useNotifications'
+import { hydrateMessagesFromBackend } from '../stores/chat-messages-store'
 import { installCrewCodeRuntime } from './crewcode-client'
+import { clearClaimedWebBridgeRoutes, markClaimedWebBridgeRoutes, rememberWebBridgeRoutes, webBridgeRoutes } from './web-bridge-routes'
+import {
+  connectHubRelayTransport,
+  type HubRelayConnectionStatus,
+  type ManagedHubRelayTransport,
+} from './hub-relay-client'
 import {
   clearWebSession,
   createWebCrewCodeClient,
@@ -12,6 +19,17 @@ import {
   savedWebSession,
   webRpc,
 } from './web-rpc-client'
+
+interface BrainExecutionSummary {
+  bridgeId: string
+  status: 'idle' | 'running' | 'completed' | 'blocked' | 'failed' | 'interrupted'
+  attached: boolean
+  provider?: string
+  cwd?: string
+  conversationScopeKey?: string
+  lastEventAt: number
+  droppedEvents: number
+}
 
 function pairingToken(): string {
   const params = new URLSearchParams(window.location.hash.replace(/^#/, ''))
@@ -22,11 +40,85 @@ export function WebConnectionScreen() {
   const [status, setStatus] = useState('Checking CrewCode server…')
   const [capabilities, setCapabilities] = useState<CrewCodeServerCapabilities | null>(null)
   const [connected, setConnected] = useState(false)
+  const [relay, setRelay] = useState<ManagedHubRelayTransport | null>(null)
+  const [relayStatus, setRelayStatus] = useState<HubRelayConnectionStatus | null>(null)
+  const [brainExecutions, setBrainExecutions] = useState<BrainExecutionSummary[]>([])
 
   useEffect(() => {
     let cancelled = false
+    let activeRelay: ManagedHubRelayTransport | null = null
+    let disposeRelayStatus: (() => void) | null = null
+    let executionPoll: ReturnType<typeof setInterval> | null = null
+    let initialRelayRefreshComplete = false
     void (async () => {
       try {
+        const machineId = new URLSearchParams(window.location.search).get('machine')
+        if (machineId) {
+          setStatus('Establishing an end-to-end encrypted Brain tunnel…')
+          const connectedRelay = await connectHubRelayTransport(machineId, ['workspace:read', 'workspace:write', 'terminal', 'agent'])
+          if (cancelled) { connectedRelay.close(); return }
+          activeRelay = connectedRelay
+          clearClaimedWebBridgeRoutes()
+          const refreshExecutions = async (claimDetached = false): Promise<void> => {
+            try {
+              const result = await connectedRelay.transport.rpc<{ executions: BrainExecutionSummary[] }>('bridge.list', {})
+              rememberWebBridgeRoutes(result.executions.flatMap(execution => execution.conversationScopeKey
+                ? [{ bridgeId: execution.bridgeId, tabId: execution.conversationScopeKey, cwd: execution.cwd, provider: execution.provider }]
+                : []))
+              let executions = result.executions
+              if (claimDetached) {
+                // Claim every stable chat execution, not only ones already
+                // marked detached. During refresh Brain may not have observed
+                // the old page closing yet; claim performs the same-owner
+                // encrypted-session handoff atomically.
+                const bridgeIds = executions.filter(execution => execution.conversationScopeKey).map(execution => execution.bridgeId)
+                if (bridgeIds.length) {
+                  const claimed = await connectedRelay.transport.rpc<{ claimed: string[] }>('bridge.claim', { bridgeIds })
+                  const attached = new Set(claimed.claimed)
+                  markClaimedWebBridgeRoutes(attached)
+                  executions = executions.map(execution => attached.has(execution.bridgeId) ? { ...execution, attached: true } : execution)
+                }
+              }
+              if (claimDetached) {
+                // replayHistory covers a live process; recoverHistory covers the
+                // same owner after a Brain restart erased its resource map but
+                // left the Brain-local conversation shard intact.
+                for (const execution of executions) {
+                  if (execution.status !== 'completed' || !execution.conversationScopeKey) continue
+                  await connectedRelay.transport.rpc('bridge.replayHistory', { bridgeId: execution.bridgeId })
+                }
+                for (const route of webBridgeRoutes()) {
+                  await connectedRelay.transport.rpc('bridge.recoverHistory', {
+                    bridgeId: route.bridgeId,
+                    conversationScopeKey: route.tabId,
+                  })
+                }
+              }
+              if (!cancelled) setBrainExecutions(executions)
+            } catch { /* disconnect banner reports transport failure */ }
+          }
+          disposeRelayStatus = connectedRelay.onStatus(next => {
+            setRelayStatus(next)
+            if (next.state === 'connected' && initialRelayRefreshComplete) void refreshExecutions(true)
+          })
+          executionPoll = setInterval(() => { void refreshExecutions() }, 10_000)
+          setRelay(connectedRelay)
+          // Discover routes and reclaim detached executions before App mounts.
+          // The managed transport buffers their replay until the bridge event
+          // subscriber is installed, so a completed reply survives page reload.
+          await refreshExecutions(true)
+          initialRelayRefreshComplete = true
+          const client = createWebCrewCodeClient(connectedRelay.transport)
+          await client.workspacesList()
+          installCrewCodeRuntime({ kind: 'web', client })
+          // App and its message store are statically imported before the web
+          // runtime exists. Retry the desktop-style authoritative transcript
+          // hydration now that encrypted Brain RPC is available.
+          await hydrateMessagesFromBackend()
+          setStatus(`Connected with Brain-local scopes: ${connectedRelay.grantedScopes.join(', ') || 'none'}`)
+          setConnected(true)
+          return
+        }
         const nextCapabilities = await fetchServerCapabilities()
         if (cancelled) return
         setCapabilities(nextCapabilities)
@@ -45,6 +137,7 @@ export function WebConnectionScreen() {
         await webRpc(session, 'workspaces.list', {})
         if (cancelled) return
         installCrewCodeRuntime({ kind: 'web', client: createWebCrewCodeClient(session) })
+        await hydrateMessagesFromBackend()
         setConnected(true)
       } catch (error) {
         // A rejected restored session should return to the pairing state rather
@@ -53,14 +146,46 @@ export function WebConnectionScreen() {
         if (!cancelled) setStatus(`Could not connect: ${(error as Error).message}`)
       }
     })()
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+      disposeRelayStatus?.()
+      if (executionPoll) clearInterval(executionPoll)
+      activeRelay?.close()
+    }
   }, [])
 
   if (connected) {
+    const relayInterrupted = relayStatus?.state === 'disconnected'
     return (
       <SettingsProvider>
         <NotificationsProvider>
           <App />
+          {brainExecutions.length > 0 && (
+            <aside style={{ position: 'fixed', zIndex: 9999, right: 12, bottom: 12, maxWidth: 420, padding: '10px 14px', border: '1px solid #31524a', background: '#101a17ee', color: '#cfe1da', fontSize: 12 }}>
+              <strong>Brain executions</strong>
+              {brainExecutions.map(execution => (
+                <div key={execution.bridgeId} style={{ marginTop: 4 }}>
+                  {execution.provider ?? 'agent'} · {execution.status}{execution.attached ? '' : ' · detached'}
+                  {execution.droppedEvents > 0 ? ` · ${execution.droppedEvents} old events omitted` : ''}
+                </div>
+              ))}
+            </aside>
+          )}
+          {relayStatus && relayStatus.state !== 'connected' && (
+            <aside role="alert" style={{ position: 'fixed', zIndex: 10000, inset: '12px 12px auto 12px', padding: '12px 16px', border: '1px solid #9a6b32', background: '#211a12', color: '#f0dfc2', boxShadow: '0 4px 18px #0008' }}>
+              <strong>{relayInterrupted ? 'Brain connection interrupted' : 'Reconnecting to Brain…'}</strong>
+              {relayInterrupted && <span style={{ marginLeft: 8 }}>{relayStatus.message} Brain-owned terminal and agent resources remain detached until secure reconnection.</span>}
+              {relayInterrupted && relay && (
+                <button
+                  type="button"
+                  style={{ marginLeft: 12 }}
+                  onClick={() => { void relay.reconnect().catch(() => undefined) }}
+                >
+                  Reconnect securely
+                </button>
+              )}
+            </aside>
+          )}
         </NotificationsProvider>
       </SettingsProvider>
     )
