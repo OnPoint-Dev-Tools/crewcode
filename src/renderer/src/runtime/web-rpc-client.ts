@@ -223,23 +223,27 @@ export function createWebCrewCodeClient(sessionOrTransport: string | WebClientTr
     attachmentsPick: async () => ({ canceled: true, filePaths: [] }),
     attachmentsImport: async (root, items) => {
       const rels: string[] = []
-      for (const item of items) {
-        const source = item.data instanceof ArrayBuffer ? new Uint8Array(item.data) : item.data
-        const bytes = new Uint8Array(source.byteLength)
-        bytes.set(source)
-        if (transport.uploadAttachment) {
-          rels.push(await transport.uploadAttachment(root, item.name, bytes.buffer))
-          continue
+      try {
+        for (const item of items) {
+          const source = item.data instanceof ArrayBuffer ? new Uint8Array(item.data) : item.data
+          const bytes = new Uint8Array(source.byteLength)
+          bytes.set(source)
+          if (transport.uploadAttachment) {
+            rels.push(await transport.uploadAttachment(root, item.name, bytes.buffer))
+            continue
+          }
+          if (!directSession) return { error: 'attachment upload is unavailable through this remote transport' }
+          const response = await fetch(`/api/v1/attachments?root=${encodeURIComponent(root)}&name=${encodeURIComponent(item.name)}`, {
+            method: 'POST', headers: { authorization: `Bearer ${directSession}` }, body: bytes.buffer,
+          })
+          const result = await response.json() as { rel?: string; error?: { message?: string } }
+          if (!response.ok || !result.rel) return { error: result.error?.message ?? `attachment upload failed with ${response.status}` }
+          rels.push(result.rel)
         }
-        if (!directSession) return { error: 'attachment upload is unavailable through this remote transport' }
-        const response = await fetch(`/api/v1/attachments?root=${encodeURIComponent(root)}&name=${encodeURIComponent(item.name)}`, {
-          method: 'POST', headers: { authorization: `Bearer ${directSession}` }, body: bytes.buffer,
-        })
-        const result = await response.json() as { rel?: string; error?: { message?: string } }
-        if (!response.ok || !result.rel) return { error: result.error?.message ?? `attachment upload failed with ${response.status}` }
-        rels.push(result.rel)
+        return { rels }
+      } catch (error) {
+        return { error: (error as Error).message || 'attachment upload failed' }
       }
-      return { rels }
     },
     // There is no synchronous network transport. Start a keepalive request so
     // page teardown can still hand the final settled transcript to the server.

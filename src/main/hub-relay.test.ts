@@ -8,7 +8,7 @@ import {
   hkdfSync,
   verify,
 } from 'crypto'
-import { mkdtempSync, rmSync } from 'fs'
+import { mkdtempSync, readFileSync, rmSync } from 'fs'
 import { createServer } from 'http'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -226,6 +226,7 @@ describe('Brain-local RPC authorization', () => {
     expect(brainScopeForMethod('workspaces.list')).toBe('workspace:read')
     expect(brainScopeForMethod('fs.writeFile')).toBe('workspace:write')
     expect(brainScopeForMethod('pty.create')).toBe('terminal')
+    expect(brainScopeForMethod('attachments.chunk')).toBe('workspace:write')
     expect(brainScopeForMethod('bridge.prompt')).toBe('agent')
     expect(brainScopeForMethod('mcp.list')).toBe('agent')
     expect(brainScopeForMethod('voice.transcribe')).toBe('agent')
@@ -334,7 +335,7 @@ describe('authenticated encrypted Hub relay', () => {
   })
 
   it('detaches a terminal on browser loss and explicitly reclaims the live process', async () => {
-    const { hub, machineId, cookie, csrf, publicKey, workspaceRoot } = await fixture(['workspace:write', 'terminal'])
+    const { hub, machineId, machineToken, cookie, csrf, publicKey, workspaceRoot } = await fixture(['workspace:write', 'terminal'])
     const issue = async (): Promise<string> => {
       const response = await fetch(`${hub.url}/api/v1/hub/machines/${machineId}/tickets`, {
         method: 'POST', headers: { cookie, 'x-crewcode-csrf': csrf, 'content-type': 'application/json', origin: hub.publicOrigin },
@@ -349,7 +350,19 @@ describe('authenticated encrypted Hub relay', () => {
       .resolves.toMatchObject({ type: 'rpcResult', response: { ok: true, result: { ok: true, pid: expect.any(Number) } } })
     await first.close()
 
+    // A transient shared Hub relay replacement must not tear down Brain-local
+    // execution either. The Brain reconnects its transport while retaining the
+    // same backend and PTY/provider registry.
+    const replacement = new WebSocket(hub.url.replace(/^http/, 'ws') + '/api/v1/hub/relay', ['crewcode.brain.v1', machineToken])
+    await new Promise<void>((resolve, reject) => { replacement.once('open', resolve); replacement.once('error', reject) })
+    await new Promise<void>(resolve => { replacement.once('close', () => resolve()); replacement.close(1000, 'test transport replacement') })
+    await new Promise(resolve => setTimeout(resolve, 5_250))
+
     const second = await openEncryptedSession({ hub, ticket: await issue(), machineId, publicKey })
+    // The durable Hub owner can operate its Brain-owned process immediately;
+    // explicit claim only controls eager event replay and is not authorization.
+    await expect(second.rpc({ protocolVersion: 1, id: 'write-before-custody-claim', method: 'pty.write', params: { paneId: 'durable-pane', data: 'echo still-alive\n' } }))
+      .resolves.toMatchObject({ type: 'rpcResult', response: { ok: true } })
     await expect(second.rpc({ protocolVersion: 1, id: 'claim-custody-pty', method: 'pty.claim', params: { paneIds: ['durable-pane'] } }))
       .resolves.toMatchObject({ type: 'rpcResult', response: { ok: true, result: { claimed: ['durable-pane'] } } })
     await expect(second.rpc({ protocolVersion: 1, id: 'reattach-custody-pty', method: 'pty.create', params: { paneId: 'durable-pane', cwd: workspaceRoot, shell: '/bin/sh' } }))
@@ -437,21 +450,21 @@ describe('authenticated encrypted Hub relay', () => {
       event: { type: 'text_delta', bridgeId, delta: 'finished while detached' },
     })
     expect(requestCount).toBe(1)
+    await expect(second.rpc({ protocolVersion: 1, id: 'durable-history-data', method: 'bridge.replayHistory', params: { bridgeId } }))
+      .resolves.toMatchObject({
+        type: 'rpcResult',
+        response: { ok: true, result: { replayed: true, latestAssistant: { text: 'finished while detached', userText: 'complete later' } } },
+      })
     // Closing the superseded connection after handoff must not detach the new
     // owner or make its next operation fail ownership checks.
     await first.close()
     await expect(second.rpc({ protocolVersion: 1, id: 'compact-after-handoff', method: 'bridge.compact', params: { bridgeId } }))
       .resolves.toMatchObject({ type: 'rpcResult', response: { ok: true } })
 
-    // Recovery must not depend exclusively on the page's eager claim pass. A
-    // restored renderer always reasserts its deterministic bridge.start before
-    // prompting; that start atomically transfers same-owner custody even while
-    // the superseded browser still appears attached.
+    // Recovery must not depend on eager claim or reissuing bridge.start. The
+    // agent belongs to the authenticated Hub owner, while browser connection
+    // ids only decide where subsequent live events are routed.
     const third = await openEncryptedSession({ hub, ticket: await issue(), machineId, publicKey })
-    await expect(third.rpc({
-      protocolVersion: 1, id: 'reattach-without-claim', method: 'bridge.start',
-      params: { bridgeId, provider: 'ollama', model: 'fake-model', cwd: workspaceRoot, conversationScopeKey: 'detached-chat' },
-    })).resolves.toMatchObject({ type: 'rpcResult', response: { ok: true, result: { ok: true, attached: true } } })
     await second.close()
     await expect(third.rpc({ protocolVersion: 1, id: 'prompt-after-page-return', method: 'bridge.prompt', params: { bridgeId, text: 'continue working' } }))
       .resolves.toMatchObject({ type: 'rpcResult', response: { ok: true, result: { ok: true } } })
@@ -535,6 +548,37 @@ describe('authenticated encrypted Hub relay', () => {
     expect(requestCount).toBe(1)
     await second.rpc({ protocolVersion: 1, id: 'stop-partial-agent', method: 'bridge.stop', params: { bridgeId } })
     await second.close()
+  })
+
+  it('tunnels attachment chunks end-to-end into the Brain workspace', async () => {
+    const { hub, machineId, cookie, csrf, publicKey, workspaceRoot } = await fixture(['workspace:write'])
+    const ticketResponse = await fetch(`${hub.url}/api/v1/hub/machines/${machineId}/tickets`, {
+      method: 'POST', headers: { cookie, 'x-crewcode-csrf': csrf, 'content-type': 'application/json', origin: hub.publicOrigin },
+      body: JSON.stringify({ requestedScopes: ['workspace:write'] }),
+    })
+    const { ticket } = await ticketResponse.json() as { ticket: string }
+    const session = await openEncryptedSession({ hub, ticket, machineId, publicKey })
+    await session.rpc({ protocolVersion: 1, id: 'add-upload-root', method: 'workspaces.add', params: { path: workspaceRoot } })
+    const bytes = Buffer.from('private attachment bytes never visible to Hub')
+    const begun = await session.rpc({
+      protocolVersion: 1, id: 'begin-upload', method: 'attachments.begin',
+      params: { root: workspaceRoot, name: '../private.txt', size: bytes.byteLength },
+    })
+    if (begun.type !== 'rpcResult' || !begun.response.ok) throw new Error(`attachment begin failed: ${JSON.stringify(begun)}`)
+    const uploadId = String((begun.response.result as { uploadId: string }).uploadId)
+    await expect(session.rpc({
+      protocolVersion: 1, id: 'chunk-upload', method: 'attachments.chunk',
+      params: { uploadId, sequence: 0, data: bytes.toString('base64') },
+    })).resolves.toMatchObject({ type: 'rpcResult', response: { ok: true } })
+    const finished = await session.rpc({
+      protocolVersion: 1, id: 'finish-upload', method: 'attachments.finish',
+      params: { uploadId, sha256: createHash('sha256').update(bytes).digest('hex') },
+    })
+    if (finished.type !== 'rpcResult' || !finished.response.ok) throw new Error(`attachment finish failed: ${JSON.stringify(finished)}`)
+    const rel = String((finished.response.result as { rel: string }).rel)
+    expect(rel).toMatch(/^\.crewcode\/attachments\//)
+    expect(readFileSync(join(workspaceRoot, rel), 'utf8')).toBe(bytes.toString())
+    await session.close()
   })
 
   it('executes a scoped read RPC and rejects ticket replay', async () => {

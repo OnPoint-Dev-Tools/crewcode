@@ -401,11 +401,16 @@ discovery, including the existing SSH routing. Network filesystem RPC also
 rejects roots absent from the server workspace store, preventing a browser from
 substituting `/` or another arbitrary host path. `workspaceStore.ts` and `fs.ts`
 are now Electron transport adapters for those operations. Native folder pickers,
-attachment handling, formatting, and destructive filesystem mutations remain in
-the Electron adapter until their browser API and validation contracts are added.
+formatting, and destructive filesystem mutations remain in the Electron adapter
+until their browser API and validation contracts are added.
 
-Hub-relayed attachment tunneling is not implemented. The browser can list the
-Brain-owned MCP registry and select entries by opaque id; `bridge.start` resolves
+Hub-relayed attachment tunneling uses ordered 256 KiB chunks inside the existing
+browser-to-Brain encrypted RPC tunnel. The Hub sees only bounded ciphertext frames.
+Brain requires `workspace:write`, restricts destinations to registered workspace
+roots, rejects symlink escapes and files over 25 MiB, verifies a final SHA-256
+digest, and removes canceled, failed, idle, or shutdown-temporary uploads. The
+browser can list the Brain-owned MCP registry and select entries by opaque id;
+`bridge.start` resolves
 those ids server-side and never accepts executable MCP command or environment
 definitions from the browser.
 

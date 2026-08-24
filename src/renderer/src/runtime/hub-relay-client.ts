@@ -31,6 +31,15 @@ function decodeBase64Url(value: string): Uint8Array<ArrayBuffer> {
   return result
 }
 
+function encodeBase64(value: Uint8Array): string {
+  let raw = ''
+  const size = 32 * 1024
+  for (let offset = 0; offset < value.byteLength; offset += size) {
+    raw += String.fromCharCode(...value.subarray(offset, Math.min(value.byteLength, offset + size)))
+  }
+  return btoa(raw)
+}
+
 function encodeBase64Url(value: ArrayBuffer | Uint8Array): string {
   const bytes = value instanceof Uint8Array ? value : new Uint8Array(value)
   let raw = ''
@@ -335,6 +344,40 @@ export async function connectHubRelayTransport(
         for (const id of claimed) paneIds.add(id)
       }
       return result
+    },
+    async uploadAttachment(root, name, body) {
+      if (!active) throw new WebRpcError('Hub relay is disconnected; reconnect before uploading', 'UNAUTHENTICATED')
+      const connection = active
+      const bytes = new Uint8Array(body)
+      const begun = await connection.transport.rpc<{ uploadId: string; chunkBytes: number }>('attachments.begin', {
+        root, name, size: bytes.byteLength,
+      })
+      const chunkBytes = Math.min(256 * 1024, Number(begun.chunkBytes))
+      if (!begun.uploadId || !Number.isSafeInteger(chunkBytes) || chunkBytes < 1) throw new Error('Brain returned invalid attachment upload parameters')
+      try {
+        let sequence = 0
+        for (let offset = 0; offset < bytes.byteLength; offset += chunkBytes) {
+          // Await each acknowledgement for natural end-to-end backpressure and
+          // strict ordering; no plaintext attachment bytes are visible to Hub.
+          await connection.transport.rpc('attachments.chunk', {
+            uploadId: begun.uploadId,
+            sequence: sequence++,
+            data: encodeBase64(bytes.subarray(offset, Math.min(bytes.byteLength, offset + chunkBytes))),
+          })
+        }
+        const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', body))
+        const finished = await connection.transport.rpc<{ rel: string }>('attachments.finish', {
+          uploadId: begun.uploadId,
+          sha256: [...digest].map(byte => byte.toString(16).padStart(2, '0')).join(''),
+        })
+        if (!finished.rel) throw new Error('Brain did not return an attachment path')
+        return finished.rel
+      } catch (error) {
+        // Best effort: disconnect cleanup and Brain's idle sweep cover cases in
+        // which the encrypted cancellation itself cannot arrive.
+        await connection.transport.rpc('attachments.cancel', { uploadId: begun.uploadId }).catch(() => undefined)
+        throw error
+      }
     },
     subscribe(listener) {
       eventListeners.add(listener)

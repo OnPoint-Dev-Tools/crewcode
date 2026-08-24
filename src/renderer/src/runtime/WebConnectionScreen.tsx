@@ -5,6 +5,7 @@ import { SettingsProvider } from '../hooks/useSettings'
 import { NotificationsProvider } from '../hooks/useNotifications'
 import { hydrateMessagesFromBackend } from '../stores/chat-messages-store'
 import { installCrewCodeRuntime } from './crewcode-client'
+import { restoreRecoveredAssistant, type RecoveredAssistant } from './recovered-agent-history'
 import { clearClaimedWebBridgeRoutes, markClaimedWebBridgeRoutes, rememberWebBridgeRoutes, webBridgeRoutes } from './web-bridge-routes'
 import {
   connectHubRelayTransport,
@@ -85,13 +86,15 @@ export function WebConnectionScreen() {
                 // left the Brain-local conversation shard intact.
                 for (const execution of executions) {
                   if (execution.status !== 'completed' || !execution.conversationScopeKey) continue
-                  await connectedRelay.transport.rpc('bridge.replayHistory', { bridgeId: execution.bridgeId })
+                  const recovered = await connectedRelay.transport.rpc<{ latestAssistant: RecoveredAssistant | null }>('bridge.replayHistory', { bridgeId: execution.bridgeId })
+                  restoreRecoveredAssistant(execution.conversationScopeKey, execution.bridgeId, recovered.latestAssistant)
                 }
                 for (const route of webBridgeRoutes()) {
-                  await connectedRelay.transport.rpc('bridge.recoverHistory', {
+                  const recovered = await connectedRelay.transport.rpc<{ latestAssistant: RecoveredAssistant | null }>('bridge.recoverHistory', {
                     bridgeId: route.bridgeId,
                     conversationScopeKey: route.tabId,
                   })
+                  restoreRecoveredAssistant(route.tabId, route.bridgeId, recovered.latestAssistant)
                 }
               }
               if (!cancelled) setBrainExecutions(executions)
@@ -103,18 +106,15 @@ export function WebConnectionScreen() {
           })
           executionPoll = setInterval(() => { void refreshExecutions() }, 10_000)
           setRelay(connectedRelay)
-          // Discover routes and reclaim detached executions before App mounts.
-          // The managed transport buffers their replay until the bridge event
-          // subscriber is installed, so a completed reply survives page reload.
+          const client = createWebCrewCodeClient(connectedRelay.transport)
+          installCrewCodeRuntime({ kind: 'web', client })
+          // Hydrate the authoritative browser transcript first, then merge any
+          // reply that completed in Brain custody while the page was absent.
+          // Doing this in the opposite order lets hydration overwrite recovery.
+          await hydrateMessagesFromBackend()
           await refreshExecutions(true)
           initialRelayRefreshComplete = true
-          const client = createWebCrewCodeClient(connectedRelay.transport)
           await client.workspacesList()
-          installCrewCodeRuntime({ kind: 'web', client })
-          // App and its message store are statically imported before the web
-          // runtime exists. Retry the desktop-style authoritative transcript
-          // hydration now that encrypted Brain RPC is available.
-          await hydrateMessagesFromBackend()
           setStatus(`Connected with Brain-local scopes: ${connectedRelay.grantedScopes.join(', ') || 'none'}`)
           setConnected(true)
           return

@@ -40,6 +40,29 @@ async function settle(): Promise<void> {
 }
 
 describe('managed Hub relay transport', () => {
+  it('uploads attachments as ordered bounded chunks through relay RPC', async () => {
+    const first = connection('first', ['workspace:write'])
+    first.rpc.mockImplementation(async (method, params) => {
+      if (method === 'attachments.begin') return { uploadId: 'upload-1', chunkBytes: 3 }
+      if (method === 'attachments.finish') return { rel: '.crewcode/attachments/file.txt' }
+      if (method === 'attachments.chunk') return { received: (Number((params as { sequence: number }).sequence) + 1) * 3 }
+      return `first:${method}`
+    })
+    const managed = await connectHubRelayTransport('machine', ['workspace:write'], { open: vi.fn().mockResolvedValue(first.value) })
+
+    await expect(managed.transport.uploadAttachment?.('/workspace', '../file.txt', new TextEncoder().encode('abcdefg').buffer))
+      .resolves.toBe('.crewcode/attachments/file.txt')
+    expect(first.rpc.mock.calls.filter(([method]) => method === 'attachments.chunk').map(([, params]) => params))
+      .toEqual([
+        { uploadId: 'upload-1', sequence: 0, data: 'YWJj' },
+        { uploadId: 'upload-1', sequence: 1, data: 'ZGVm' },
+        { uploadId: 'upload-1', sequence: 2, data: 'Zw==' },
+      ])
+    expect(first.rpc).toHaveBeenCalledWith('attachments.finish', {
+      uploadId: 'upload-1', sha256: '7d1a54127b222502f5b79b5fb0803061152a44f92b37e23c6527baf665d4da9a',
+    })
+  })
+
   it('requires explicit fresh-ticket reconnection and never queues disconnected RPC', async () => {
     const first = connection('first')
     const second = connection('second', ['workspace:read', 'terminal'])

@@ -110,7 +110,10 @@ per user and 1,000 events / 1 MiB of detached evidence buffered per resource;
 interrupted RPCs are never replayed.
 Execution custody is still process-resident rather than crash durable: Brain process,
 VPS, revocation, or persistent Brain-to-Hub relay loss can stop execution without a
-complete remote halt journal. Attachment tunneling is also not implemented.
+complete remote halt journal. Attachments are tunneled as ordered chunks inside the
+E2EE relay: Hub receives ciphertext only, while Brain enforces `workspace:write`, a
+25 MiB file limit, registered-root and symlink containment, strict sequence and
+size bounds, SHA-256 integrity, active-upload limits, and temporary-file cleanup.
 
 ## Hop 1 — untrusted content -> agent
 

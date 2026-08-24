@@ -872,9 +872,6 @@
   display: flex; align-items: center; flex-wrap: wrap;
   gap: 6px;
   padding: 6px 10px;
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
-  background: #0c0f0c;
   font-family: var(--font-family-mono); font-size: 10.5px;
   color: var(--muted-foreground);
 }

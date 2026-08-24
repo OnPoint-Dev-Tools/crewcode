@@ -49,6 +49,7 @@ export interface RunningBrainRelay {
 export function brainScopeForMethod(method: string): BrainAccessScope | null {
   if (READ_METHODS.has(method)) return 'workspace:read'
   if (method.startsWith('pty.')) return 'terminal'
+  if (method.startsWith('attachments.')) return 'workspace:write'
   if (AGENT_METHOD_PREFIXES.some(prefix => method.startsWith(prefix))) return 'agent'
   if (WRITE_METHOD_PREFIXES.some(prefix => method.startsWith(prefix))) return 'workspace:write'
   return null
@@ -69,6 +70,13 @@ function latestAssistantMessageIndex(messages: Array<{ role: string; content: st
     if (message.role === 'assistant' && message.content.trim()) return index
   }
   return -1
+}
+
+function precedingUserText(messages: Array<{ role: string; content: string }>, before: number): string | undefined {
+  for (let index = before - 1; index >= 0; index -= 1) {
+    if (messages[index]!.role === 'user') return messages[index]!.content
+  }
+  return undefined
 }
 
 function websocketOrigin(origin: string): string {
@@ -101,7 +109,11 @@ export async function startBrainRelay(options: BrainRelayOptions): Promise<Runni
   const eventSocket = new WebSocket(backend.url.replace(/^http/, 'ws') + '/api/v1/events', ['crewcode.v1', backendToken])
   await new Promise<void>((resolve, reject) => { eventSocket.once('open', resolve); eventSocket.once('error', reject) })
 
-  const relay = new WebSocket(websocketOrigin(options.credential.hubOrigin), ['crewcode.brain.v1', options.credential.token])
+  // The Brain-local execution backend outlives every Hub/browser transport.
+  // `relay` is replaced on transient Hub disconnects without recreating the
+  // backend or stopping provider processes.
+  let relay!: WebSocket
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null
   const sessions = new Map<string, RelaySession>()
   type ResourceOwner = {
     userId: string
@@ -224,7 +236,7 @@ export async function startBrainRelay(options: BrainRelayOptions): Promise<Runni
     else appendDetachedEvent(resourceId, { channel: event.channel, event: event.event })
   })
 
-  relay.on('message', async raw => {
+  const handleRelayMessage = async (raw: WebSocket.RawData): Promise<void> => {
     let frame: HubRelayControlFrame
     try { frame = JSON.parse(raw.toString()) as HubRelayControlFrame } catch { relay.close(4002, 'invalid Hub relay frame'); return }
     if (frame.type === 'brainReady') { relayReadyResolve(); return }
@@ -286,13 +298,17 @@ export async function startBrainRelay(options: BrainRelayOptions): Promise<Runni
     const existingOwner = ownerMap && resourceId ? ownerMap.get(resourceId) : undefined
     const ownedResourceCount = [...paneOwners.values(), ...bridgeOwners.values()].filter(owner => owner.userId === session.userId).length
     const exceedsResourceLimit = createsResource && !existingOwner && ownedResourceCount >= MAX_OWNED_RESOURCES_PER_USER
-    const canAttach = existingOwner?.userId === session.userId
-      && (existingOwner.connectionId === null || existingOwner.connectionId === session.connectionId)
-    const wrongOwner = !!existingOwner && !canAttach
-    const missingOwner = !!ownerMap && !!resourceId && !createsResource && existingOwner?.connectionId !== session.connectionId
+    // Execution authority belongs to the authenticated Hub user on this Brain,
+    // not to one ephemeral browser websocket. connectionId is event-routing
+    // custody only: a same-owner command from a replacement page atomically
+    // attaches the resource to that page. Otherwise closing a tab turns a
+    // transport lifecycle into an execution lifecycle and strands live agents.
+    const ownsResource = existingOwner?.userId === session.userId
+    const wrongOwner = !!existingOwner && !ownsResource
+    const missingOwner = !!ownerMap && !!resourceId && !createsResource && !existingOwner
     const requestResourceId = responseRequestId ? requestOwners.get(responseRequestId) : undefined
     const requestOwner = requestResourceId ? bridgeOwners.get(requestResourceId) : undefined
-    const wrongRequestOwner = !!responseRequestId && requestOwner?.connectionId !== session.connectionId
+    const wrongRequestOwner = !!responseRequestId && requestOwner?.userId !== session.userId
     let response: CrewCodeRemoteResponse
     let replayResourceId = ''
     if (!scope || !session.grantedScopes.has(scope)) {
@@ -327,7 +343,12 @@ export async function startBrainRelay(options: BrainRelayOptions): Promise<Runni
       // conversation shard. Agent scope is still required above.
       const history = loadConversation(`web:${conversationScopeKey}`)
       const latestAssistantIndex = latestAssistantMessageIndex(history)
-      response = { protocolVersion: CREWCODE_REMOTE_PROTOCOL_VERSION, id: request.id, ok: true, result: { replayed: latestAssistantIndex !== -1 } }
+      const latestAssistant = latestAssistantIndex === -1 ? null : {
+        index: latestAssistantIndex,
+        text: history[latestAssistantIndex]!.content,
+        userText: precedingUserText(history, latestAssistantIndex),
+      }
+      response = { protocolVersion: CREWCODE_REMOTE_PROTOCOL_VERSION, id: request.id, ok: true, result: { replayed: latestAssistant !== null, latestAssistant } }
       sendEncrypted(session, { type: 'rpcResult', response })
       if (latestAssistantIndex !== -1) {
         sendEncrypted(session, {
@@ -345,7 +366,12 @@ export async function startBrainRelay(options: BrainRelayOptions): Promise<Runni
       }
       const history = loadConversation(`web:${owner.conversationScopeKey}`)
       const latestAssistantIndex = latestAssistantMessageIndex(history)
-      response = { protocolVersion: CREWCODE_REMOTE_PROTOCOL_VERSION, id: request.id, ok: true, result: { replayed: latestAssistantIndex !== -1 } }
+      const latestAssistant = latestAssistantIndex === -1 ? null : {
+        index: latestAssistantIndex,
+        text: history[latestAssistantIndex]!.content,
+        userText: precedingUserText(history, latestAssistantIndex),
+      }
+      response = { protocolVersion: CREWCODE_REMOTE_PROTOCOL_VERSION, id: request.id, ok: true, result: { replayed: latestAssistant !== null, latestAssistant } }
       sendEncrypted(session, { type: 'rpcResult', response })
       if (latestAssistantIndex !== -1) {
         sendEncrypted(session, {
@@ -394,7 +420,7 @@ export async function startBrainRelay(options: BrainRelayOptions): Promise<Runni
       return
     } else if (exceedsResourceLimit) {
       response = deniedResponse(request, `Brain resource limit of ${MAX_OWNED_RESOURCES_PER_USER} terminals and agents reached`)
-    } else if (request.method === 'bridge.start' && params.freshSession !== true && existingOwner?.userId === session.userId) {
+    } else if (request.method === 'bridge.start' && params.freshSession !== true && ownsResource) {
       // Stable browser bridge ids make start an idempotent same-owner attach as
       // well as a create operation. This is also the recovery fallback when a
       // restored page misses its eager bridge.claim (for example, because the
@@ -406,8 +432,13 @@ export async function startBrainRelay(options: BrainRelayOptions): Promise<Runni
       replayResourceId = resourceId
       response = { protocolVersion: CREWCODE_REMOTE_PROTOCOL_VERSION, id: request.id, ok: true, result: { ok: true, attached: true } }
     } else if (wrongOwner || missingOwner || wrongRequestOwner) {
-      response = deniedResponse(request, 'Brain session does not own this terminal or agent resource')
+      response = deniedResponse(request, 'Authenticated Hub user does not own this Brain resource')
     } else {
+      // Any operation by the durable owner attaches event routing to the
+      // replacement browser before backend work can emit. The prior connection
+      // may still be open during a refresh; it no longer owns execution.
+      if (existingOwner && ownsResource) existingOwner.connectionId = session.connectionId
+      if (requestOwner?.userId === session.userId) requestOwner.connectionId = session.connectionId
       // Reserve caller-chosen resource ids before invoking the backend. PTY and
       // agent implementations may emit their first event before create/start
       // resolves; claiming afterward drops that event and leaves the UI stuck.
@@ -466,14 +497,36 @@ export async function startBrainRelay(options: BrainRelayOptions): Promise<Runni
       for (const event of detachedEvents.get(replayResourceId) ?? []) sendEncrypted(session, { type: 'event', channel: event.channel, event: event.event })
       detachedEvents.delete(replayResourceId)
     }
-  })
+  }
 
-  relay.on('close', () => {
-    sessions.clear()
-    eventSocket.close()
-    void closeBackend().finally(closeResolve)
-  })
-  await new Promise<void>((resolve, reject) => { relay.once('open', resolve); relay.once('error', reject) })
+  const connectRelay = (): Promise<void> => {
+    const socket = new WebSocket(websocketOrigin(options.credential.hubOrigin), ['crewcode.brain.v1', options.credential.token])
+    relay = socket
+    socket.on('message', raw => { void handleRelayMessage(raw) })
+    // The close handler owns retry. Keep an error listener installed so a failed
+    // reconnect cannot become an uncaught EventEmitter error.
+    socket.on('error', () => undefined)
+    socket.on('close', () => {
+      if (relay !== socket) return
+      // Detach only browser routing. Provider execution and the loopback event
+      // socket stay alive while the persistent Brain reconnects to the Hub.
+      for (const connectionId of [...sessions.keys()]) releaseSession(connectionId)
+      if (closing) {
+        eventSocket.close()
+        void closeBackend().finally(closeResolve)
+        return
+      }
+      reconnectTimer = setTimeout(() => {
+        reconnectTimer = null
+        void connectRelay().catch(() => undefined)
+      }, 5_000)
+    })
+    return new Promise<void>((resolve, reject) => {
+      socket.once('open', resolve)
+      socket.once('error', reject)
+    })
+  }
+  await connectRelay()
   await relayReady
 
   return {
@@ -481,7 +534,8 @@ export async function startBrainRelay(options: BrainRelayOptions): Promise<Runni
     async close() {
       if (closing) return closed
       closing = true
-      relay.close(1000, 'brain stopping')
+      if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
+      if (relay.readyState === WebSocket.OPEN || relay.readyState === WebSocket.CONNECTING) relay.close(1000, 'brain stopping')
       eventSocket.close()
       await closeBackend()
       if (relay.readyState === WebSocket.CLOSED) closeResolve()

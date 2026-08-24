@@ -1,4 +1,5 @@
-import { mkdtempSync, mkdirSync, readFileSync, realpathSync } from 'fs'
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, symlinkSync } from 'fs'
+import { createHash } from 'crypto'
 import { join } from 'path'
 import { tmpdir as osTmpdir } from 'os'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -130,6 +131,30 @@ describe('remote access server', () => {
       method: 'POST', headers: { authorization: `Bearer ${sessionToken}` }, body: 'no',
     })
     expect(forbidden.status).toBe(403)
+
+    const tunneled = Buffer.from('encrypted relay attachment')
+    const beginBody = await (await rpc('begin-tunnel', 'attachments.begin', { root, name: '../../tunneled.txt', size: tunneled.byteLength })).json() as { result: { uploadId: string } }
+    const uploadId = beginBody.result.uploadId
+    expect(await (await rpc('chunk-tunnel', 'attachments.chunk', { uploadId, sequence: 0, data: tunneled.toString('base64') })).json())
+      .toMatchObject({ ok: true, result: { received: tunneled.byteLength } })
+    const digest = createHash('sha256').update(tunneled).digest('hex')
+    const finished = await (await rpc('finish-tunnel', 'attachments.finish', { uploadId, sha256: digest })).json() as { result: { rel: string } }
+    expect(finished.result.rel).toMatch(/^\.crewcode\/attachments\//)
+    expect(finished.result.rel).toMatch(/tunneled\.txt$/)
+    expect(readFileSync(join(root, finished.result.rel), 'utf8')).toBe('encrypted relay attachment')
+
+    if (process.platform !== 'win32') {
+      const symlinkRoot = mkdtempSync(join(tmpdir(), 'crewcode-rpc-attachment-link-'))
+      const outside = mkdtempSync(join(tmpdir(), 'crewcode-rpc-attachment-outside-'))
+      symlinkSync(outside, join(symlinkRoot, '.crewcode'))
+      await rpc('add-symlink-root', 'workspaces.add', { path: symlinkRoot })
+      const escaped = await rpc('begin-symlink-escape', 'attachments.begin', { root: symlinkRoot, name: 'escape.txt', size: 1 })
+      expect(escaped.status).toBe(403)
+    }
+
+    const badBegin = await (await rpc('begin-bad-digest', 'attachments.begin', { root, name: 'bad.txt', size: 1 })).json() as { result: { uploadId: string } }
+    await rpc('chunk-bad-digest', 'attachments.chunk', { uploadId: badBegin.result.uploadId, sequence: 0, data: Buffer.from('x').toString('base64') })
+    expect((await rpc('finish-bad-digest', 'attachments.finish', { uploadId: badBegin.result.uploadId, sha256: '0'.repeat(64) })).status).toBe(500)
   })
 
   it('forbids agent startup outside registered workspaces', async () => {

@@ -1,7 +1,8 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'http'
 import { dirname, extname, join, normalize, posix, sep } from 'path'
-import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'fs'
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from 'fs'
 import { spawnSync } from 'child_process'
+import { createHash, randomBytes } from 'crypto'
 import { homedir } from 'os'
 import {
   CREWCODE_REMOTE_PROTOCOL_VERSION,
@@ -35,6 +36,9 @@ import { WebSocketServer, WebSocket } from 'ws'
 
 const MAX_REQUEST_BYTES = 2 * 1024 * 1024
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
+const MAX_ATTACHMENT_CHUNK_BYTES = 256 * 1024
+const MAX_ACTIVE_ATTACHMENT_UPLOADS = 8
+const ATTACHMENT_UPLOAD_IDLE_MS = 2 * 60_000
 
 export interface RemoteAccessServerOptions {
   host?: string
@@ -168,6 +172,21 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
     }
     return resolved
   }
+  const attachmentDirectory = (root: string): string => {
+    const crewDirectory = join(root, '.crewcode')
+    if (!existsSync(crewDirectory)) mkdirSync(crewDirectory, { mode: 0o700 })
+    const resolvedCrew = realpathSync(crewDirectory)
+    if (resolvedCrew !== root && !resolvedCrew.startsWith(root + sep)) {
+      throw Object.assign(new Error('attachment directory escapes workspace'), { remoteCode: 'FORBIDDEN' })
+    }
+    const directory = join(resolvedCrew, 'attachments')
+    if (!existsSync(directory)) mkdirSync(directory, { mode: 0o700 })
+    const resolved = realpathSync(directory)
+    if (resolved !== root && !resolved.startsWith(root + sep)) {
+      throw Object.assign(new Error('attachment directory escapes workspace'), { remoteCode: 'FORBIDDEN' })
+    }
+    return resolved
+  }
   const validChildName = (value: unknown): string => {
     const name = String(value ?? '').trim()
     if (!name || name === '.' || name === '..' || name.includes('/') || name.includes('\\')) throw new Error('invalid folder name')
@@ -190,6 +209,27 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
     const result = spawnSync('git', ['worktree', 'list', '--porcelain'], { cwd, encoding: 'utf8' })
     if (result.status !== 0) return { error: 'not a git repo' }
     return { worktrees: parsePorcelainWorktrees(result.stdout ?? '', cwd) }
+  }
+  type AttachmentUpload = {
+    fd: number
+    root: string
+    tempPath: string
+    finalPath: string
+    rel: string
+    size: number
+    received: number
+    nextSequence: number
+    touchedAt: number
+    hash: ReturnType<typeof createHash>
+  }
+  const attachmentUploads = new Map<string, AttachmentUpload>()
+  const discardAttachmentUpload = (uploadId: string): boolean => {
+    const upload = attachmentUploads.get(uploadId)
+    if (!upload) return false
+    attachmentUploads.delete(uploadId)
+    try { closeSync(upload.fd) } catch { /* already closed */ }
+    try { unlinkSync(upload.tempPath) } catch { /* already removed */ }
+    return true
   }
   const handlers = new Map<string, RpcHandler>([
     ['auth.sessions', () => auth.list()],
@@ -272,6 +312,80 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
     ['fs.delete', params => filesystemService.delete(registeredRoot(params), String(params.sub ?? ''))],
     ['fs.rename', params => filesystemService.rename(registeredRoot(params), String(params.sub ?? ''), String(params.newName ?? ''))],
     ['fs.listFiles', params => filesystemService.listFiles(registeredRoot(params))],
+    ['attachments.begin', params => {
+      if (attachmentUploads.size >= MAX_ACTIVE_ATTACHMENT_UPLOADS) throw new Error('too many active attachment uploads')
+      const root = registeredRoot({ root: params.root })
+      const size = Number(params.size)
+      if (!Number.isSafeInteger(size) || size < 0 || size > MAX_ATTACHMENT_BYTES) throw new Error('invalid attachment size')
+      const originalName = String(params.name ?? '')
+      const safeName = originalName.replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').replace(/^\.+/, '_').slice(0, 100) || 'file'
+      const directory = attachmentDirectory(root)
+      const uploadId = randomBytes(16).toString('hex')
+      const filename = `${Date.now().toString(36)}-${uploadId.slice(0, 8)}-${safeName}`
+      const finalPath = normalize(join(directory, filename))
+      if (!finalPath.startsWith(normalize(directory) + sep)) throw new Error('attachment path escapes workspace')
+      const tempPath = `${finalPath}.${uploadId}.upload`
+      const fd = openSync(tempPath, 'wx', 0o600)
+      const rel = posix.join('.crewcode', 'attachments', filename)
+      attachmentUploads.set(uploadId, {
+        fd, root, tempPath, finalPath, rel, size, received: 0, nextSequence: 0,
+        touchedAt: Date.now(), hash: createHash('sha256'),
+      })
+      return { uploadId, chunkBytes: MAX_ATTACHMENT_CHUNK_BYTES }
+    }],
+    ['attachments.chunk', params => {
+      const uploadId = String(params.uploadId ?? '')
+      const upload = attachmentUploads.get(uploadId)
+      if (!upload) throw new Error('attachment upload not found')
+      const sequence = Number(params.sequence)
+      if (!Number.isSafeInteger(sequence) || sequence !== upload.nextSequence) {
+        discardAttachmentUpload(uploadId)
+        throw new Error('attachment chunk sequence rejected')
+      }
+      const encoded = typeof params.data === 'string' ? params.data : ''
+      if (!encoded || encoded.length > Math.ceil(MAX_ATTACHMENT_CHUNK_BYTES * 4 / 3) + 4 || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) {
+        discardAttachmentUpload(uploadId)
+        throw new Error('attachment chunk rejected')
+      }
+      const bytes = Buffer.from(encoded, 'base64')
+      if (bytes.byteLength === 0 || bytes.byteLength > MAX_ATTACHMENT_CHUNK_BYTES || upload.received + bytes.byteLength > upload.size) {
+        discardAttachmentUpload(uploadId)
+        throw new Error('attachment chunk size rejected')
+      }
+      let written = 0
+      while (written < bytes.byteLength) written += writeSync(upload.fd, bytes, written, bytes.byteLength - written)
+      upload.hash.update(bytes)
+      upload.received += bytes.byteLength
+      upload.nextSequence += 1
+      upload.touchedAt = Date.now()
+      return { received: upload.received }
+    }],
+    ['attachments.finish', params => {
+      const uploadId = String(params.uploadId ?? '')
+      const upload = attachmentUploads.get(uploadId)
+      if (!upload) throw new Error('attachment upload not found')
+      if (upload.received !== upload.size) {
+        discardAttachmentUpload(uploadId)
+        throw new Error('attachment upload is incomplete')
+      }
+      const digest = upload.hash.digest('hex')
+      const expectedDigest = typeof params.sha256 === 'string' ? params.sha256.toLowerCase() : ''
+      if (!/^[a-f0-9]{64}$/.test(expectedDigest) || digest !== expectedDigest) {
+        discardAttachmentUpload(uploadId)
+        throw new Error('attachment digest rejected')
+      }
+      attachmentUploads.delete(uploadId)
+      try {
+        closeSync(upload.fd)
+        renameSync(upload.tempPath, upload.finalPath)
+      } catch (error) {
+        try { closeSync(upload.fd) } catch { /* already closed */ }
+        try { unlinkSync(upload.tempPath) } catch { /* already removed */ }
+        throw error
+      }
+      return { rel: upload.rel, size: upload.size, sha256: digest }
+    }],
+    ['attachments.cancel', params => ({ canceled: discardAttachmentUpload(String(params.uploadId ?? '')) })],
     ['git.status', params => gitService.status(registeredRoot({ root: params.cwd }))],
     ['git.stage', params => gitService.stage(registeredRoot({ root: params.cwd }), Array.isArray(params.paths) ? params.paths.map(String) : [])],
     ['git.stageAll', params => gitService.stageAll(registeredRoot({ root: params.cwd }))],
@@ -376,8 +490,7 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
         const originalName = url.searchParams.get('name') ?? ''
         const safeName = originalName.replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').replace(/^\.+/, '_').slice(0, 100) || 'file'
         const data = await readBody(request, MAX_ATTACHMENT_BYTES)
-        const directory = join(root, '.crewcode', 'attachments')
-        mkdirSync(directory, { recursive: true })
+        const directory = attachmentDirectory(root)
         const filename = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}-${safeName}`
         const target = normalize(join(directory, filename))
         if (!target.startsWith(normalize(directory) + sep)) throw new Error('attachment path escapes workspace')
@@ -428,6 +541,12 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
     }
   })
 
+  const attachmentSweep = setInterval(() => {
+    const cutoff = Date.now() - ATTACHMENT_UPLOAD_IDLE_MS
+    for (const [uploadId, upload] of attachmentUploads) if (upload.touchedAt < cutoff) discardAttachmentUpload(uploadId)
+  }, 30_000)
+  attachmentSweep.unref()
+
   const sockets = new Set<WebSocket>()
   const websocketServer = new WebSocketServer({ noServer: true, handleProtocols: protocols => protocols.has('crewcode.v1') ? 'crewcode.v1' : false })
   server.on('upgrade', (request, socket, head) => {
@@ -469,6 +588,8 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
     pairingToken: pairing.token,
     pairingUrl: `${url}/pair#token=${encodeURIComponent(pairing.token)}`,
     close: () => new Promise<void>((resolve, reject) => {
+      clearInterval(attachmentSweep)
+      for (const uploadId of [...attachmentUploads.keys()]) discardAttachmentUpload(uploadId)
       unsubscribePty()
       unsubscribeAgent()
       ptyService.killAll()
