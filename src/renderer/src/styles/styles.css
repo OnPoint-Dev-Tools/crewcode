@@ -6909,3 +6909,39 @@ body.light .writer-prompt-textarea {
   .canvas-mode-hub,
   .canvas-mode-pane-grid { grid-template-columns: 1fr; }
 }
+
+/* ── Mobile web shell ───────────────────────────────────────────── */
+@media (max-width: 768px) {
+  html, body, #root { overflow: auto; height: auto; min-height: 100dvh; }
+  body { background: var(--background); overscroll-behavior-y: contain; }
+  .app { height: 100dvh; border: none; border-radius: 0; }
+  .titlebar { -webkit-app-region: no-drag; height: 44px; padding: 0 8px; }
+  .wintabs { overflow-x: auto; -webkit-overflow-scrolling: touch; padding-right: 8px; }
+  .wintabs .tabs-scroll { overflow-x: auto; }
+  .wintab { min-width: 120px; max-width: 160px; }
+  .app-region.drawer-left, .app-region.drawer-right { flex-direction: column; }
+  .ws-drawer.side { position: fixed; inset: auto 0 0 0; width: auto !important; height: 70dvh; border: 1px solid var(--border); border-bottom: none; border-radius: 16px 16px 0 0; z-index: 1200; transform: translateY(100%); transition: transform 260ms cubic-bezier(.2,.8,.2,1); }
+  .ws-drawer.side.open { transform: translateY(0); width: auto !important; }
+  .ws-drawer.side .ws-inner { width: auto !important; }
+  .ws-dock { height: 44px; padding: 0 12px; }
+  .main { grid-template-columns: 1fr !important; grid-template-rows: 1fr !important; margin: 0; border: none; border-radius: 0; }
+  .main.term-down, .main.no-term { grid-template-columns: 1fr; }
+  .termcol-outer { display: none !important; }
+  .mobile-shell .termcol-outer { display: flex !important; border-left: none; }
+  .composer { width: 100%; min-width: 0; border-radius: 16px; }
+  .composer-wrap { padding: 8px 12px calc(8px + env(safe-area-inset-bottom)); }
+  .thread-content { padding: 12px 16px 0; }
+  .thread-content.density-compact { padding: 12px 16px 4px; }
+  .thr-h { padding: 12px 16px 10px; }
+  .cp-backdrop { padding-top: 24px; align-items: flex-start; }
+  .cp { width: 96%; }
+  .fresh-chat-composer .composer { width: 100%; }
+  .md-body.split { grid-template-columns: 1fr; }
+  .md-preview { border-left: none; border-top: 1px solid var(--border); }
+  .ft { width: 100%; max-width: none; border-left: none; border-top: 1px solid var(--border); max-height: 40dvh; }
+  .ed-main { flex-direction: column; }
+  .canvas-mode-pane-grid { grid-template-columns: 1fr; }
+}
+
+@keyframes sheetIn { from { transform: translateY(100%); } to { transform: translateY(0); } }
+@keyframes sheetBackdropIn { from { opacity: 0; } to { opacity: 1; } }

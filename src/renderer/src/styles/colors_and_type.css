@@ -269,3 +269,128 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
+
+/* ============================================================
+   Mobile / Responsive tokens
+   ============================================================ */
+
+:root {
+  /* Breakpoints */
+  --bp-mobile: 480px;
+  --bp-tablet: 768px;
+  --bp-desktop: 1024px;
+  --bp-wide: 1440px;
+
+  /* Touch targets */
+  --touch-target: 44px;
+  --touch-target-sm: 36px;
+  --touch-target-lg: 52px;
+
+  /* Mobile spacing (tighter) */
+  --space-mobile-1: 4px;
+  --space-mobile-2: 8px;
+  --space-mobile-3: 12px;
+  --space-mobile-4: 16px;
+
+  /* Sheet/drawer heights */
+  --sheet-handle: 24px;
+  --sheet-handle-width: 40px;
+  --sheet-min-height: 200px;
+  --sheet-max-height: calc(100vh - 120px);
+  --sheet-full-height: calc(100vh - 48px);
+
+  /* Bottom nav */
+  --bottom-nav-height: 56px;
+  --bottom-nav-height-safe: calc(56px + env(safe-area-inset-bottom));
+
+  /* Composer */
+  --composer-min-height: 44px;
+  --composer-max-height: 180px;
+
+  /* Terminal rows on mobile */
+  --term-rows-mobile: 15;
+
+  /* Z-index layers for mobile sheets */
+  --z-bottom-nav: 1000;
+  --z-sheet-backdrop: 1100;
+  --z-sheet: 1200;
+  --z-toast: 1300;
+  --z-modal: 1400;
+}
+
+/* Media queries as CSS custom properties for JS access */
+@media (max-width: 768px) {
+  :root {
+    --is-mobile: 1;
+  }
+}
+
+@media (min-width: 769px) {
+  :root {
+    --is-mobile: 0;
+  }
+}
+
+/* Safe area insets for notched devices */
+@supports (padding: max(0px)) {
+  :root {
+    --safe-top: env(safe-area-inset-top);
+    --safe-right: env(safe-area-inset-right);
+    --safe-bottom: env(safe-area-inset-bottom);
+    --safe-left: env(safe-area-inset-left);
+  }
+}
+
+/* Mobile-first utility classes */
+.mobile-only { display: none; }
+.desktop-only { display: inherit; }
+
+@media (max-width: 768px) {
+  .mobile-only { display: inherit; }
+  .desktop-only { display: none; }
+
+  /* Tighter spacing on mobile */
+  :root {
+    --space-1: 4px;
+    --space-2: 8px;
+    --space-3: 10px;
+    --space-4: 12px;
+    --space-5: 16px;
+    --space-6: 20px;
+  }
+
+  /* Larger touch targets */
+  .cc-body { font-size: 15px; }
+  .cc-body-sm { font-size: 13.5px; }
+  .cc-caption { font-size: 11.5px; }
+  .cc-label { font-size: 12.5px; }
+  .cc-mono { font-size: 14px; }
+  .cc-mono-sm { font-size: 12.5px; }
+
+  /* Prevent zoom on input focus (iOS) */
+  input, select, textarea { font-size: 16px !important; }
+}
+
+/* Touch-friendly focus styles */
+@media (hover: none) and (pointer: coarse) {
+  *:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+  }
+  button, [role="button"] {
+    min-height: var(--touch-target);
+    min-width: var(--touch-target);
+  }
+}
+
+/* Scrollbar styling for mobile sheets */
+.sheet-content {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+.sheet-content::-webkit-scrollbar { width: 6px; height: 6px; }
+.sheet-content::-webkit-scrollbar-track { background: transparent; }
+.sheet-content::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--border) 60%, transparent);
+  border-radius: 999px;
+}

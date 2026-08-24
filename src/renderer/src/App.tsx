@@ -38,6 +38,7 @@ import { chatSessionOwnerWorkspaceId } from './hooks/chat-session-tab-owner'
 import type { Prompt as PromptDef, Skill as SkillDef } from './types/prompts'
 import { Icon }             from './components/ui/Icon'
 import { LoadingScreen }    from './components/ui/LoadingScreen'
+import { MobileShell, useMobileShell, type MobileTab } from './components/ui/MobileShell'
 import type { AgentActivityState } from './components/ui/AgentActivityIndicator'
 import { Onboarding }       from './components/onboarding/Onboarding'
 import { NotificationBar }  from './components/ui/NotificationBar'
@@ -325,6 +326,9 @@ export default function App() {
       return { ...prev, [tabId]: value }
     })
   }, [setGitWidthByTab])
+  // ── Mobile shell ──────────────────────────────────────────────────────────
+  const mobile = useMobileShell()
+
   // ── Tabs per workspace ───────────────────────────────────────────────────
   const {
     tabs, activeTab, activeTabId, setActiveTabId, setActiveTabInWorkspace, getActiveTabIdForWorkspace, selectWorkspace, openTab: handleNewTab, openTabInWorkspace, openPluginTab, restoreChatTabInWorkspace, closeTab, closeTabInWorkspace,
@@ -2987,6 +2991,263 @@ export default function App() {
     </aside>
   ) : null
 
+  // Mobile sheet content components
+  const WorkspacesContent = () => (
+    <div style={{ padding: 'var(--space-4)', maxHeight: 'calc(100vh - 200px)', overflow: 'auto' }}>
+      <div style={{ marginBottom: 'var(--space-4)' }}>
+        <button
+          onClick={async () => { const id = await ws.addViaPicker(); if (id) { setActiveWs(id); mobile.closeSheet('workspaces') }}}
+          style={{
+            width: '100%', padding: 'var(--space-3)', background: 'var(--primary)', color: 'var(--primary-foreground)',
+            border: 'none', borderRadius: 'var(--radius)', fontSize: '14px', fontWeight: 500, cursor: 'pointer'
+          }}
+        >
+          + Add Workspace
+        </button>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+        {ws.workspaces.map(workspace => (
+          <button
+            key={workspace.id}
+            onClick={() => { handleWsSelect(workspace.id); mobile.closeSheet('workspaces') }}
+            style={{
+              width: '100%', padding: 'var(--space-3)', background: activeWs === workspace.id ? 'var(--primary)' : 'var(--card)',
+              color: activeWs === workspace.id ? 'var(--primary-foreground)' : 'var(--foreground)',
+              border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontSize: '14px',
+              textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 'var(--space-2)'
+            }}
+          >
+            <Icon name="folder" size={20} />
+            <span style={{ flex: 1 }}>{workspace.name}</span>
+            {workspace.worktrees && workspace.worktrees.length > 0 && (
+              <span className="cc-mono-sm" style={{ color: 'var(--muted-foreground)' }}>
+                {workspace.worktrees.length} worktree{workspace.worktrees.length === 1 ? '' : 's'}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+      <div style={{ marginTop: 'var(--space-6)', paddingTop: 'var(--space-4)', borderTop: '1px solid var(--border)' }}>
+        <div className="cc-label" style={{ marginBottom: 'var(--space-2)' }}>Quick Actions</div>
+        <button
+          onClick={() => { handleNewTab('settings'); mobile.closeSheet('workspaces') }}
+          style={{
+            width: '100%', padding: 'var(--space-3)', background: 'var(--card)', color: 'var(--foreground)',
+            border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontSize: '14px',
+            textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 'var(--space-2)'
+          }}
+        >
+          <Icon name="settings" size={20} />
+          <span>Settings</span>
+        </button>
+      </div>
+    </div>
+  )
+
+  const GitSheetContent = () => (
+    <div style={{ padding: 'var(--space-4)', maxHeight: 'calc(100vh - 200px)', overflow: 'auto' }}>
+      {hasWs && activeWorkspace ? (
+        <div>
+          <div style={{ marginBottom: 'var(--space-4)' }}>
+            <div className="cc-h3" style={{ margin: 0 }}>{activeWorkspace.name}</div>
+            <div className="cc-mono-sm" style={{ color: 'var(--muted-foreground)' }}>{effectivePath}</div>
+            <div className="cc-mono-sm" style={{ color: 'var(--muted-foreground)' }}>Branch: {effectiveBranch}</div>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+            <button
+              onClick={() => git.handlers.onStageAll?.([])}
+              style={{
+                width: '100%', padding: 'var(--space-3)', background: 'var(--primary)', color: 'var(--primary-foreground)',
+                border: 'none', borderRadius: 'var(--radius)', fontSize: '14px', fontWeight: 500, cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: 'var(--space-2)', justifyContent: 'center'
+              }}
+            >
+              <Icon name="gitCommit" size={20} />
+              <span>Stage All & Commit</span>
+            </button>
+            <button
+              onClick={() => git.handlers.onPush?.()}
+              style={{
+                width: '100%', padding: 'var(--space-3)', background: 'var(--card)', color: 'var(--foreground)',
+                border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontSize: '14px',
+                textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 'var(--space-2)'
+              }}
+            >
+              <Icon name="arrowUp" size={20} />
+              <span>Push</span>
+            </button>
+            <button
+              onClick={() => git.handlers.onPull?.()}
+              style={{
+                width: '100%', padding: 'var(--space-3)', background: 'var(--card)', color: 'var(--foreground)',
+                border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontSize: '14px',
+                textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 'var(--space-2)'
+              }}
+            >
+              <Icon name="arrowDown" size={20} />
+              <span>Pull</span>
+            </button>
+            <button
+              onClick={() => git.handlers.onFetch?.()}
+              style={{
+                width: '100%', padding: 'var(--space-3)', background: 'var(--card)', color: 'var(--foreground)',
+                border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontSize: '14px',
+                textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 'var(--space-2)'
+              }}
+            >
+              <Icon name="refresh" size={20} />
+              <span>Fetch</span>
+            </button>
+            <button
+              onClick={() => { handleNewTab('git'); mobile.closeSheet('git') }}
+              style={{
+                width: '100%', padding: 'var(--space-3)', background: 'var(--card)', color: 'var(--foreground)',
+                border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontSize: '14px',
+                textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 'var(--space-2)'
+              }}
+            >
+              <Icon name="gitBranch" size={20} />
+              <span>Open Git Workspace</span>
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div style={{ textAlign: 'center', padding: 'var(--space-8)', color: 'var(--muted-foreground)' }}>
+          No workspace selected
+        </div>
+      )}
+    </div>
+  )
+
+  const TerminalSheetContent = () => (
+    <div style={{ height: 'calc(100vh - 200px)', display: 'flex', flexDirection: 'column' }}>
+      {hasWs ? (
+        <>
+          <TermColumn
+            panes={wsPanes}
+            agents={agents}
+            onClose={pty.close}
+            onAddShell={() => pty.addShell(activeWs, activeTabId, effectivePath, effectiveShell(settings))}
+            onAddAgent={(agentId) => {
+              const a = agents.find(x => x.id === agentId)
+              return a ? pty.addAgent(activeWs, activeTabId, a.id, a.name, effectivePath, a.path) : undefined
+            }}
+            onAddSsh={(target) => pty.addSsh(activeWs, activeTabId, target, effectivePath)}
+            sshTargets={sshTargets}
+            layout={pty.getTabLayout(activeTabId)}
+            onLayoutChange={(layout) => pty.setTabLayout(activeTabId, layout)}
+            onOpenUrl={openBrowserUrl}
+            pluginTerminalWatchers={pluginTerminalWatchers}
+            onPluginTerminalWatcher={(target, paneId) => runPluginActionTarget(target, { source: 'terminal-watcher', terminalPaneId: paneId })}
+          />
+        </>
+      ) : (
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--muted-foreground)' }}>
+          No workspace selected
+        </div>
+      )}
+    </div>
+  )
+
+  const MoreSheetContent = () => (
+    <div style={{ padding: 'var(--space-4)', maxHeight: 'calc(100vh - 200px)', overflow: 'auto' }}>
+      <div style={{ marginBottom: 'var(--space-4)' }}>
+        <h3 className="cc-h3" style={{ margin: '0 0 var(--space-3)' }}>Settings</h3>
+        <button
+          onClick={() => { handleNewTab('settings'); mobile.closeSheet('more') }}
+          style={{
+            width: '100%', padding: 'var(--space-3)', background: 'var(--card)', color: 'var(--foreground)',
+            border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontSize: '14px',
+            textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 'var(--space-2)'
+          }}
+        >
+          <Icon name="settings" size={20} />
+          <span>Settings</span>
+        </button>
+        <button
+          onClick={() => { handleNewTab('archive'); mobile.closeSheet('more') }}
+          style={{
+            width: '100%', padding: 'var(--space-3)', background: 'var(--card)', color: 'var(--foreground)',
+            border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontSize: '14px',
+            textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginTop: 'var(--space-2)'
+          }}
+        >
+          <Icon name="archive" size={20} />
+          <span>Archive</span>
+        </button>
+        <button
+          onClick={() => { handleNewTab('prompts'); mobile.closeSheet('more') }}
+          style={{
+            width: '100%', padding: 'var(--space-3)', background: 'var(--card)', color: 'var(--foreground)',
+            border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontSize: '14px',
+            textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginTop: 'var(--space-2)'
+          }}
+        >
+          <Icon name="fileText" size={20} />
+          <span>Prompts & Skills</span>
+        </button>
+        <button
+          onClick={() => { handleNewTab('plugins'); mobile.closeSheet('more') }}
+          style={{
+            width: '100%', padding: 'var(--space-3)', background: 'var(--card)', color: 'var(--foreground)',
+            border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontSize: '14px',
+            textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginTop: 'var(--space-2)'
+          }}
+        >
+          <Icon name="plug" size={20} />
+          <span>Plugins</span>
+        </button>
+        <button
+          onClick={() => { handleNewTab('mission'); mobile.closeSheet('more') }}
+          style={{
+            width: '100%', padding: 'var(--space-3)', background: 'var(--card)', color: 'var(--foreground)',
+            border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontSize: '14px',
+            textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginTop: 'var(--space-2)'
+          }}
+        >
+          <Icon name="cpu" size={20} />
+          <span>Mission Control</span>
+        </button>
+      </div>
+      <div>
+        <h3 className="cc-h3" style={{ margin: '0 0 var(--space-3)' }}>Actions</h3>
+        <button
+          onClick={() => { startCrewFromAnywhere(); mobile.closeSheet('more') }}
+          style={{
+            width: '100%', padding: 'var(--space-3)', background: 'var(--primary)', color: 'var(--primary-foreground)',
+            border: 'none', borderRadius: 'var(--radius)', fontSize: '14px', fontWeight: 500,
+            cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 'var(--space-2)'
+          }}
+        >
+          <Icon name="crew" size={20} />
+          <span>Start Crew</span>
+        </button>
+        <button
+          onClick={() => { startCanvasFromAnywhere(); mobile.closeSheet('more') }}
+          style={{
+            width: '100%', padding: 'var(--space-3)', background: 'var(--card)', color: 'var(--foreground)',
+            border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontSize: '14px',
+            textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginTop: 'var(--space-2)'
+          }}
+        >
+          <Icon name="workbench" size={20} />
+          <span>Canvas Mode</span>
+        </button>
+        <button
+          onClick={() => { openInEditor(); mobile.closeSheet('more') }}
+          style={{
+            width: '100%', padding: 'var(--space-3)', background: 'var(--card)', color: 'var(--foreground)',
+            border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontSize: '14px',
+            textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginTop: 'var(--space-2)'
+          }}
+        >
+          <Icon name="external" size={20} />
+          <span>Open in VS Code</span>
+        </button>
+      </div>
+    </div>
+  )
+
   return (
     <MissionDataProvider
       workspaces={ws.workspaces}
@@ -2996,86 +3257,90 @@ export default function App() {
       userRequestsByTab={missionUserRequestsByTab}
       isBridgeRunning={bridges.isBridgeRunning}
     >
-    <div className="app">
-      {loadingScreenMounted && <LoadingScreen exiting={!showLoadingScreen} />}
+      <MobileShell
+        activeTab={mobile.activeTab}
+        onTabChange={mobile.onTabChange}
+        sheets={{
+          workspaces: {
+            open: mobile.sheets.workspaces?.open ?? false,
+            title: 'Workspaces',
+            content: <WorkspacesContent />
+          },
+          git: {
+            open: mobile.sheets.git?.open ?? false,
+            title: 'Git',
+            content: <GitSheetContent />
+          },
+          terminal: {
+            open: mobile.sheets.terminal?.open ?? false,
+            title: 'Terminal',
+            content: <TerminalSheetContent />
+          },
+          more: {
+            open: mobile.sheets.more?.open ?? false,
+            title: 'More',
+            content: <MoreSheetContent />
+          },
+        }}
+        onSheetToggle={mobile.onSheetToggle}
+      >
+        <div className="app">
+          {loadingScreenMounted && <LoadingScreen exiting={!showLoadingScreen} />}
 
-      {!settings.onboardingCompleted && !showLoadingScreen && (
-        <Onboarding
-          agents={agents}
-          defaultAgent={settings.defaultAgent}
-          onSetDefaultAgent={(id) => setSetting('defaultAgent', id)}
-          hasProjects={ws.workspaces.length > 0}
-          onAddProject={() => setAddOpen(true)}
-          onFinish={() => setSetting('onboardingCompleted', true)}
+          {!settings.onboardingCompleted && !showLoadingScreen && (
+            <Onboarding
+              agents={agents}
+              defaultAgent={settings.defaultAgent}
+              onSetDefaultAgent={(id) => setSetting('defaultAgent', id)}
+              hasProjects={ws.workspaces.length > 0}
+              onAddProject={() => setAddOpen(true)}
+              onFinish={() => setSetting('onboardingCompleted', true)}
+            />
+          )}
+        <NotificationBar
+          onNavigateToChat={navigateToChatScope}
+          resolveChatSource={voiceNotificationSource}
         />
-      )}
+        <TooltipHost />
+        <GitAuthModal
+          open={!!gitAuthRequest}
+          remoteUrl={gitAuthRequest?.remoteUrl}
+          error={gitAuthRequest?.error}
+          onSubmit={resolveGitAuth}
+          onCancel={() => resolveGitAuth(null)}
+        />
+        <GitSigningModal
+          open={!!gitSigningRequest}
+          error={gitSigningRequest?.error}
+          onSubmit={resolveSigningPassphrase}
+          onCancel={() => resolveSigningPassphrase(null)}
+        />
+        <ChatNotifications
+          sessActive={sessActive}
+          show={show}
+        />
 
-      <WindowTabs
-        tabs={displayTabs}
-        activeId={activeTabId}
-        onActivate={setActiveTabId}
-        onClose={handleCloseTab}
-        crewTabs={crewTabs}
-        splitGroups={splitGroups}
-        splitTabIds={splitTabIds}
-        splitPrimaryTabId={splitPrimaryTabId}
-        onSplit={setSplitTab}
-        onCloseSplitGroup={closeSplitGroup}
-        onPin={pinTab}
-        onUnpin={unpinTab}
-        onRename={handleRenameWindowTab}
-        onColor={setTabColor}
-        onReorder={reorderTab}
-        activeKind={activeTab?.kind}
-        appMenuFootStatus={`${activeWorkspace?.name || 'no workspace'} · ${sessions.length} session${sessions.length === 1 ? '' : 's'}`}
-        onAppMenuAction={handleAppMenuAction}
-        pluginMenuItems={pluginAddMenuItems}
-        onPluginMenuItem={(item) => runPluginActionTarget(item.target, { source: 'plugin-menu' })}
-      />
-      <NotificationBar
-        onNavigateToChat={navigateToChatScope}
-        resolveChatSource={voiceNotificationSource}
-      />
-      <TooltipHost />
-      <GitAuthModal
-        open={!!gitAuthRequest}
-        remoteUrl={gitAuthRequest?.remoteUrl}
-        error={gitAuthRequest?.error}
-        onSubmit={resolveGitAuth}
-        onCancel={() => resolveGitAuth(null)}
-      />
-      <GitSigningModal
-        open={!!gitSigningRequest}
-        error={gitSigningRequest?.error}
-        onSubmit={resolveSigningPassphrase}
-        onCancel={() => resolveSigningPassphrase(null)}
-      />
-      <ChatNotifications
-        sessActive={sessActive}
-        show={show}
-      />
+        <MenuletHost
+          open={menuletOpen}
+          onToggle={() => setMenuletOpen(o => !o)}
+          onClose={() => setMenuletOpen(false)}
+          onOpenHub={openMissionControl}
+          onOpenAgent={handleMcOpen}
+          onPauseAgent={handleMcPause}
+          onResumeAgent={handleMcResume}
+          onSpawnAgent={handleMcSpawn}
+          onRespondRequest={bridges.respondUserRequest}
+        />
 
-      <MenuletHost
-        open={menuletOpen}
-        onToggle={() => setMenuletOpen(o => !o)}
-        onClose={() => setMenuletOpen(false)}
-        onOpenHub={openMissionControl}
-        onOpenAgent={handleMcOpen}
-        onPauseAgent={handleMcPause}
-        onResumeAgent={handleMcResume}
-        onSpawnAgent={handleMcSpawn}
-        onRespondRequest={bridges.respondUserRequest}
-      />
+        <SystemMonitorMount
+          terminals={sysmonTerminals}
+          workspaces={sysmonWorkspaces}
+          onKillTerminal={killTerminalSession}
+          onOpenTerminal={openSysmonTerminal}
+          onOpenDaemon={openSysmonDaemon}
+        />
 
-      <SystemMonitorMount
-        terminals={sysmonTerminals}
-        workspaces={sysmonWorkspaces}
-        onKillTerminal={killTerminalSession}
-        onOpenTerminal={openSysmonTerminal}
-        onOpenDaemon={openSysmonDaemon}
-      />
-
-      <div className={`app-region drawer-${tweaks.drawerPosition}${drawerOpen ? ' drawer-open' : ''}`}>
+        <div className={`app-region drawer-${tweaks.drawerPosition}${drawerOpen ? ' drawer-open' : ''}`}>
         {tweaks.drawerPosition === 'left' && workspacesPanel}
         <div className="app-main-row">
           <div className="app-body">
@@ -3298,8 +3563,9 @@ export default function App() {
         </div>
       )}
 
-      <DialogHost />
-    </div>
+<DialogHost />
+        </div>
+      </MobileShell>
     </MissionDataProvider>
   )
 }
