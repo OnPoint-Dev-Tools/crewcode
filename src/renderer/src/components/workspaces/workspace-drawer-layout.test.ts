@@ -20,6 +20,20 @@ describe('workspace drawer layout', () => {
     expect(selectedThreads).toBeGreaterThan(projectsSection)
   })
 
+  it('separates app destinations from workspace features', () => {
+    expect(drawer).toContain('const APP_DESTINATIONS: AppFeature[]')
+    expect(drawer).toContain('const APP_FEATURES: AppFeature[]')
+    expect(drawer).toContain('id="__app_destinations"')
+    expect(drawer).toContain('label="APP"')
+    expect(drawer).toContain('{renderAppRows(APP_DESTINATIONS)}')
+    expect(drawer).toContain('{renderAppRows(APP_FEATURES)}')
+
+    const destinations = drawer.slice(drawer.indexOf('const APP_DESTINATIONS'), drawer.indexOf('const APP_FEATURES'))
+    for (const label of ['Settings', 'Plugins', 'Archive', 'Check for updates', 'Docs']) {
+      expect(destinations).toContain(`label: '${label}'`)
+    }
+  })
+
   it('keeps sessions out of individual workspace rows', () => {
     const workspaceRowStart = drawer.indexOf('function renderWorkspaceRow')
     const selectedThreadsStart = drawer.indexOf('function renderSelectedWorkspaceThreads')

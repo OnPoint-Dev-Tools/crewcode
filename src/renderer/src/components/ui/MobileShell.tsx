@@ -1,7 +1,5 @@
 import { useState, useEffect, useRef, useCallback, Fragment } from 'react'
-import { Icon, type IconName } from './Icon'
-
-export type MobileTab = 'chat' | 'terminal' | 'editor' | 'git' | 'more'
+import { Icon } from './Icon'
 
 interface SheetProps {
   id: string
@@ -164,91 +162,18 @@ function Sheet({ title, children, open, onClose, maxHeight = 'calc(100vh - 120px
   )
 }
 
-interface BottomNavProps {
-  activeTab: MobileTab
-  onTabChange: (tab: MobileTab) => void
-  unreadCounts?: Record<MobileTab, number>
-  sheets: Record<string, boolean>
-  onSheetToggle: (id: string) => void
-}
-
-function BottomNav({ activeTab, onTabChange, unreadCounts, sheets, onSheetToggle }: BottomNavProps) {
-  const tabs: { id: MobileTab; icon: IconName; label: string; sheetId?: string }[] = [
-    { id: 'chat', icon: 'chat', label: 'Chat' },
-    { id: 'terminal', icon: 'terminal', label: 'Terminal', sheetId: 'terminal' },
-    { id: 'editor', icon: 'code', label: 'Editor' },
-    { id: 'git', icon: 'branch', label: 'Git', sheetId: 'git' },
-    { id: 'more', icon: 'more', label: 'More', sheetId: 'more' },
-  ]
-
-  return (
-    <nav
-      className="mobile-bottom-nav"
-      aria-label="Mobile navigation"
-      style={{
-        position: 'fixed', bottom: 0, left: 0, right: 0,
-        height: 'calc(56px + env(safe-area-inset-bottom))',
-        display: 'flex', alignItems: 'center', justifyContent: 'space-around',
-        background: 'var(--crew-term)', borderTop: '1px solid var(--border)',
-        zIndex: 1000, paddingBottom: 'env(safe-area-inset-bottom)', paddingTop: 4,
-      }}
-    >
-      {tabs.map((tab) => {
-        const active = activeTab === tab.id || (!!tab.sheetId && !!sheets[tab.sheetId])
-        return (
-          <button
-            key={tab.id}
-            onClick={() => { if (tab.sheetId) onSheetToggle(tab.sheetId); else onTabChange(tab.id) }}
-            aria-label={tab.label}
-            aria-current={active ? 'page' : undefined}
-            style={{
-              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
-              padding: '4px 8px', border: 'none', background: 'transparent',
-              color: active ? 'var(--primary)' : 'var(--muted-foreground)',
-              fontFamily: 'var(--font-family-sans)', fontSize: 10, fontWeight: 500,
-              cursor: 'pointer', minWidth: 44, minHeight: 44, position: 'relative',
-            }}
-          >
-            <Icon name={tab.icon} size={24} />
-            <span>{tab.label}</span>
-            {(unreadCounts?.[tab.id] ?? 0) > 0 && (
-              <span style={{
-                position: 'absolute', top: 0, right: 0, minWidth: 16, height: 16, borderRadius: 999,
-                background: 'var(--destructive)', color: 'white', fontSize: 10,
-                fontFamily: 'var(--font-family-mono)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 4px',
-              }}>
-                {(unreadCounts?.[tab.id] ?? 0) > 9 ? '9+' : (unreadCounts?.[tab.id] ?? 0)}
-              </span>
-            )}
-          </button>
-        )
-      })}
-    </nav>
-  )
-}
-
 interface MobileShellProps {
   children: React.ReactNode
-  activeTab: MobileTab
-  onTabChange: (tab: MobileTab) => void
+  isMobile: boolean
   sheets: Record<string, { open: boolean; title: string; content: React.ReactNode }>
   onSheetToggle: (id: string) => void
-  unreadCounts?: Record<MobileTab, number>
 }
 
-export function MobileShell({ children, activeTab, onTabChange, sheets, onSheetToggle, unreadCounts }: MobileShellProps) {
-  const [isMobile, setIsMobile] = useState(false)
-  useEffect(() => {
-    const check = () => setIsMobile(window.innerWidth <= 768)
-    check()
-    window.addEventListener('resize', check)
-    return () => window.removeEventListener('resize', check)
-  }, [])
+export function MobileShell({ children, isMobile, sheets, onSheetToggle }: MobileShellProps) {
   if (!isMobile) return <>{children}</>
   return (
-    <div className="mobile-shell" style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-      <div style={{ flex: 1, position: 'relative', paddingBottom: 'calc(56px + env(safe-area-inset-bottom))' }}>{children}</div>
-      <BottomNav activeTab={activeTab} onTabChange={onTabChange} unreadCounts={unreadCounts} sheets={Object.fromEntries(Object.entries(sheets).map(([k, v]) => [k, v.open]))} onSheetToggle={onSheetToggle} />
+    <div className="mobile-shell" style={{ minHeight: '100dvh', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>{children}</div>
       {Object.entries(sheets).map(([id, sheet]) => sheet.open && (
         <Sheet key={id} id={id} title={sheet.title} open={sheet.open} onClose={() => onSheetToggle(id)}>{sheet.content}</Sheet>
       ))}
@@ -257,36 +182,23 @@ export function MobileShell({ children, activeTab, onTabChange, sheets, onSheetT
 }
 
 export function useMobileShell() {
-  const [activeTab, setActiveTab] = useState<MobileTab>('chat')
-  const [sheets, setSheets] = useState<Record<string, { open: boolean; title: string; content: React.ReactNode }>>({})
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth <= 768)
 
-  const onTabChange = useCallback((tab: MobileTab) => {
-    setActiveTab(tab)
-    setSheets(prev => {
-      const next = { ...prev }
-      let dirty = false
-      for (const k of Object.keys(next)) if (next[k].open) { next[k] = { ...next[k], open: false }; dirty = true }
-      return dirty ? next : prev
-    })
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth <= 768)
+    check()
+    window.addEventListener('resize', check)
+    return () => window.removeEventListener('resize', check)
   }, [])
+  const [sheets, setSheets] = useState<Record<string, { open: boolean; title: string; content: React.ReactNode }>>({})
 
   const onSheetToggle = useCallback((id: string) => {
     setSheets(prev => ({ ...prev, [id]: { ...prev[id], open: !prev[id]?.open, title: prev[id]?.title ?? id, content: prev[id]?.content ?? null } }))
-  }, [])
-
-  const openSheet = useCallback((id: string, title: string, content: React.ReactNode) => {
-    setSheets(prev => {
-      const next: typeof prev = {}
-      for (const [k, v] of Object.entries(prev)) next[k] = k === id ? { open: true, title, content } : { ...v, open: false }
-      if (!next[id]) next[id] = { open: true, title, content }
-      else next[id] = { open: true, title, content }
-      return next
-    })
   }, [])
 
   const closeSheet = useCallback((id: string) => {
     setSheets(prev => ({ ...prev, [id]: { ...prev[id], open: false } }))
   }, [])
 
-  return { activeTab, onTabChange, sheets, onSheetToggle, openSheet, closeSheet, setActiveTab }
+  return { isMobile, sheets, onSheetToggle, closeSheet }
 }

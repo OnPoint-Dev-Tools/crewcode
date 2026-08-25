@@ -222,7 +222,7 @@ function Filename({ name, path, onOpen }: FilenameProps) {
   return (
     <button
       type="button"
-      className="chip-mono wl-file-link"
+      className="chip-mono wl-file-link inline-flex min-w-0 max-w-full cursor-pointer appearance-none items-center truncate rounded-md border border-cc-line bg-cc-field px-1.5 py-0.5 font-mono text-[11px] text-cc-ink transition-colors hover:bg-cc-hover"
       onClick={(e) => { e.stopPropagation(); onOpen!(path!) }}
       title={`Open ${path}`}
     >
@@ -237,14 +237,14 @@ interface RowTitleProps {
 }
 function RowTitle({ row, onOpenFile }: RowTitleProps): React.ReactElement {
   if (row.status === 'pending') {
-    return <span className="wl-row-text wl-pending">{row.pendingText ?? `${row.label}...`}</span>
+    return <span className="wl-row-text wl-pending min-w-0 truncate text-[12px] text-cc-muted">{row.pendingText ?? `${row.label}...`}</span>
   }
   // File-touching rows: verb chip + clickable filename + +N -M stats.
   if (row.filename && (row.kind === 'edit' || row.kind === 'write' || row.kind === 'read')) {
     const verb = row.verb ?? (row.kind === 'edit' ? 'Modified' : row.kind === 'write' ? 'Coding' : 'Read')
     return (
-      <span className="wl-row-text wl-row-file">
-        <span className="wl-verb">{verb}</span>
+      <span className="wl-row-text wl-row-file min-w-0 text-[12px]">
+        <span className="wl-verb shrink-0 text-cc-muted">{verb}</span>
         <Filename name={row.filename} path={row.filePath} onOpen={onOpenFile} />
         {(row.added !== undefined || row.removed !== undefined) && (
           <span className="wl-diff-stats">
@@ -257,82 +257,144 @@ function RowTitle({ row, onOpenFile }: RowTitleProps): React.ReactElement {
   }
   if (row.verb && row.title) {
     return (
-      <span className="wl-row-text wl-row-file">
-        <span className="wl-verb">{row.verb}</span>
+      <span className="wl-row-text wl-row-file min-w-0 text-[12px]">
+        <span className="wl-verb shrink-0 text-cc-muted">{row.verb}</span>
         <code>{row.title}</code>
       </span>
     )
   }
   if (row.title) {
-    return <span className="wl-row-text"><code>{row.title}</code></span>
+    return <span className="wl-row-text min-w-0 truncate text-[12px]"><code>{row.title}</code></span>
   }
   return (
-    <span className="wl-row-text">
+    <span className="wl-row-text min-w-0 truncate text-[12px] text-cc-muted">
       {row.label}{row.body ? <> — <code>{row.body}</code></> : null}
     </span>
   )
 }
 
 export function TurnWorkLog({ rows, live, total, onOpenFile }: TurnWorkLogProps) {
-  const [open, setOpen] = useState(live)
+  // Keep the consolidated turn summary visible when it lands immediately before
+  // the final response; users can still collapse it from the header.
+  const [open, setOpen] = useState(true)
   const [expanded, setExpanded] = useState<Record<number, boolean>>(() => {
     // TodoWrite is a primary progress surface, so show it immediately in chat.
     return Object.fromEntries(rows.map((row, i) => [i, row.kind === 'todowrite']))
   })
 
-  const count    = total ?? rows.length
-  const hasError = rows.some(r => r.status === 'error' || r.kind === 'error')
+  const count = total ?? rows.length
+  const hasError = rows.some(row => row.status === 'error' || row.kind === 'error')
 
   return (
     <div className="wl wl-compact">
-      <div className="wl-h" onClick={() => setOpen(o => !o)}>
-        <div className="wl-icon">&gt;_</div>
-        <div className="wl-meta">
-          <div className="wl-t">work log ({count})</div>
-          <div className="wl-sub">
-            <span><span className={`dot ${live ? 'live' : ''}`} /> {live ? 'live' : 'idle'}</span>
-            {hasError && <span><span className="dot err" /> error</span>}
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen(current => !current)}
+        className="-mx-1.5 flex max-w-[calc(100%+0.75rem)] cursor-pointer appearance-none items-center gap-1.5 rounded-md border-0 bg-transparent px-1.5 py-1 text-left font-mono text-[12px] text-cc-muted transition-colors duration-150 hover:bg-cc-hover hover:text-cc-ink focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-cc-accent sm:text-[12.5px]"
+      >
+        <svg
+          width="13"
+          height="13"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+          className="shrink-0 transition-transform duration-200"
+          style={{ transform: open ? 'rotate(0deg)' : 'rotate(-90deg)' }}
+        >
+          <path d="M6 9l6 6 6-6" />
+        </svg>
+        <span className="truncate tabular-nums">
+          {count} tool {count === 1 ? 'call' : 'calls'}
+        </span>
+        {live && (
+          <span className="inline-flex shrink-0 items-center gap-1.5 text-cc-muted">
+            <span className="size-1.5 rounded-full bg-cc-success [animation:wl-pulse_1.2s_ease-in-out_infinite]" />
+            live
+          </span>
+        )}
+        {hasError && (
+          <span className="inline-flex shrink-0 items-center gap-1.5 text-cc-danger">
+            <span className="size-1.5 rounded-full bg-cc-danger" />
+            error
+          </span>
+        )}
+      </button>
+
+      <div
+        className="grid transition-[grid-template-rows,opacity] duration-300"
+        style={{
+          gridTemplateRows: open ? '1fr' : '0fr',
+          opacity: open ? 1 : 0,
+          transitionTimingFunction: 'cubic-bezier(0.23, 1, 0.32, 1)',
+        }}
+      >
+        <div className="min-h-0 overflow-hidden">
+          <div className="mt-1.5 flex min-w-0 flex-col gap-1 pb-1">
+            {rows.map((row, i) => {
+              const isErr = row.status === 'error' || row.kind === 'error'
+              const canExpand = hasExpandableBody(row)
+              const showBody = expanded[i] && canExpand
+              const status: WorkLogRowStatus = row.status ?? 'done'
+              const hasInlineDiagnostics = (row.diagnostics?.length ?? 0) > 0
+
+              return (
+                <div
+                  key={i}
+                  className="min-w-0 [animation:cc-fade-up_240ms_cubic-bezier(0.23,1,0.32,1)_both]"
+                >
+                  <div
+                    role={canExpand ? 'button' : undefined}
+                    tabIndex={canExpand ? 0 : undefined}
+                    aria-expanded={canExpand ? showBody : undefined}
+                    onClick={() => canExpand && setExpanded(current => ({ ...current, [i]: !current[i] }))}
+                    onKeyDown={(event) => {
+                      if (event.currentTarget !== event.target || !canExpand || (event.key !== 'Enter' && event.key !== ' ')) return
+                      event.preventDefault()
+                      setExpanded(current => ({ ...current, [i]: !current[i] }))
+                    }}
+                    className={`group -mx-[3px] flex min-h-7 w-[calc(100%+6px)] min-w-0 items-center gap-2 rounded-md px-[3px] py-1 text-left transition-colors duration-150 focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1 focus-visible:outline-cc-accent ${canExpand ? 'cursor-pointer hover:bg-cc-hover' : ''} ${isErr ? 'text-cc-danger' : ''}`}
+                  >
+                    <span className="relative flex size-4 shrink-0 items-center justify-center text-cc-muted">
+                      <span className={`transition-opacity duration-150 ${canExpand ? 'group-hover:opacity-0' : ''} ${showBody ? 'opacity-0' : ''}`}>
+                        <Icon name={rowIconName(row.kind)} size={13} />
+                      </span>
+                      {canExpand && (
+                        <span
+                          className={`absolute inline-flex transition-[opacity,transform] duration-150 group-hover:opacity-100 ${showBody ? 'opacity-100' : 'opacity-0'}`}
+                          style={{ transform: showBody ? 'rotate(0deg)' : 'rotate(-90deg)' }}
+                        >
+                          <Icon name="chevDown" size={12} />
+                        </span>
+                      )}
+                    </span>
+                    <RowTitle row={row} onOpenFile={onOpenFile} />
+                    <span
+                      className={`wl-row-status wl-row-status-${status}`}
+                      role="img"
+                      aria-label={status}
+                      title={status}
+                    >
+                      <Icon name={STATUS_ICON[status]} size={12} />
+                    </span>
+                  </div>
+
+                  {hasInlineDiagnostics && <DiagnosticsList items={row.diagnostics!} />}
+                  {showBody && (
+                    <div className="ml-2 min-w-0 border-l border-cc-line py-1 pl-3 sm:ml-2.5 sm:pl-3.5">
+                      <RowBody row={row} />
+                    </div>
+                  )}
+                </div>
+              )
+            })}
           </div>
         </div>
-        <div className="wl-chev" style={{ transform: open ? 'rotate(180deg)' : undefined }}>
-          <Icon name="chevDown" size={12} />
-        </div>
       </div>
-      {open && (
-        <div className="wl-body">
-          {rows.map((row, i) => {
-            const isErr     = row.status === 'error' || row.kind === 'error'
-            const canExpand = hasExpandableBody(row)
-            const showBody  = expanded[i] && canExpand
-            const status: WorkLogRowStatus = row.status ?? 'done'
-            const hasInlineDiagnostics = (row.diagnostics?.length ?? 0) > 0
-            return (
-              <div key={i} className={`wl-call wl-call-${status}`}>
-                <div
-                  className={`wl-row ${canExpand ? 'wl-row-clickable' : ''} ${isErr ? 'wl-row-fail' : ''}`}
-                  onClick={() => canExpand && setExpanded(e => ({ ...e, [i]: !e[i] }))}
-                >
-                  <span className="wl-row-mark">
-                    <Icon name={rowIconName(row.kind)} size={12} />
-                  </span>
-                  <RowTitle row={row} onOpenFile={onOpenFile} />
-                  <span className={`wl-row-status wl-row-status-${status}`}>
-                    <Icon name={STATUS_ICON[status]} size={12} />
-                  </span>
-                </div>
-                {hasInlineDiagnostics && (
-                  <DiagnosticsList items={row.diagnostics!} />
-                )}
-                {showBody && (
-                  <div className="wl-detail">
-                    <RowBody row={row} />
-                  </div>
-                )}
-              </div>
-            )
-          })}
-        </div>
-      )}
     </div>
   )
 }

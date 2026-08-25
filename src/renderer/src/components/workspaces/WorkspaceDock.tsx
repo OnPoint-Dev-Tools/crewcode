@@ -221,6 +221,27 @@ interface AgentInfoProps {
   resetDescription?: string | null
 }
 
+function MobileProviderUsage({ agentId, providerUsed, providerLimit }: Pick<AgentInfoProps, 'agentId' | 'providerUsed' | 'providerLimit'>) {
+  const pct = providerLimit && providerLimit > 0
+    ? Math.min(100, Math.max(0, ((providerUsed ?? 0) / providerLimit) * 100))
+    : 0
+  const color = pct > 90 ? 'var(--destructive)' : pct > 70 ? 'var(--warning)' : 'var(--crew-green-bright, #2f9d72)'
+
+  return (
+    <span className="ws-dock-mobile-provider" title={`${agentId ?? 'provider'} usage: ${pct.toFixed(0)}%`}>
+      {PROVIDER_IMAGES[agentId ?? ''] ? (
+        <img
+          src={PROVIDER_IMAGES[agentId ?? '']}
+          alt=""
+          className={providerImageClass(agentId ?? '')}
+        />
+      ) : <Icon name="bot" size={12} />}
+      <span className="usage-dial" style={{ background: `conic-gradient(${color} ${pct}%, var(--border) 0)` } as React.CSSProperties} />
+      <span>{pct.toFixed(0)}%</span>
+    </span>
+  )
+}
+
 function AgentInfoPill({ agentId = 'claude', status = 'idle', providerUsed = 0, providerLimit = 0, resetDescription }: AgentInfoProps) {
   const [open, setOpen] = useState(false)
   const meta = PROVIDER_META[agentId] ?? { name: agentId, icon: 'bot' }
@@ -372,6 +393,7 @@ export function WorkspaceDock({
           <span className="ws-dock-empty">none — click to add</span>
         )}
       </span>
+      <MobileProviderUsage agentId={activeAgentId} providerUsed={providerUsed} providerLimit={providerLimit} />
       <span className="ws-dock-right">
         {pluginStatusItems.map(item => (
           <button

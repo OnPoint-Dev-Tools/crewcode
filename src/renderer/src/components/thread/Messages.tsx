@@ -438,7 +438,7 @@ function PlanBody({ text, onOpenLink }: { text: string; onOpenLink?: (url: strin
 
 function StreamingText({ text, live = false }: { text: string; chunks?: string[]; live?: boolean }) {
   return (
-    <div className={`stream-output${live ? ' stream-output-live' : ''}`}>
+    <div className={`stream-output min-w-0 whitespace-pre-wrap break-words text-cc-ink [overflow-wrap:anywhere]${live ? ' stream-output-live' : ''}`}>
       {/* Keep stream output as one text node; only the turn's final answer gets Markdown. */}
       {text || ' '}
     </div>
@@ -955,12 +955,20 @@ interface TurnGroup {
 }
 
 /**
- * Walk the message list once and group contiguous visible tool-call runs. This
- * preserves providers that bounce between reasoning and tools within one turn
- * instead of collapsing the whole turn into one oversized work log.
+ * Build work-log groups in one pass. Until a response exists, contiguous tool
+ * runs stay in stream order so live activity remains visible. Once a later
+ * agent response exists for the turn, every earlier tool call is consolidated
+ * into one log anchored directly before the turn's latest response.
  */
 function buildTurnGroups(messages: Message[]): Map<number, TurnGroup> {
   const groups = new Map<number, TurnGroup>()
+  const responseAnchorByTurn = new Map<string, number>()
+
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i]
+    if (msg.kind === 'agent' && msg.turnId) responseAnchorByTurn.set(msg.turnId, i)
+  }
+
   let current: TurnGroup | null = null
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i]
@@ -976,16 +984,33 @@ function buildTurnGroups(messages: Message[]): Map<number, TurnGroup> {
       current = null
       continue
     }
-    if (!current || current.turnId !== turnId) {
-      current = { turnId, rows: [], live: false, sources: [], anchorIdx: i }
-      groups.set(i, current)
+
+    const responseAnchor = responseAnchorByTurn.get(turnId)
+    let group: TurnGroup
+    if (responseAnchor !== undefined && responseAnchor > i) {
+      group = groups.get(responseAnchor) ?? {
+        turnId,
+        rows: [],
+        live: false,
+        sources: [],
+        anchorIdx: responseAnchor,
+      }
+      groups.set(responseAnchor, group)
+      current = null
+    } else {
+      if (!current || current.turnId !== turnId) {
+        current = { turnId, rows: [], live: false, sources: [], anchorIdx: i }
+        groups.set(i, current)
+      }
+      group = current
     }
-    current.sources.push(msg)
+
+    group.sources.push(msg)
     const row = toolCallToRow(msg)
     const diag = extractDiagnostics(msg)
     if (diag && diag.length > 0) row.diagnostics = diag
-    current.rows.push(row)
-    if (msg.status === 'running' || msg.status === 'pending') current.live = true
+    group.rows.push(row)
+    if (msg.status === 'running' || msg.status === 'pending') group.live = true
   }
   return groups
 }
@@ -1043,17 +1068,14 @@ function areRowsEqual(prev: MessageRowProps, next: MessageRowProps): boolean {
   if (prev.showTurnSummary !== next.showTurnSummary) return false
   if (prev.showStreamCursor !== next.showStreamCursor) return false
 
-  // A tool anchor renders its contiguous sibling group. Compare the source
-  // message identities rather than invalidating it for every unrelated update
-  // in the same live turn (for example a growing thinking block).
-  if (next.msg.kind === 'toolcall') {
-    const prevSources = prev.groups.get(prev.index)?.sources
-    const nextSources = next.groups.get(next.index)?.sources
-    if (prevSources === nextSources) return true
-    if (!prevSources || !nextSources || prevSources.length !== nextSources.length) return false
-    for (let i = 0; i < nextSources.length; i++) {
-      if (prevSources[i] !== nextSources[i]) return false
-    }
+  // A tool or final-response anchor may render a work-log group. Compare its
+  // actual source identities rather than invalidating it for unrelated updates.
+  const prevSources = prev.groups.get(prev.index)?.sources
+  const nextSources = next.groups.get(next.index)?.sources
+  if (prevSources === nextSources) return true
+  if (!prevSources || !nextSources || prevSources.length !== nextSources.length) return false
+  for (let i = 0; i < nextSources.length; i++) {
+    if (prevSources[i] !== nextSources[i]) return false
   }
   return true
 }
@@ -1086,8 +1108,15 @@ const MessageRow = React.memo(function MessageRow({
         />
       )
 
-    case 'agent':
-      return <AgentBubble blocks={msg.blocks} text={msg.text} chunks={msg.chunks} time={msg.time} streaming={msg.streaming} showStreamCursor={showStreamCursor} durationMs={msg.durationMs} usage={msg.usage} mode={msg.mode} showTurnSummary={showTurnSummary} onOpenLink={onOpenLink} />
+    case 'agent': {
+      const workLog = groups.get(index)
+      return (
+        <>
+          {workLog && <TurnWorkLog rows={workLog.rows} live={workLog.live} onOpenFile={onOpenFile} />}
+          <AgentBubble blocks={msg.blocks} text={msg.text} chunks={msg.chunks} time={msg.time} streaming={msg.streaming} showStreamCursor={showStreamCursor} durationMs={msg.durationMs} usage={msg.usage} mode={msg.mode} showTurnSummary={showTurnSummary} onOpenLink={onOpenLink} />
+        </>
+      )
+    }
 
     case 'thinking':
       return <ThinkingBlock text={msg.text} streaming={msg.streaming} chunks={msg.chunks} />

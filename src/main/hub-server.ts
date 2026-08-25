@@ -16,8 +16,9 @@ import {
   type HubRelayControlFrame,
 } from '../shared/hub-relay-types'
 import { HubAuth } from './hub-auth'
-import { HubEnrollmentIssuer, HUB_MACHINE_ONLINE_WINDOW_MS } from './hub-machine-enrollment'
+import { HubDeviceEnrollmentIssuer, HubEnrollmentIssuer, HUB_MACHINE_ONLINE_WINDOW_MS } from './hub-machine-enrollment'
 import { HubStore, type HubSession } from './hub-store'
+import QRCode from 'qrcode'
 
 const MAX_BODY_BYTES = 1024 * 1024
 const HUB_AUTH_ATTEMPTS_PER_MINUTE = 30
@@ -163,14 +164,14 @@ function hubHtml(): string {
 <body><main><section class="card"><p class="eyebrow">CREWCODE</p><h1>Self-hosted Hub</h1><p id="status">Checking Hub…</p>
 <div id="setup" hidden><label>Owner name<input id="owner" maxlength="64" autocomplete="username" value="Owner"></label><button id="setup-button">Create owner passkey</button></div>
 <div id="signin" hidden><button id="signin-button">Sign in with passkey</button></div>
-<div id="dashboard" hidden><div class="row"><strong id="username"></strong><button id="logout-button" class="quiet">Sign out</button></div><h2>Machines</h2><div id="machines" class="machines"></div><button id="enrollment-button">Enroll a machine</button><pre id="enrollment" hidden></pre></div>
+<div id="dashboard" hidden><div class="row"><strong id="username"></strong><button id="logout-button" class="quiet">Sign out</button></div><div id="mobile" hidden><h2>Connect a phone</h2><p class="muted">Scan to open this HTTPS Hub. The QR contains only this Hub URL.</p><img id="mobile-qr" width="220" height="220" alt="CrewCode mobile Hub QR code"><p><code id="mobile-url"></code></p></div><div id="pending-wrap" hidden><h2>Pending machine approvals</h2><p class="muted">Approve only when the code and fingerprint match the PC terminal.</p><div id="pending-machines" class="machines"></div></div><h2>Machines</h2><div id="machines" class="machines"></div><button id="enrollment-button">Legacy enrollment token</button><pre id="enrollment" hidden></pre></div>
 <p id="error" class="error"></p></section></main><script src="/hub.js"></script></body></html>`
 }
 
-const HUB_CSS = `:root{color-scheme:dark;font-family:Inter,system-ui,sans-serif;background:#0f120f;color:#d7e0dc}*{box-sizing:border-box}body{margin:0}main{min-height:100vh;display:grid;place-items:center;padding:24px}.card{width:min(640px,100%);border:1px solid #1c2f2f;padding:28px;background:#0f120f}.eyebrow{font:600 11px/1.4 monospace;letter-spacing:.18em;color:#79958a}h1{margin:.25rem 0 1.25rem;font-size:26px}h2{font-size:15px;margin-top:24px}label{display:grid;gap:8px;margin:20px 0;font-size:13px}input,button{border:1px solid #285a48;background:#131a17;color:inherit;padding:10px 12px;font:inherit}button{cursor:pointer;background:#285a48}.quiet{background:transparent}.row,.machine{display:flex;align-items:center;justify-content:space-between;gap:16px}.machines{border-top:1px solid #1c2f2f;margin-bottom:14px;color:#8da49a;font:13px/1.5 monospace}.machine{padding:10px 0;border-bottom:1px solid #1c2f2f}.machine button{padding:5px 8px}pre{white-space:pre-wrap;overflow-wrap:anywhere;border:1px solid #1c2f2f;padding:12px;color:#8da49a}.error{color:#d89595;min-height:1.4em}`
+const HUB_CSS = `:root{color-scheme:dark;font-family:Inter,system-ui,sans-serif;background:#0f120f;color:#d7e0dc}*{box-sizing:border-box}body{margin:0}main{min-height:100vh;display:grid;place-items:center;padding:24px}.card{width:min(640px,100%);border:1px solid #1c2f2f;padding:28px;background:#0f120f}.eyebrow{font:600 11px/1.4 monospace;letter-spacing:.18em;color:#79958a}h1{margin:.25rem 0 1.25rem;font-size:26px}h2{font-size:15px;margin-top:24px}label{display:grid;gap:8px;margin:20px 0;font-size:13px}input,button{border:1px solid #285a48;background:#131a17;color:inherit;padding:10px 12px;font:inherit}button{cursor:pointer;background:#285a48}.quiet{background:transparent}.row,.machine{display:flex;align-items:center;justify-content:space-between;gap:16px}.machines{border-top:1px solid #1c2f2f;margin-bottom:14px;color:#8da49a;font:13px/1.5 monospace}.machine{padding:10px 0;border-bottom:1px solid #1c2f2f}.machine button{padding:5px 8px}.muted{color:#8da49a;font-size:13px}#mobile{text-align:center}#mobile-qr{background:#fff;padding:8px;max-width:100%;height:auto}code{overflow-wrap:anywhere}pre{white-space:pre-wrap;overflow-wrap:anywhere;border:1px solid #1c2f2f;padding:12px;color:#8da49a}.error{color:#d89595;min-height:1.4em}`
 
 const HUB_JS = `(()=>{'use strict';
-const $=id=>document.getElementById(id),status=$('status'),error=$('error');let csrf='';
+const $=id=>document.getElementById(id),status=$('status'),error=$('error');let csrf='',pendingProbe=false;
 const b64=b=>{const bytes=new Uint8Array(b);let s='';for(const x of bytes)s+=String.fromCharCode(x);return btoa(s).replace(/\\+/g,'-').replace(/\\//g,'_').replace(/=+$/,'')};
 const bytes=s=>{s=s.replace(/-/g,'+').replace(/_/g,'/');while(s.length%4)s+='=';const raw=atob(s);return Uint8Array.from(raw,c=>c.charCodeAt(0))};
 const json=async(url,opts={})=>{const r=await fetch(url,{...opts,headers:{'content-type':'application/json',...(opts.headers||{})}});const body=await r.json();if(!r.ok)throw new Error(body.error||('Request failed: '+r.status));return body};
@@ -179,11 +180,12 @@ const creation=o=>({...o,challenge:bytes(o.challenge),user:{...o.user,id:bytes(o
 const request=o=>({...o,challenge:bytes(o.challenge),allowCredentials:(o.allowCredentials||[]).map(c=>({...c,id:bytes(c.id)}))});
 const authError=e=>{const message=e&&e.message?e.message:String(e);if(!window.isSecureContext)return'Passkeys require a secure browser context. Open the exact localhost URL printed by CrewCode, or use the configured HTTPS Hub origin.';if(message.includes('InsecureLocalhostNotAllowed'))return'This browser or passkey provider refuses passkeys over HTTP localhost. For local testing, try current Chrome or Chromium. Otherwise run the Hub at its final HTTPS origin and create the passkey there.';return message};
 function view(name){for(const id of ['setup','signin','dashboard'])$(id).hidden=id!==name}
-async function refresh(){error.textContent='';const s=await json('/api/v1/hub/status');if(!s.ownerConfigured){view('setup');status.textContent=location.hash.includes('bootstrap=')?'Register the first owner passkey.':'Open the one-time setup URL printed by crewcode hub.';return}try{const me=await json('/api/v1/hub/session');csrf=me.csrf;view('dashboard');status.textContent='Hub ready';$('username').textContent=me.user.username;const m=await json('/api/v1/hub/machines'),list=$('machines');list.textContent='';if(!m.machines.length)list.textContent='No machines enrolled yet.';for(const x of m.machines){const row=document.createElement('div');row.className='machine';const label=document.createElement('span');label.textContent=x.name+' · '+x.status+(x.platform?' · '+x.platform:'');row.append(label);const actions=document.createElement('span');if(x.status==='online'){const open=document.createElement('button');open.textContent='Open';open.onclick=()=>{location.href='/app?machine='+encodeURIComponent(x.id)};actions.append(open)}if(x.status!=='revoked'){const revoke=document.createElement('button');revoke.className='quiet';revoke.textContent='Revoke';revoke.onclick=async()=>{try{await json('/api/v1/hub/machines/'+encodeURIComponent(x.id)+'/revoke',{method:'POST',headers:{'x-crewcode-csrf':csrf},body:'{}'});await refresh()}catch(e){error.textContent=e.message}};actions.append(revoke)}row.append(actions);list.append(row)}}catch{view('signin');status.textContent='Sign in to view your machines.'}}
+async function refresh(){error.textContent='';const s=await json('/api/v1/hub/status');if(!s.ownerConfigured){view('setup');status.textContent=location.hash.includes('bootstrap=')?'Register the first owner passkey.':'Open the one-time setup URL printed by crewcode hub.';return}try{const me=await json('/api/v1/hub/session');csrf=me.csrf;view('dashboard');status.textContent='Hub ready';$('username').textContent=me.user.username;const mobile=$('mobile');mobile.hidden=location.protocol!=='https:';if(!mobile.hidden){$('mobile-url').textContent=location.origin;$('mobile-qr').src='/api/v1/hub/mobile-qr.svg'}const pending=await json('/api/v1/hub/device-enrollments'),pendingWrap=$('pending-wrap'),pendingList=$('pending-machines');pendingList.textContent='';pendingWrap.hidden=!pending.requests.length;for(const x of pending.requests){const row=document.createElement('div');row.className='machine';const label=document.createElement('span');label.textContent=x.name+' · code '+x.userCode+' · fingerprint '+x.publicKeyFingerprint+(x.platform?' · '+x.platform:'');row.append(label);const actions=document.createElement('span');const approve=document.createElement('button');approve.textContent='Approve';approve.onclick=async()=>{try{await json('/api/v1/hub/device-enrollments/'+encodeURIComponent(x.id)+'/approve',{method:'POST',headers:{'x-crewcode-csrf':csrf},body:'{}'});await refresh()}catch(e){error.textContent=e.message}};const reject=document.createElement('button');reject.className='quiet';reject.textContent='Reject';reject.onclick=async()=>{try{await json('/api/v1/hub/device-enrollments/'+encodeURIComponent(x.id)+'/reject',{method:'POST',headers:{'x-crewcode-csrf':csrf},body:'{}'});await refresh()}catch(e){error.textContent=e.message}};actions.append(approve,reject);row.append(actions);pendingList.append(row)}const m=await json('/api/v1/hub/machines'),list=$('machines');list.textContent='';if(!m.machines.length)list.textContent='No machines enrolled yet.';for(const x of m.machines){const row=document.createElement('div');row.className='machine';const label=document.createElement('span');label.textContent=x.name+' · '+x.status+(x.platform?' · '+x.platform:'');row.append(label);const actions=document.createElement('span');if(x.status==='online'){const open=document.createElement('button');open.textContent='Open';open.onclick=()=>{location.href='/app?machine='+encodeURIComponent(x.id)};actions.append(open)}if(x.status!=='revoked'){const revoke=document.createElement('button');revoke.className='quiet';revoke.textContent='Revoke';revoke.onclick=async()=>{try{await json('/api/v1/hub/machines/'+encodeURIComponent(x.id)+'/revoke',{method:'POST',headers:{'x-crewcode-csrf':csrf},body:'{}'});await refresh()}catch(e){error.textContent=e.message}};actions.append(revoke)}row.append(actions);list.append(row)}}catch{view('signin');status.textContent='Sign in to view your machines.'}}
 $('setup-button').onclick=async()=>{try{error.textContent='';const token=new URLSearchParams(location.hash.slice(1)).get('bootstrap')||'';const username=$('owner').value;const start=await json('/api/v1/hub/bootstrap/options',{method:'POST',body:JSON.stringify({token,username})});const credential=await navigator.credentials.create({publicKey:creation(start.options)});const done=await json('/api/v1/hub/bootstrap/verify',{method:'POST',body:JSON.stringify({token,username,flowId:start.flowId,response:credentialJSON(credential)})});csrf=done.csrf;history.replaceState(null,'',location.pathname);await refresh()}catch(e){error.textContent=authError(e)}};
 $('signin-button').onclick=async()=>{try{error.textContent='';const start=await json('/api/v1/hub/auth/options',{method:'POST',body:'{}'});const credential=await navigator.credentials.get({publicKey:request(start.options)});const done=await json('/api/v1/hub/auth/verify',{method:'POST',body:JSON.stringify({flowId:start.flowId,response:credentialJSON(credential)})});csrf=done.csrf;await refresh()}catch(e){error.textContent=authError(e)}};
 $('enrollment-button').onclick=async()=>{try{error.textContent='';const issued=await json('/api/v1/hub/enrollments',{method:'POST',headers:{'x-crewcode-csrf':csrf},body:'{}'}),out=$('enrollment');out.hidden=false;out.textContent='Enrollment token (single use; do not share):\\n'+issued.token+'\\n\\nRun on the machine within 10 minutes, then paste the token when prompted:\\ncrewcode enroll --hub '+location.origin}catch(e){error.textContent=e.message}};
 $('logout-button').onclick=async()=>{try{await json('/api/v1/hub/logout',{method:'POST',headers:{'x-crewcode-csrf':csrf},body:'{}'});csrf='';$('enrollment').hidden=true;$('enrollment').textContent='';await refresh()}catch(e){error.textContent=e.message}};
+setInterval(()=>{if($('dashboard').hidden||!$('pending-wrap').hidden||pendingProbe)return;pendingProbe=true;json('/api/v1/hub/device-enrollments').then(p=>{if(p.requests.length)return refresh()}).catch(()=>{}).finally(()=>{pendingProbe=false})},3000);
 refresh().catch(e=>{status.textContent='Could not connect';error.textContent=e.message});})();`
 
 function serveHubApp(webRoot: string | undefined, pathname: string, response: ServerResponse): boolean {
@@ -215,7 +217,9 @@ function serveAsset(pathname: string, response: ServerResponse): boolean {
   response.writeHead(200, {
     'content-type': type,
     'content-length': Buffer.byteLength(body),
-    'cache-control': pathname === '/' ? 'no-store' : 'public, max-age=300',
+    // Hub setup/dashboard assets are tiny and contain deployment control flow.
+    // Never let a phone retain stale enrollment or bootstrap behavior.
+    'cache-control': 'no-store',
     'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
     'x-content-type-options': 'nosniff',
     'referrer-policy': 'no-referrer',
@@ -231,6 +235,7 @@ export async function startHubServer(options: HubServerOptions): Promise<Running
   const authLimiter = new RemoteAccessRateLimiter(HUB_AUTH_ATTEMPTS_PER_MINUTE)
   const machineLimiter = new RemoteAccessRateLimiter(HUB_MACHINE_ATTEMPTS_PER_MINUTE)
   const enrollments = new HubEnrollmentIssuer(now)
+  const deviceEnrollments = new HubDeviceEnrollmentIssuer(now)
   const tickets = new HubConnectionTicketIssuer(now)
   let publicOrigin = options.publicOrigin ?? ''
   let auth: HubAuth
@@ -308,7 +313,7 @@ export async function startHubServer(options: HubServerOptions): Promise<Running
           return
         }
       }
-      if (request.method === 'POST' && (pathname.startsWith('/api/v1/hub/machines/') || pathname === '/api/v1/hub/enrollments')) {
+      if (request.method === 'POST' && (pathname.startsWith('/api/v1/hub/machines/') || pathname === '/api/v1/hub/enrollments' || pathname.startsWith('/api/v1/hub/device-enrollments'))) {
         const limited = machineLimiter.consume(remotePeerKey(request), now())
         if (!limited.allowed) {
           response.setHeader('retry-after', String(limited.retryAfterSeconds))
@@ -344,6 +349,68 @@ export async function startHubServer(options: HubServerOptions): Promise<Running
         const owner = store.owner()
         if (!session || !owner || session.userId !== owner.id) { sendJson(response, 401, { error: 'valid Hub session required' }); return }
         sendJson(response, 200, { user: owner, csrf: store.rotateCsrf(session.id) })
+        return
+      }
+      if (request.method === 'POST' && pathname === '/api/v1/hub/device-enrollments/request') {
+        const owner = store.owner()
+        if (!owner) { sendJson(response, 409, { error: 'Hub owner must be configured before enrolling a machine' }); return }
+        const body = await readJson(request)
+        const publicKey = machinePublicKey(body.publicKey)
+        const name = boundedString(body.name, 'name', 80) as string
+        const platform = boundedString(body.platform, 'platform', 80, true)
+        const version = boundedString(body.version, 'version', 80, true)
+        const issued = deviceEnrollments.request({ publicKey, name, platform, version })
+        store.audit('hub.device-enrollment.requested', owner.id, null, { requestId: issued.requestId, name, platform, expiresAt: issued.expiresAt }, now())
+        sendJson(response, 201, issued)
+        return
+      }
+      if (request.method === 'POST' && pathname === '/api/v1/hub/device-enrollments/poll') {
+        const body = await readJson(request)
+        const requestToken = boundedString(body.requestToken, 'requestToken', 256) as string
+        const result = deviceEnrollments.poll(requestToken)
+        if (!result) { sendJson(response, 401, { error: 'device enrollment request is invalid or expired' }); return }
+        if (result.status === 'pending') { sendJson(response, 202, result); return }
+        if (result.status === 'rejected') { sendJson(response, 403, { error: 'device enrollment was rejected' }); return }
+        sendJson(response, 200, result)
+        return
+      }
+      if (request.method === 'GET' && pathname === '/api/v1/hub/device-enrollments') {
+        const session = currentSession(request)
+        if (!session) { sendJson(response, 401, { error: 'valid Hub session required' }); return }
+        sendJson(response, 200, { requests: deviceEnrollments.list() })
+        return
+      }
+      const deviceDecision = request.method === 'POST' ? pathname.match(/^\/api\/v1\/hub\/device-enrollments\/([a-f0-9]{32})\/(approve|reject)$/) : null
+      if (deviceDecision) {
+        const session = currentSession(request)
+        if (!session) { sendJson(response, 401, { error: 'valid Hub session required' }); return }
+        if (!validCsrf(request, session)) { sendJson(response, 403, { error: 'valid CSRF token required' }); return }
+        const pending = deviceEnrollments.pendingRequest(deviceDecision[1])
+        if (!pending) { sendJson(response, 404, { error: 'pending device enrollment not found' }); return }
+        if (deviceDecision[2] === 'reject') {
+          deviceEnrollments.reject(pending.id)
+          store.audit('hub.device-enrollment.rejected', session.userId, null, { requestId: pending.id, name: pending.name }, now())
+          sendJson(response, 200, { rejected: true })
+          return
+        }
+        const created = store.createMachine({ userId: session.userId, publicKey: pending.publicKey, name: pending.name, platform: pending.platform, version: pending.version, now: now() })
+        if (!deviceEnrollments.approve(pending.id, { machineId: created.machine.id, token: created.token })) {
+          // The pending request can only disappear through expiry in this
+          // synchronous section; revoke the just-created credential fail-closed.
+          store.revokeMachine(session.userId, created.machine.id, now())
+          sendJson(response, 409, { error: 'device enrollment expired during approval' })
+          return
+        }
+        store.audit('hub.device-enrollment.approved', session.userId, created.machine.id, { requestId: pending.id, name: pending.name }, now())
+        sendJson(response, 201, { approved: true, machineId: created.machine.id })
+        return
+      }
+      if (request.method === 'GET' && pathname === '/api/v1/hub/mobile-qr.svg') {
+        const session = currentSession(request)
+        if (!session) { sendJson(response, 401, { error: 'valid Hub session required' }); return }
+        const svg = await QRCode.toString(publicOrigin, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' })
+        response.writeHead(200, { 'content-type': 'image/svg+xml', 'content-length': Buffer.byteLength(svg), 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' })
+        response.end(svg)
         return
       }
       if (request.method === 'GET' && pathname === '/api/v1/hub/machines') {

@@ -57,6 +57,7 @@ export interface SoloChatViewProps {
   onStartCrew: () => void
   onOpenCanvas?: () => void
   onOpenTerminal?: () => void
+  onHandoff?: () => void
   // Composer
   composerMode: Mode
   setComposerMode: (m: Mode) => void
@@ -141,7 +142,7 @@ export function SoloChatView(props: SoloChatViewProps) {
     pendingGitDiff, setPendingGitDiff,
     hideHeader = false,
     agentLabel, modelLabel, voiceControl,
-    gitOpen, setGitOpen, github, dirtyCount = 0, changesOpen, changesCount, toggleChangesOpen, onStartCrew, onOpenCanvas, onOpenTerminal,
+    gitOpen, setGitOpen, github, dirtyCount = 0, changesOpen, changesCount, toggleChangesOpen, onStartCrew, onOpenCanvas, onOpenTerminal, onHandoff,
     composerMode, setComposerMode, composer, setComposer, onSend, onRunCommand, onQueueFollowUp, queuedFollowUps = [], onRemoveQueuedFollowUp, isRunning, loadingStatus = null, onStop, agentRequest, custodyHalt, onReauthorizeCustody, onAgentRequestResponse,
     agents, activeAgentId, setActiveAgentId, model, setModel, effort, setEffort,
     mcpEnabled, mcpServers, selectedMcpIds, onToggleMcp,
@@ -304,6 +305,7 @@ export function SoloChatView(props: SoloChatViewProps) {
       onOpenCanvas={onOpenCanvas}
       onOpenTerminal={onOpenTerminal}
       onOpenBrowser={onOpenBrowser}
+      onHandoff={onHandoff}
       delegationEnabled={delegationEnabled}
       onToggleDelegation={onToggleDelegation}
       modePromptsEnabled={modePromptsEnabled}

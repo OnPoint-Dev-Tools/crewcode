@@ -550,6 +550,25 @@ describe('authenticated encrypted Hub relay', () => {
     await second.close()
   })
 
+  it('applies Brain authorization reductions immediately and stops affected resources', async () => {
+    const { hub, machineId, cookie, csrf, publicKey, workspaceRoot } = await fixture(['workspace:write', 'terminal'])
+    const ticketResponse = await fetch(`${hub.url}/api/v1/hub/machines/${machineId}/tickets`, {
+      method: 'POST', headers: { cookie, 'x-crewcode-csrf': csrf, 'content-type': 'application/json', origin: hub.publicOrigin },
+      body: JSON.stringify({ requestedScopes: ['workspace:write', 'terminal'] }),
+    })
+    const { ticket } = await ticketResponse.json() as { ticket: string }
+    const session = await openEncryptedSession({ hub, ticket, machineId, publicKey })
+    await session.rpc({ protocolVersion: 1, id: 'add-policy-root', method: 'workspaces.add', params: { path: workspaceRoot } })
+    await session.rpc({ protocolVersion: 1, id: 'create-policy-pty', method: 'pty.create', params: { paneId: 'policy-pane', cwd: workspaceRoot } })
+    await expect(session.rpc({ protocolVersion: 1, id: 'get-policy', method: 'brain.authorization.get', params: {} }))
+      .resolves.toMatchObject({ type: 'rpcResult', response: { ok: true, result: { roots: [workspaceRoot], scopes: ['terminal', 'workspace:write'] } } })
+    await expect(session.rpc({ protocolVersion: 1, id: 'reduce-policy', method: 'brain.authorization.update', params: { roots: [workspaceRoot], scopes: ['workspace:write'] } }))
+      .resolves.toMatchObject({ type: 'rpcResult', response: { ok: true, result: { stopped: { paneIds: ['policy-pane'] } } } })
+    await expect(session.rpc({ protocolVersion: 1, id: 'terminal-after-revoke', method: 'pty.write', params: { paneId: 'policy-pane', data: 'no' } }))
+      .resolves.toMatchObject({ type: 'rpcResult', response: { ok: false, error: { code: 'FORBIDDEN' } } })
+    await session.close()
+  })
+
   it('tunnels attachment chunks end-to-end into the Brain workspace', async () => {
     const { hub, machineId, cookie, csrf, publicKey, workspaceRoot } = await fixture(['workspace:write'])
     const ticketResponse = await fetch(`${hub.url}/api/v1/hub/machines/${machineId}/tickets`, {

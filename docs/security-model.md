@@ -74,7 +74,18 @@ per-peer limiter. Enrollment creates an Ed25519 identity on the brain and a sepa
 the Hub stores the public key and only SHA-256 of the bearer secret. Heartbeats are
 outbound HTTPS requests. Presence goes offline after 90 seconds without a successful
 heartbeat, and owner revocation immediately makes the bearer credential fail closed.
-Browser mutations retain exact-origin and CSRF enforcement.
+Browser mutations retain exact-origin and CSRF enforcement. The explicitly labeled
+first-owner QR carries the same short-lived, single-use bootstrap fragment already
+printed to the trusted terminal; it expires in ten minutes and is removed after
+registration. Normal mobile QR codes encode only the stable validated HTTPS Hub
+origin and are rendered in the authenticated dashboard; they contain no browser
+session, enrollment secret, or Brain ticket. Phone-approved enrollment keeps its
+Ed25519 private key on the PC, uses the short code only for human comparison, and
+protects polling/credential delivery with a separate 256-bit request secret. Pending
+requests are memory-only, bounded, rate-limited, ten-minute, owner-approved with
+CSRF, one-time on delivery, and audited.
+Tailscale setup refuses to overwrite an existing Serve configuration without an
+explicit replacement flag. QR transfer does not weaken normal passkey sign-in.
 
 **Connection and execution gates:** only an authenticated Hub browser session plus
 CSRF can issue a 60-second memory-only ticket for one owned, active, relay-connected
@@ -87,11 +98,14 @@ handshake transcript with its enrolled Ed25519 key, and ordered application fram
 use direction-separated HKDF/AES-256-GCM keys. The Hub sees routing metadata and
 handshake public values, but not RPC, source, terminal, prompt, or response plaintext.
 
-Hub identity still does not grant execution. `crewcode brain` grants no RPC scope by
-default and requires explicit local `--workspace-root` plus repeatable
-`--allow-scope` settings. Each decrypted method is classified at the Brain and must
-be included in both the ticket request and local grant. The reused backend then
-revalidates registered workspace roots for filesystem, Git, PTY, and agent calls.
+Hub identity still does not grant execution. The first `crewcode brain` start grants
+no RPC scope by default and seeds an owner-only persisted policy from explicit local
+`--workspace-root` and repeatable `--allow-scope` settings. Thereafter Settings →
+Brain Access manages it only through E2EE owner RPC. Reductions apply immediately,
+stop affected agents/terminals, and remove scopes from existing sessions; additions
+require a fresh ticket and handshake. Each decrypted method must be included in both
+the ticket request and current local grant. The backend revalidates live workspace
+roots for filesystem, Git, PTY, attachments, and agent calls.
 
 **Tests:** `hub-server.test.ts` covers CSRF, issue/enroll, replay rejection, stale
 presence, heartbeat, and revocation. `hub-machine-enrollment.test.ts` covers URL

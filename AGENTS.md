@@ -157,6 +157,8 @@ The self-hosted Hub is a separate `crewcode hub` process, not Electron renderer 
 
 The design system lives in `.design/crewcode-design-system/`. The canonical CSS tokens are in `src/renderer/src/styles/colors_and_type.css`.
 
+Renderer components may use Tailwind v4 utilities through the utilities-only integration in `src/renderer/src/styles/tailwind.css`. Preflight must stay disabled so incremental conversions do not reset unrelated app surfaces. Use the `cc-*` semantic Tailwind colors, which map to the canonical live CSS tokens; see `docs/tailwind-renderer.md`.
+
 **Hard rules:**
 
 - Background: `#0f120f` (dark), never pure black
@@ -176,6 +178,8 @@ Three tsconfigs compose via project references:
 ## Current state
 
 Read this file only when working on any of the features below and need the Current state of them `CrewCoder provider`, `ACP Grok Build`, `Sidebar Folder Creation`, `Crew Supervisor`, `Delegated Threads`,`Chat Archiving`, `Hide work Logs`, `Realtime Voice Orb`, `Notifcation Sound`, `Agent Messages`, `Agent Task Activity`, `Cusromization Panel`, `Queued Messages`, `Composer Execution Modes & reasoning`, `Claude SDK Global skills isolation`, `Provider Switch Handoff & Compact`, `Chat`, `Markdown Editor`, `Code Editor`, `Workbench Mode`, `Git Workspace/Sidebar`, [Current State](docs/current-state.md)
+
+Provider context handoff is initiated from the Solo Chat header or `/handoff`. Preserve the destination-card behavior, existing-chat provider/model/effort locking, visible destination meter, and disposable destination-provider summary flow documented in `docs/provider-context-handoff.md`.
 
 ## Plugin platform notes
 

@@ -879,6 +879,15 @@ export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, br
     }
   }, [onRunningChange])
 
+  const handoff = useCallback(async (bridgeId: string, sourceConversationKey: string, options: NonNullable<ChatPromptOptions['handoff']>) => {
+    onRunningChange?.(bridgeId, true)
+    try {
+      return await (window.electronAPI?.bridgeHandoff(bridgeId, sourceConversationKey, options) ?? { ok: false, error: 'handoff unavailable' })
+    } finally {
+      onRunningChange?.(bridgeId, false)
+    }
+  }, [onRunningChange])
+
   const setMode = useCallback((bridgeId: string, mode: ModeLevel) => {
     // Mode switches are per-turn behavior, not a reason to respawn and lose the
     // provider's live context. Mutate the routing ref immediately for fast events.
@@ -904,5 +913,5 @@ export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, br
     delete stateRef.current[bridgeId]
   }, [onRunningChange])
 
-  return { start, prompt, compact, setMode, abort, stop, removeFollowUp, registerRoute }
+  return { start, prompt, compact, handoff, setMode, abort, stop, removeFollowUp, registerRoute }
 }

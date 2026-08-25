@@ -22,6 +22,7 @@ function remoteShellArgv(root: string): string[] | null {
 interface Pane {
   proc: IPty
   buffer: string
+  cwd: string
 }
 
 // Replayed when a React terminal surface remounts (workspace/tab switches).
@@ -144,7 +145,7 @@ export class PtyService {
     let proc: IPty
     try { proc = pty.spawn(exe, remoteArgs ?? argv, { name: 'xterm-256color', cols, rows, cwd: actualCwd, env: ptyEnv }) }
     catch (error) { return { error: `pty spawn failed: ${error instanceof Error ? error.message : String(error)}` } }
-    const pane: Pane = { proc, buffer: '' }
+    const pane: Pane = { proc, buffer: '', cwd: actualCwd }
     proc.onData(data => {
       appendReplayBuffer(pane, data)
       this.emit({ type: 'data', paneId, data })
@@ -175,6 +176,15 @@ export class PtyService {
     if (pane) try { pane.proc.kill() } catch { /* exited */ }
     this.panes.delete(paneId)
     this.pendingWrites.delete(paneId)
+  }
+
+  killWhere(predicate: (cwd: string) => boolean): string[] {
+    const killed: string[] = []
+    for (const [paneId, pane] of this.panes) {
+      if (!predicate(pane.cwd)) continue
+      this.kill(paneId); killed.push(paneId)
+    }
+    return killed
   }
 
   killAll(): void {

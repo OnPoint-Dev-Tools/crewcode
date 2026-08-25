@@ -12,6 +12,7 @@ import {
   type HubTunnelPlaintext,
 } from '../shared/hub-relay-types'
 import { resolveHeadlessAgentPath } from './headless-agent-resolver'
+import { BrainAuthorizationPolicy, brainAuthorizationPolicyPath } from './brain-authorization-policy'
 import { loadConversation } from './agents/conversation-store'
 import type { MachineCredentialFile } from './hub-machine-enrollment'
 import { createBrainRelayCipher, type BrainRelayCipher } from './hub-relay-crypto'
@@ -87,7 +88,8 @@ function websocketOrigin(origin: string): string {
 }
 
 export async function startBrainRelay(options: BrainRelayOptions): Promise<RunningBrainRelay> {
-  const roots = options.allowedWorkspaceRoots.map(root => realpathSync(root))
+  const policy = new BrainAuthorizationPolicy(brainAuthorizationPolicyPath(options.dataDir), options.allowedWorkspaceRoots.map(root => realpathSync(root)), options.allowedScopes)
+  const roots = policy.current().roots
   const runtimeDataDir = join(options.dataDir, 'runtime')
   // Agent persistence helpers also run in Electron, where they fall back to
   // app.getPath(). A Brain is ordinary Node, so pin the same explicit runtime
@@ -153,7 +155,6 @@ export async function startBrainRelay(options: BrainRelayOptions): Promise<Runni
     if (owner) owner.droppedEvents += dropped
     detachedEvents.set(resourceId, events)
   }
-  const allowed = new Set(options.allowedScopes)
   let closing = false
   let backendClose: Promise<void> | null = null
   const closeBackend = (): Promise<void> => {
@@ -241,7 +242,7 @@ export async function startBrainRelay(options: BrainRelayOptions): Promise<Runni
     try { frame = JSON.parse(raw.toString()) as HubRelayControlFrame } catch { relay.close(4002, 'invalid Hub relay frame'); return }
     if (frame.type === 'brainReady') { relayReadyResolve(); return }
     if (frame.type === 'connect') {
-      const grantedScopes = frame.requestedScopes.filter(scope => allowed.has(scope))
+      const grantedScopes = frame.requestedScopes.filter(scope => policy.allowsScope(scope))
       sessions.set(frame.connectionId, { connectionId: frame.connectionId, userId: frame.userId, grantedScopes: new Set(grantedScopes), expectedBrowserSequence: 0, brainSequence: 0 })
       return
     }
@@ -311,7 +312,27 @@ export async function startBrainRelay(options: BrainRelayOptions): Promise<Runni
     const wrongRequestOwner = !!responseRequestId && requestOwner?.userId !== session.userId
     let response: CrewCodeRemoteResponse
     let replayResourceId = ''
-    if (!scope || !session.grantedScopes.has(scope)) {
+    if (request.method === 'brain.authorization.get') {
+      response = { protocolVersion: CREWCODE_REMOTE_PROTOCOL_VERSION, id: request.id, ok: true, result: policy.current() }
+      sendEncrypted(session, { type: 'rpcResult', response }); return
+    } else if (request.method === 'brain.authorization.update') {
+      try {
+        const previous = policy.current()
+        const updated = policy.update({ roots: params.roots, scopes: params.scopes, userId: session.userId })
+        backend.updateAllowedWorkspaceRoots(updated.roots)
+        const stopped = await backend.stopResources({ terminal: previous.scopes.includes('terminal') && !updated.scopes.includes('terminal'), agent: previous.scopes.includes('agent') && !updated.scopes.includes('agent'), allowedRoots: updated.roots })
+        for (const paneId of stopped.paneIds) { paneOwners.delete(paneId); detachedEvents.delete(paneId) }
+        for (const bridgeId of stopped.bridgeIds) {
+          bridgeOwners.delete(bridgeId); detachedEvents.delete(bridgeId); bridgeTextSnapshots.delete(bridgeId)
+          for (const [requestId, ownerBridgeId] of requestOwners) if (ownerBridgeId === bridgeId) requestOwners.delete(requestId)
+        }
+        for (const activeSession of sessions.values()) for (const granted of [...activeSession.grantedScopes]) if (!policy.allowsScope(granted)) activeSession.grantedScopes.delete(granted)
+        response = { protocolVersion: CREWCODE_REMOTE_PROTOCOL_VERSION, id: request.id, ok: true, result: { policy: updated, stopped } }
+      } catch (error) {
+        response = { protocolVersion: CREWCODE_REMOTE_PROTOCOL_VERSION, id: request.id, ok: false, error: { code: 'INVALID_REQUEST', message: (error as Error).message } }
+      }
+      sendEncrypted(session, { type: 'rpcResult', response }); return
+    } else if (!scope || !session.grantedScopes.has(scope) || !policy.allowsScope(scope)) {
       response = deniedResponse(request, scope
         ? `Brain authorization does not grant ${scope} for ${request.method}`
         : `Brain authorization does not expose ${request.method}`)

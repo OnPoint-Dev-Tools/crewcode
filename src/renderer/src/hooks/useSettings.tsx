@@ -48,6 +48,9 @@ export type ShortcutOverrides = Record<string, Record<string, string[]>>
 export interface SettingsState {
   zoom: number
   defaultMode: DefaultMode
+  // Workspace-scoped branch defaults for newly-created chat sessions. Empty or
+  // missing entries use the workspace's primary checkout.
+  defaultBranchByWorkspace: Record<string, string>
   // Prompt text is configurable, but enablement is stored per chat session and
   // provider-native permission enforcement never depends on these strings.
   modePrompts: ModePromptConfig
@@ -161,6 +164,7 @@ export interface SettingsState {
 export const DEFAULT_SETTINGS: SettingsState = {
   zoom: 100,
   defaultMode: 'build',
+  defaultBranchByWorkspace: {},
   modePrompts: { ...DEFAULT_MODE_PROMPTS },
   onLaunch: 'last session',
   showTweaksPanel: true,
@@ -288,6 +292,7 @@ function loadInitial(): SettingsState {
       sshConns: parsed.sshConns ?? [],
       agentPathOverrides: parsed.agentPathOverrides ?? {},
       pluginWorkspaceEnabled: parsed.pluginWorkspaceEnabled ?? {},
+      defaultBranchByWorkspace: parsed.defaultBranchByWorkspace ?? {},
       mcpServers: parsed.mcpServers ?? [],
       channel: migrateChannel(parsed.channel),
       updatePolicy: migrateUpdatePolicy(parsed),

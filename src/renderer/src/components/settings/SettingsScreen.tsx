@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { Icon, type IconName } from '../ui/Icon'
 import {
   useSettings,
@@ -31,14 +31,15 @@ import {
   type ProfileIconPreset,
 } from '../profile/UserProfileAvatar'
 import { PROVIDER_IMAGES, providerImageClass } from '../composer/provider-meta'
-import type { AppBuildInfo, UpdaterEvent, GhStatus, AgentInfo } from '../../types'
+import type { AppBuildInfo, UpdaterEvent, GhStatus, AgentInfo, Workspace } from '../../types'
 import type { CompletionProviderId } from '../../../../shared/agent-completion-types'
 import {
   LOCAL_VOICE_SPEED_MAX,
   LOCAL_VOICE_SPEED_MIN,
   type LocalVoiceDevice,
 } from '../../../../shared/voice-types'
-import { getCrewCodeClient } from '../../runtime/crewcode-client'
+import { getCrewCodeClient, getCrewCodeRuntime } from '../../runtime/crewcode-client'
+import { BrainAuthorizationSection } from './BrainAuthorizationSection'
 import type { EditorThemeId } from '../../../../shared/editor-theme-types'
 import type {
   RemoteVoiceProviderId,
@@ -288,7 +289,49 @@ function ProfileSection({ state, set }: { state: SettingsState; set: SetSetting 
 
 /* ---------- Section: General ---------- */
 
-function GeneralSection({ state, set }: { state: SettingsState; set: SetSetting }) {
+function GeneralSection({ state, set, workspace }: { state: SettingsState; set: SetSetting; workspace?: Workspace | null }) {
+  const [detectedBranches, setDetectedBranches] = useState<string[]>([])
+  const [branchesLoading, setBranchesLoading] = useState(false)
+  const [branchesError, setBranchesError] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    if (!workspace || workspace.kind !== 'repo') {
+      setDetectedBranches([])
+      setBranchesError('')
+      setBranchesLoading(false)
+      return () => { cancelled = true }
+    }
+    setBranchesLoading(true)
+    setBranchesError('')
+    void window.electronAPI?.gitBranches(workspace.path)
+      .then(result => {
+        if (cancelled) return
+        if (result?.error) {
+          setDetectedBranches([])
+          setBranchesError(result.error)
+          return
+        }
+        const names = new Set((result?.branches ?? []).map(branch => branch.name).filter(Boolean))
+        if (workspace.branch) names.add(workspace.branch)
+        for (const worktree of workspace.worktrees ?? []) if (worktree.branch) names.add(worktree.branch)
+        setDetectedBranches([...names].sort((a, b) => a.localeCompare(b)))
+      })
+      .catch(error => {
+        if (!cancelled) setBranchesError((error as Error).message || 'Unable to detect branches')
+      })
+      .finally(() => { if (!cancelled) setBranchesLoading(false) })
+    return () => { cancelled = true }
+  }, [workspace?.id, workspace?.kind, workspace?.path, workspace?.branch, workspace?.worktrees])
+
+  const selectedDefaultBranch = workspace ? state.defaultBranchByWorkspace[workspace.id] ?? '' : ''
+  const setDefaultBranch = (branch: string) => {
+    if (!workspace) return
+    const next = { ...state.defaultBranchByWorkspace }
+    if (branch) next[workspace.id] = branch
+    else delete next[workspace.id]
+    set('defaultBranchByWorkspace', next)
+  }
   const selectNotificationSound = (value: string) => {
     const sound = normalizeNotificationSound(value)
     set('notificationSound', sound)
@@ -315,6 +358,24 @@ function GeneralSection({ state, set }: { state: SettingsState; set: SetSetting 
             <div className="help">Applied to new threads. Override per thread with <span className="kbd">{k('⌃')}M</span>.</div>
           </div>
           <Seg<DefaultMode> value={state.defaultMode} options={['ask','plan','build','full']} onChange={v => set('defaultMode', v)} />
+        </div>
+        <div className="ss-row" data-q="default branch git detected branches new chat session worktree">
+          <div>
+            <div className="label">Default branch for new chats</div>
+            <div className="help">New chat sessions in {workspace?.name ?? 'the active workspace'} start on this detected branch. Existing chats keep their current branch.</div>
+            {branchesError ? <div className="help" style={{ color: 'var(--destructive)' }}>{branchesError}</div> : null}
+          </div>
+          <select
+            className="ss-select mono"
+            value={selectedDefaultBranch}
+            disabled={!workspace || workspace.kind !== 'repo' || branchesLoading}
+            onChange={event => setDefaultBranch(event.target.value)}
+            aria-label="Default branch for new chats"
+          >
+            <option value="">{branchesLoading ? 'Detecting branches…' : workspace?.branch ? `Workspace checkout (${workspace.branch})` : 'Workspace checkout'}</option>
+            {selectedDefaultBranch && !detectedBranches.includes(selectedDefaultBranch) ? <option value={selectedDefaultBranch}>{selectedDefaultBranch} (unavailable)</option> : null}
+            {detectedBranches.map(branch => <option key={branch} value={branch}>{branch}</option>)}
+          </select>
         </div>
         <div className="ss-row" data-q="start on launch reopen tabs">
           <div>
@@ -2165,8 +2226,14 @@ const SECTIONS: NavGroup[] = [
 
 /* ---------- Root ---------- */
 
-export function SettingsScreen() {
+export function SettingsScreen({ activeWorkspace }: { activeWorkspace?: Workspace | null } = {}) {
   const { state, set, savedAt } = useSettings()
+  const webRuntime = getCrewCodeRuntime().kind === 'web'
+  const sections = useMemo(() => webRuntime
+    ? SECTIONS.map(group => group.group === 'connectivity'
+      ? { ...group, items: [...group.items, { id: 'brain-authorization', label: 'Brain Access', icon: 'server' as IconName }] }
+      : group)
+    : SECTIONS, [webRuntime])
 
   const [query, setQuery] = useState('')
   const searchRef = useRef<HTMLInputElement>(null)
@@ -2263,7 +2330,7 @@ export function SettingsScreen() {
       <aside className="ss-nav">
         <div className="ss-nav-h">
           <span className="t">Settings</span>
-          <span className="ver">0.4.21</span>
+          <span className="ver">0.2.1</span>
         </div>
         <div className="ss-search">
           <Icon name="search" size={12} />
@@ -2276,7 +2343,7 @@ export function SettingsScreen() {
           <span className="kbd">{IS_MAC ? '⌘/' : 'Ctrl+/'}</span>
         </div>
         <nav className="ss-nav-list">
-          {SECTIONS.map(g => (
+          {sections.map(g => (
             <React.Fragment key={g.group}>
               <div className="sec-label">{g.group}</div>
               {g.items.map(it => (
@@ -2323,7 +2390,7 @@ export function SettingsScreen() {
           </div>
 
           <ProfileSection      state={state} set={set} />
-          <GeneralSection      state={state} set={set} />
+          <GeneralSection      state={state} set={set} workspace={activeWorkspace} />
           <ModePromptsSection  state={state} set={set} />
           <UpdatesSection      state={state} set={set} />
           <AppearanceSection   state={state} set={set} />
@@ -2336,6 +2403,7 @@ export function SettingsScreen() {
               <VoiceSection            state={state} set={set} />
               <EditorCompletionSection state={state} set={set} />
               <IntegrationsSection     state={state} set={set} />
+              {webRuntime && <BrainAuthorizationSection />}
               <McpSection          state={state} set={set} />
               <SSHSection          state={state} set={set} />
               <ShortcutsSection    state={state} set={set} />

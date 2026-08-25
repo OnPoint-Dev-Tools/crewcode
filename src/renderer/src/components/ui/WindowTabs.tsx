@@ -48,6 +48,7 @@ interface WindowTabsProps {
   onReorder?: (tabId: string, beforeTabId: string | null) => void
   pluginMenuItems?: WindowTabPluginMenuItem[]
   onPluginMenuItem?: (item: WindowTabPluginMenuItem) => void
+  onNewTabMenuOpenChange?: (open: boolean) => void
 }
 
 const TAB_ICONS: Record<TabKind, string> = {
@@ -157,7 +158,7 @@ export const WindowTabs = memo(function WindowTabs({
   tabs, activeId, onActivate, onClose,
   onAppMenuAction, activeKind, appMenuFootStatus, crewTabs,
   splitGroups = [], splitTabIds = [], splitPrimaryTabId, onSplit, onCloseSplitGroup, onPin, onUnpin, onRename, onColor, onReorder,
-  pluginMenuItems = [], onPluginMenuItem,
+  pluginMenuItems = [], onPluginMenuItem, onNewTabMenuOpenChange,
 }: WindowTabsProps) {
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; tab: Tab } | null>(null)
   const [draggingTabId, setDraggingTabId] = useState<string | null>(null)
@@ -195,6 +196,12 @@ export const WindowTabs = memo(function WindowTabs({
   const handleTabContextMenu = useCallback((x: number, y: number, tab: Tab) => {
     setCtxMenu({ x, y, tab })
   }, [])
+
+  useEffect(() => {
+    onNewTabMenuOpenChange?.(newMenuOpen)
+  }, [newMenuOpen, onNewTabMenuOpenChange])
+
+  useEffect(() => () => onNewTabMenuOpenChange?.(false), [onNewTabMenuOpenChange])
 
   useEffect(() => {
     if (!newMenuOpen) return

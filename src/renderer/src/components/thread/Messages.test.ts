@@ -135,7 +135,7 @@ describe('Messages transcript ordering', () => {
     })
 
     expect(renderOrder(renderer.toJSON())).toEqual(['thinking', 'thinking', 'agent'])
-    expect(collectText(renderer.toJSON()).filter(text => text === 'THOUGHTS')).toHaveLength(2)
+    expect(collectText(renderer.toJSON()).filter(text => text === 'Thinking')).toHaveLength(2)
 
     TestRenderer.act(() => renderer.unmount())
   })
@@ -156,7 +156,7 @@ describe('Messages transcript ordering', () => {
     TestRenderer.act(() => renderer.unmount())
   })
 
-  it('keeps interleaved thinking and tool groups in stream order', () => {
+  it('consolidates interleaved tool runs immediately before the final response', () => {
     let renderer!: TestRenderer.ReactTestRenderer
     TestRenderer.act(() => {
       renderer = TestRenderer.create(createElement(Messages, { messages: transcript() }))
@@ -164,11 +164,14 @@ describe('Messages transcript ordering', () => {
 
     expect(renderOrder(renderer.toJSON())).toEqual([
       'thinking',
-      'worklog',
       'thinking',
       'worklog',
       'agent',
     ])
+    const text = collectText(renderer.toJSON()).join(' ').replace(/\s+/g, ' ')
+    expect(text).toContain('2 tool calls')
+    expect(text).toContain('renderer.ts')
+    expect(text).toContain('npm test')
 
     TestRenderer.act(() => {
       renderer.unmount()

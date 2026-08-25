@@ -18,6 +18,7 @@ import { VoiceOrb } from '../voice/VoiceOrb'
 import type { VoiceControlSurface } from '../../../../shared/voice-types'
 import { ComposerDictationButton } from './ComposerDictationButton'
 import { insertDictationText } from './composer-dictation-text'
+import { MobileComposerActionMenu, MobileComposerModelMenu } from './MobileComposerMenus'
 
 const MODE_CYCLE: Mode[] = ['Ask', 'Plan', 'Build', 'Full']
 
@@ -172,8 +173,9 @@ export function Composer({
   const valueRef     = useRef(value)
   valueRef.current = value
   const modelRowRef  = useRef<ModelRowHandle>(null)
-  // Keep the hover-revealed model row pinned open while a picker dropdown is up.
+  // Desktop keeps the hover row open while one of its pickers is active.
   const [modelPickerOpen, setModelPickerOpen] = useState(false)
+  const inputBlurTimerRef = useRef<number | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const historyIndexRef = useRef(-1)
   const historyDraftRef = useRef('')
@@ -366,6 +368,7 @@ export function Composer({
       .map(s => ({ id: `skill:${s.id}`, kind: 'skill' as const, title: s.title, description: s.description, skill: s }))
     const builtInCommands = [
       { id: 'builtin:compact', kind: 'command' as const, title: '/compact', description: 'compact the current provider session', body: '/compact' },
+      { id: 'builtin:handoff', kind: 'command' as const, title: '/handoff', description: 'hand off context to a new or used chat', body: '/handoff' },
       { id: 'builtin:add-dir', kind: 'command' as const, title: '/add-dir', description: 'attach an external directory to this session', body: '/add-dir' },
       { id: 'builtin:remove-dir', kind: 'command' as const, title: '/remove-dir', description: 'remove an external directory from this session', body: '/remove-dir' },
     ].filter(c => slashCategory && slashCategory !== 'command' ? false : (!search || c.title.toLowerCase().includes(search) || c.description.toLowerCase().includes(search)))
@@ -388,7 +391,7 @@ export function Composer({
     // draft untouched, and dispatch the body straight to the agent. Built-in
     // commands like /compact have no `command` and fall through to be inserted,
     // since they need send()'s special-case handling on Enter.
-    if (item.kind === 'command' && onRunCommand && (item.command || item.id === 'builtin:add-dir' || item.id === 'builtin:remove-dir')) {
+    if (item.kind === 'command' && onRunCommand && (item.command || item.id === 'builtin:handoff' || item.id === 'builtin:add-dir' || item.id === 'builtin:remove-dir')) {
       const next = (before + after).trimStart()
       onChange(next)
       setSlash(null)
@@ -604,7 +607,18 @@ export function Composer({
               onKeyUp={updateMentionFromCaret}
               onClick={updateMentionFromCaret}
               onPaste={onPaste}
-              onBlur={() => setTimeout(() => { setMention(null); setSlash(null) }, 120)}
+              onFocus={() => {
+                if (inputBlurTimerRef.current !== null) window.clearTimeout(inputBlurTimerRef.current)
+                inputBlurTimerRef.current = null
+              }}
+              onBlur={() => {
+                if (inputBlurTimerRef.current !== null) window.clearTimeout(inputBlurTimerRef.current)
+                inputBlurTimerRef.current = window.setTimeout(() => {
+                  inputBlurTimerRef.current = null
+                  setMention(null)
+                  setSlash(null)
+                }, 120)
+              }}
             />
             {mention && (
               <MentionPopover
@@ -630,30 +644,54 @@ export function Composer({
           </div>
           <div className="bar">
             <div className="left-bar">
+              <div className="desktop-composer-actions">
                 <button
-                className="ibtn"
-                title="attach files"
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <Icon name="paperclip" />
-              </button>
-               <button
-                className="ibtn ibtn-prompts"
-                title={`prompts (${promptPickerShortcut ? `${promptPickerShortcut} · ` : ''}or type / to browse prompts & skills)`}
-                onClick={onOpenPrompts}
-                type="button"
-              >
-                <NotepadIcon weight="duotone" />
-              </button>
-              {branchPicker && (
-                <ComposerBranchPicker
-                  currentBranch={branchPicker.currentBranch}
-                  branches={branchPicker.branches}
-                  onCheckoutBranch={branchPicker.onCheckoutBranch}
-                  onCreateBranch={branchPicker.onCreateBranch}
-                  onRefresh={branchPicker.onRefresh}
+                  className="ibtn"
+                  title="attach files"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <Icon name="paperclip" />
+                </button>
+                <button
+                  className="ibtn ibtn-prompts"
+                  title={`prompts (${promptPickerShortcut ? `${promptPickerShortcut} · ` : ''}or type / to browse prompts & skills)`}
+                  onClick={onOpenPrompts}
+                  type="button"
+                >
+                  <NotepadIcon weight="duotone" />
+                </button>
+                {branchPicker && (
+                  <ComposerBranchPicker
+                    currentBranch={branchPicker.currentBranch}
+                    branches={branchPicker.branches}
+                    onCheckoutBranch={branchPicker.onCheckoutBranch}
+                    onCreateBranch={branchPicker.onCreateBranch}
+                    onRefresh={branchPicker.onRefresh}
+                  />
+                )}
+              </div>
+              <div className="mobile-composer-actions">
+                <MobileComposerActionMenu
+                  onAttach={() => fileInputRef.current?.click()}
+                  onOpenPrompts={onOpenPrompts}
+                  branchPicker={branchPicker}
                 />
-              )}
+                <MobileComposerModelMenu
+                  agents={agents}
+                  activeAgentId={activeAgentId}
+                  onSelectAgent={onSelectAgent}
+                  model={model}
+                  onSelectModel={onSelectModel}
+                  effort={effort}
+                  onSelectEffort={onSelectEffort}
+                  mode={mode}
+                  setMode={setMode}
+                  mcpEnabled={mcpEnabled}
+                  mcpServers={mcpServers}
+                  selectedMcpIds={selectedMcpIds}
+                  onToggleMcp={onToggleMcp}
+                />
+              </div>
               {dictationScopeId ? (
                 <ComposerDictationButton
                   scopeId={dictationScopeId}
@@ -681,9 +719,8 @@ export function Composer({
             </div>
           </div>
         </div>
-        {/* Hover the thin strip at the bottom of the composer to slide the model
-            row down; it collapses when unhovered, but stays open while a picker
-            dropdown is active. */}
+        {/* Desktop reveals this row from the lower hover strip. Mobile replaces
+            it with the selected-model button in the main toolbar. */}
         <div className={`model-row-reveal${modelPickerOpen ? ' pinned' : ''}`}>
           <div className="model-row-handle" aria-hidden />
           <div className="model-row-slide">

@@ -5,6 +5,7 @@ import { SettingsProvider } from '../hooks/useSettings'
 import { NotificationsProvider } from '../hooks/useNotifications'
 import { hydrateMessagesFromBackend } from '../stores/chat-messages-store'
 import { installCrewCodeRuntime } from './crewcode-client'
+import { installBrainAuthorizationRelay } from './brain-authorization-runtime'
 import { restoreRecoveredAssistant, type RecoveredAssistant } from './recovered-agent-history'
 import { clearClaimedWebBridgeRoutes, markClaimedWebBridgeRoutes, rememberWebBridgeRoutes, webBridgeRoutes } from './web-bridge-routes'
 import {
@@ -59,6 +60,7 @@ export function WebConnectionScreen() {
           const connectedRelay = await connectHubRelayTransport(machineId, ['workspace:read', 'workspace:write', 'terminal', 'agent'])
           if (cancelled) { connectedRelay.close(); return }
           activeRelay = connectedRelay
+          installBrainAuthorizationRelay(connectedRelay)
           clearClaimedWebBridgeRoutes()
           const refreshExecutions = async (claimDetached = false): Promise<void> => {
             try {

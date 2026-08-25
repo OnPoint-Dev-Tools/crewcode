@@ -170,6 +170,13 @@ export class AgentBridgeService {
     return entry.bridge.compact?.() ?? Promise.resolve({ ok: false, unsupported: true, error: 'provider does not support compaction' })
   }
 
+  handoff(_bridgeId: string, _sourceConversationKey: string): Promise<{ ok: boolean; error?: string }> {
+    // Browser/Brain bridge custody does not expose the desktop conversation
+    // store needed to summarize another thread. Refuse rather than implying a
+    // provider-native state migration happened.
+    return Promise.resolve({ ok: false, error: 'context handoff is unavailable in remote browser sessions' })
+  }
+
   removeFollowUp(bridgeId: string, followUpId: string): Promise<{ ok: boolean; error?: string }> {
     const entry = this.bridges.get(bridgeId)
     if (!entry) return Promise.resolve({ ok: false, error: 'bridge not found' })
@@ -245,6 +252,15 @@ export class AgentBridgeService {
     if (entry) await entry.bridge.stop().catch(() => {})
     this.bridges.delete(bridgeId)
     return { ok: true }
+  }
+
+  async stopWhere(predicate: (entry: { bridgeId: string; cwd: string; running: boolean }) => boolean): Promise<string[]> {
+    const stopped: string[] = []
+    for (const [bridgeId, entry] of [...this.bridges]) {
+      if (!predicate({ bridgeId, cwd: entry.opts.cwd, running: entry.running })) continue
+      await this.stop(bridgeId); stopped.push(bridgeId)
+    }
+    return stopped
   }
 
   async stopAll(): Promise<void> {

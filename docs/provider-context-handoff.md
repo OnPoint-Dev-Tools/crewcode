@@ -1,0 +1,9 @@
+# Provider context handoff
+
+CrewCode exposes context handoff from the Solo Chat header and through `/handoff`.
+
+The handoff card separates destinations into **New chat** and **Used chats** tabs. Opening **Used chats** loads the other chat sessions in the current workspace. New destinations allow provider, model, and reasoning effort selection. Existing destinations keep their already-selected provider, model, effort, and visible transcript.
+
+A handoff is not provider-native session migration. CrewCode starts a disposable session using the destination provider, generates a bounded summary of the source conversation, and appends that packet to the destination's local replay history. The destination provider's native resume id is cleared so its next prompt starts fresh and receives both its prior local history and the imported handoff packet. The destination transcript displays a progress meter and the generated handoff summary.
+
+If summarization fails, the destination meter is marked failed and CrewCode does not report success. Remote browser/Brain handoff currently refuses explicitly because that runtime does not own the desktop conversation store; `/compact` and normal prompting remain unchanged there.

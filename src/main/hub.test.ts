@@ -1,12 +1,19 @@
 import { resolve } from 'path'
 import { describe, expect, it } from 'vitest'
-import { normalizeHubOrigin, parseHubOptions, terminalLink } from './hub'
+import { mobileQrTarget, normalizeHubOrigin, parseHubOptions, terminalLink } from './hub'
 
 describe('Hub CLI options', () => {
   it('prints a clickable terminal link with a plain-text fallback', () => {
     expect(terminalLink('Open setup', 'http://localhost:3774/#bootstrap=secret', true)).toBe('\u001B]8;;http://localhost:3774/#bootstrap=secret\u0007Open setup\u001B]8;;\u0007')
     expect(terminalLink('Open setup', 'http://localhost:3774/#bootstrap=secret', false)).toBe('http://localhost:3774/#bootstrap=secret')
   })
+  it('uses the one-time bootstrap URL only for initial-owner QR setup', () => {
+    const origin = 'https://cortex.tail.ts.net'
+    const bootstrap = `${origin}/#bootstrap=one-time-secret`
+    expect(mobileQrTarget(origin, bootstrap)).toEqual({ url: bootstrap, containsCredential: true })
+    expect(mobileQrTarget(origin)).toEqual({ url: origin, containsCredential: false })
+  })
+
   it('uses safe loopback defaults', () => {
     expect(parseHubOptions([], '/tmp')).toMatchObject({ host: '127.0.0.1', port: 3774 })
   })
@@ -17,7 +24,16 @@ describe('Hub CLI options', () => {
       port: 4444,
       dataDir: resolve('/tmp', 'state'),
       publicOrigin: 'https://crewcode.example',
+      mobile: false,
+      tailscale: false,
+      tailscaleReplace: false,
     })
+  })
+
+  it('supports Tailscale and generic HTTPS mobile modes', () => {
+    expect(parseHubOptions(['mobile'], '/tmp')).toMatchObject({ mobile: true, tailscale: true, port: 3774 })
+    expect(parseHubOptions(['mobile', '--public-origin', 'https://crewcode.example'], '/tmp')).toMatchObject({ mobile: true, tailscale: false, publicOrigin: 'https://crewcode.example' })
+    expect(() => parseHubOptions(['mobile', '--tailscale', '--public-origin', 'https://crewcode.example'], '/tmp')).toThrow('either --tailscale or --public-origin')
   })
 
   it('requires a final public origin for wildcard binds', () => {

@@ -38,7 +38,7 @@ import { chatSessionOwnerWorkspaceId } from './hooks/chat-session-tab-owner'
 import type { Prompt as PromptDef, Skill as SkillDef } from './types/prompts'
 import { Icon }             from './components/ui/Icon'
 import { LoadingScreen }    from './components/ui/LoadingScreen'
-import { MobileShell, useMobileShell, type MobileTab } from './components/ui/MobileShell'
+import { MobileShell, useMobileShell } from './components/ui/MobileShell'
 import type { AgentActivityState } from './components/ui/AgentActivityIndicator'
 import { Onboarding }       from './components/onboarding/Onboarding'
 import { NotificationBar }  from './components/ui/NotificationBar'
@@ -78,6 +78,7 @@ import { knownModelIds } from './hooks/useProviderModels'
 import { dockUsageProviderId } from './hooks/dock-usage-provider'
 import { ChatNotifications } from './components/thread/ChatNotifications'
 import { useGlobalShortcuts } from './hooks/useGlobalShortcuts'
+import { useMobileWindowTabsAutoHide } from './hooks/useMobileWindowTabsAutoHide'
 import { LOCAL_SHORTCUTS, effectiveChord, matchesChord, type ActionId } from './shortcuts'
 import { useTerminalSessions } from './hooks/useTerminalSessions'
 import { useTerminalUnreadSync, useClearPane } from './stores/terminal-unread-store'
@@ -130,6 +131,7 @@ const GIT_WIDTH_STORAGE = 'crewcode:gitWidthByTab:v1'
 const CHAT_UI_STORAGE = 'crewcode:chatUiByTab:v1'
 const WORKBENCH_PANES_STORAGE = 'crewcode:workbenchPanesByTab:v1'
 const CHANGES_DRAWER_STORAGE = 'crewcode:changesDrawerOpenBySurface:v1'
+const MOBILE_DRAWER_SIDE_STORAGE = 'crewcode:mobileDrawerSide:v1'
 
 function readLastActiveWorkspaceId(): string {
   try { return localStorage.getItem(ACTIVE_WORKSPACE_STORAGE) ?? '' } catch { return '' }
@@ -328,6 +330,11 @@ export default function App() {
   }, [setGitWidthByTab])
   // ── Mobile shell ──────────────────────────────────────────────────────────
   const mobile = useMobileShell()
+  const [storedMobileDrawerSide, setMobileDrawerSide] = useLocalStorageJsonState<'left' | 'right'>(MOBILE_DRAWER_SIDE_STORAGE, 'left')
+  const mobileDrawerSide = storedMobileDrawerSide === 'right' ? 'right' : 'left'
+  // A desktop bottom-drawer preference must never turn into a bottom sheet on
+  // phones. Mobile keeps its own side preference so desktop layout is untouched.
+  const effectiveDrawerPosition = mobile.isMobile ? mobileDrawerSide : tweaks.drawerPosition
 
   // ── Tabs per workspace ───────────────────────────────────────────────────
   const {
@@ -497,6 +504,7 @@ export default function App() {
     model:   '',
     mode:    settings.defaultMode as ModeLevel,
     effort:  'medium',
+    initialBranch: settings.defaultBranchByWorkspace[activeWs] ?? '',
   })
   useEffect(() => {
     if (activeTab?.kind === 'chat') chatSessions.ensureTab(activeTabId, activeWorkspace.name)
@@ -584,6 +592,52 @@ export default function App() {
     }
     return byTab
   }, [activeTab?.kind, activeTabId, allTabIds, chatSessions.sessionsByTab, ws.workspaces])
+
+  const provisioningBranchSessionsRef = useRef(new Set<string>())
+  useEffect(() => {
+    for (const list of Object.values(chatSessions.sessionsByTab) as Session[][]) {
+      for (const session of list) {
+        const branch = session.initialBranch?.trim()
+        if (!branch || session.origin === 'delegated' || provisioningBranchSessionsRef.current.has(session.id)) continue
+        const workspaceId = workspaceByChatTabId[session.tabId]
+        const workspace = ws.workspaces.find(candidate => candidate.id === workspaceId)
+        if (!workspace || workspace.kind !== 'repo') continue
+
+        provisioningBranchSessionsRef.current.add(session.id)
+        void (async () => {
+          try {
+            const selectionKey = worktreeSelectionKey(session.tabId, 'chat', session.id)
+            if (branch === workspace.branch) {
+              setSurfaceWorktreeIds(prev => ({ ...prev, [selectionKey]: null }))
+            } else {
+              let worktree = workspace.worktrees.find(candidate => candidate.branch === branch)
+              if (!worktree) {
+                const beforeCreate = await window.electronAPI?.worktreeList(workspace.path)
+                worktree = beforeCreate?.worktrees?.find(candidate => candidate.branch === branch)
+              }
+              if (!worktree) {
+                const created = await window.electronAPI?.worktreeCreate(workspace.path, branch)
+                if (!created?.path || created.error) throw new Error(created?.error ?? `Unable to create a worktree for ${branch}`)
+                const listed = await window.electronAPI?.worktreeList(workspace.path)
+                worktree = listed?.worktrees?.find(candidate => candidate.path === created.path || candidate.branch === branch)
+                if (!worktree) throw new Error(`Created ${branch}, but could not detect its worktree`)
+                await ws.refreshWorktrees(workspace.id)
+              }
+              setSurfaceWorktreeIds(prev => ({ ...prev, [selectionKey]: worktree!.id }))
+            }
+            // This field is a one-shot creation request. Clearing it protects an
+            // existing chat from being moved again after the user switches it.
+            chatSessions.update(session.tabId, session.id, { initialBranch: undefined })
+          } catch (error) {
+            chatSessions.update(session.tabId, session.id, { initialBranch: undefined })
+            show({ type: 'error', message: `default branch: ${(error as Error).message}`, duration: 5000 })
+          } finally {
+            provisioningBranchSessionsRef.current.delete(session.id)
+          }
+        })()
+      }
+    }
+  }, [chatSessions, setSurfaceWorktreeIds, show, workspaceByChatTabId, ws])
 
   const validChatSessionTabIds = useMemo(() => new Set(Object.keys(workspaceByChatTabId)), [workspaceByChatTabId])
   const validRuntimeTabIds = useMemo(() => {
@@ -2179,6 +2233,12 @@ export default function App() {
   // <MissionDataProvider/> below so its subscription stays off App. The Mission
   // tab and menulet read it through context via MissionControlHost/MenuletHost.
   const [menuletOpen, setMenuletOpen] = useState(false)
+  const [systemMonitorOpen, setSystemMonitorOpen] = useState(false)
+  const [windowTabsMenuOpen, setWindowTabsMenuOpen] = useState(false)
+  const windowTabsHidden = useMobileWindowTabsAutoHide({
+    enabled: mobile.isMobile,
+    locked: windowTabsMenuOpen || drawerOpen || menuletOpen || systemMonitorOpen,
+  })
   const openMissionControl = useCallback((): void => {
     setMenuletOpen(false)
     handleNewTab('mission')
@@ -2301,7 +2361,7 @@ export default function App() {
     // Tab-specific PTY panes
     const tabPanes = pty.panes.filter(p => p.tabId === tabId)
 
-    if (tabKind === 'settings') return <SettingsScreen />
+    if (tabKind === 'settings') return <SettingsScreen activeWorkspace={activeWorkspace} />
     if (tabKind === 'plugins') return <PluginsPage workspaces={ws.workspaces} activeWorkspaceId={activeWs} pluginWorkspaceEnabled={settings.pluginWorkspaceEnabled} setSetting={setSetting} />
     if (tabKind === 'mission') {
       return (
@@ -2803,6 +2863,14 @@ export default function App() {
       case 'start-canvas':     startCanvasFromAnywhere(); return
       case 'updates':          window.electronAPI?.updaterCheck?.(); return
       case 'docs':             window.electronAPI?.openExternal?.('https://crewcode-docs.logixhub.icu'); return
+      case 'toggle-menulet':
+        setSystemMonitorOpen(false)
+        setMenuletOpen(open => !open)
+        return
+      case 'toggle-system-monitor':
+        setMenuletOpen(false)
+        setSystemMonitorOpen(open => !open)
+        return
     }
   }, [activeWs, tabs, setActiveTabId, handleNewTab, setPaletteOpen, setTweak, tweaks.showTerminal, startCanvasFromAnywhere, startCrewFromAnywhere])
 
@@ -2812,7 +2880,8 @@ export default function App() {
       setOpen={setDrawerOpen}
       height={tweaks.drawerHeight}
       width={tweaks.drawerWidth}
-      position={tweaks.drawerPosition}
+      position={effectiveDrawerPosition}
+      mobileOverlay={mobile.isMobile}
       active={activeWs}
       setActive={handleWsSelect}
       density={tweaks.density}
@@ -3258,8 +3327,7 @@ export default function App() {
       isBridgeRunning={bridges.isBridgeRunning}
     >
       <MobileShell
-        activeTab={mobile.activeTab}
-        onTabChange={mobile.onTabChange}
+        isMobile={mobile.isMobile}
         sheets={{
           workspaces: {
             open: mobile.sheets.workspaces?.open ?? false,
@@ -3297,6 +3365,32 @@ export default function App() {
               onFinish={() => setSetting('onboardingCompleted', true)}
             />
           )}
+
+        <div className={`window-tabs${windowTabsHidden ? ' mobile-tabs-hidden' : ''}`}>
+          <WindowTabs
+            tabs={displayTabs}
+            activeId={activeTabId}
+            onActivate={setActiveTabId}
+            onClose={handleCloseTab}
+            crewTabs={crewTabs}
+            splitGroups={splitGroups}
+            splitTabIds={splitTabIds}
+            splitPrimaryTabId={splitPrimaryTabId}
+            onSplit={setSplitTab}
+            onCloseSplitGroup={closeSplitGroup}
+            onPin={pinTab}
+            onUnpin={unpinTab}
+            onRename={handleRenameWindowTab}
+            onColor={setTabColor}
+            onReorder={reorderTab}
+            activeKind={activeTab?.kind}
+            appMenuFootStatus={`${activeWorkspace?.name || 'no workspace'} · ${sessions.length} session${sessions.length === 1 ? '' : 's'}`}
+            onAppMenuAction={handleAppMenuAction}
+            pluginMenuItems={pluginAddMenuItems}
+            onPluginMenuItem={(item) => runPluginActionTarget(item.target, { source: 'plugin-menu' })}
+            onNewTabMenuOpenChange={setWindowTabsMenuOpen}
+          />
+        </div>
         <NotificationBar
           onNavigateToChat={navigateToChatScope}
           resolveChatSource={voiceNotificationSource}
@@ -3333,6 +3427,8 @@ export default function App() {
         />
 
         <SystemMonitorMount
+          open={systemMonitorOpen}
+          onOpenChange={setSystemMonitorOpen}
           terminals={sysmonTerminals}
           workspaces={sysmonWorkspaces}
           onKillTerminal={killTerminalSession}
@@ -3340,8 +3436,8 @@ export default function App() {
           onOpenDaemon={openSysmonDaemon}
         />
 
-        <div className={`app-region drawer-${tweaks.drawerPosition}${drawerOpen ? ' drawer-open' : ''}`}>
-        {tweaks.drawerPosition === 'left' && workspacesPanel}
+        <div className={`app-region drawer-${effectiveDrawerPosition}${drawerOpen ? ' drawer-open' : ''}`}>
+        {effectiveDrawerPosition === 'left' && workspacesPanel}
         <div className="app-main-row">
           <div className="app-body">
           {splitVisible ? (
@@ -3403,7 +3499,7 @@ export default function App() {
           </div>
           {pluginSidebar}
         </div>
-        {tweaks.drawerPosition === 'right' && workspacesPanel}
+        {effectiveDrawerPosition === 'right' && workspacesPanel}
       </div>
 
       <WorkspaceDock
@@ -3425,7 +3521,7 @@ export default function App() {
         weeklyResetDescription={weeklyResetDescription}
       />
 
-      {tweaks.drawerPosition === 'bottom' && workspacesPanel}
+      {effectiveDrawerPosition === 'bottom' && workspacesPanel}
 
       <AddProjectModal
         open={addOpen}
@@ -3536,8 +3632,16 @@ export default function App() {
         <TweaksPanel title="Tweaks">
           <TweakSection label="Layout" />
           <TweakRadio   label="Density"  value={tweaks.density}  options={['compact','regular']} onChange={v => setTweak('density',  v as TweakConfig['density'])} />
-          <TweakRadio   label="Workspaces dock" value={tweaks.drawerPosition} options={['bottom','left','right']} onChange={v => setTweak('drawerPosition', v as TweakConfig['drawerPosition'])} />
-          {tweaks.drawerPosition === 'bottom'
+          <TweakRadio
+            label="Workspaces dock"
+            value={effectiveDrawerPosition}
+            options={mobile.isMobile ? ['left', 'right'] : ['bottom', 'left', 'right']}
+            onChange={v => {
+              if (mobile.isMobile) setMobileDrawerSide(v === 'right' ? 'right' : 'left')
+              else setTweak('drawerPosition', v as TweakConfig['drawerPosition'])
+            }}
+          />
+          {effectiveDrawerPosition === 'bottom'
             ? <TweakSlider label="Drawer height" value={tweaks.drawerHeight} min={220} max={560} step={20} unit="px" onChange={v => setTweak('drawerHeight', v)} />
             : <TweakSlider label="Sidebar width" value={tweaks.drawerWidth} min={220} max={480} step={20} unit="px" onChange={v => setTweak('drawerWidth', v)} />}
           <TweakSection label="Quick actions" />

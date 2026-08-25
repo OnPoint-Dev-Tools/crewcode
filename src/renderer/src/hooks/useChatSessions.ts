@@ -25,6 +25,8 @@ export interface SessionDefaults {
   model:   string
   mode:    ModeLevel
   effort:  EffortLevel
+  /** Branch to provision/select when this new chat session is first created. */
+  initialBranch?: string
 }
 
 /** What the delegation API supplies when an agent spawns a thread. */
@@ -77,6 +79,7 @@ function freshSession(tabId: string, n: number, d: SessionDefaults, projectName?
     mcpServerIds: [],
     enabledSkillIds: [],
     modePromptsEnabled: true,
+    initialBranch: d.initialBranch?.trim() || undefined,
   }
 }
 
@@ -270,6 +273,8 @@ export function useChatSessions(defaults: SessionDefaults) {
       agentId: spawn.agentId ?? defaultsRef.current.agentId,
       model:   spawn.model ?? defaultsRef.current.model,
       mode:    normalizeModeLevel(spawn.mode),
+      // Delegated threads manage their own base/worktree contract.
+      initialBranch: undefined,
       origin:  'delegated',
       delegatedBy: spawn.parentSessionId,
       delegatedAt: Date.now(),
@@ -290,7 +295,7 @@ export function useChatSessions(defaults: SessionDefaults) {
     setActiveByTab(prev => ({ ...prev, [tabId]: sessionId }))
   }, [])
 
-  const update = useCallback((tabId: string, sessionId: string, patch: Partial<Pick<Session, 'agentId' | 'model' | 'mode' | 'effort' | 'label' | 'mcpServerIds' | 'enabledSkillIds' | 'modePromptsEnabled' | 'delegationEnabled' | 'delegationClosedAt' | 'pinned' | 'externalDirectories'>>) => {
+  const update = useCallback((tabId: string, sessionId: string, patch: Partial<Pick<Session, 'agentId' | 'model' | 'mode' | 'effort' | 'label' | 'mcpServerIds' | 'enabledSkillIds' | 'modePromptsEnabled' | 'delegationEnabled' | 'delegationClosedAt' | 'pinned' | 'externalDirectories' | 'initialBranch'>>) => {
     if (!tabId) return
     setSessionsByTab(prev => {
       const list = prev[tabId] ?? []

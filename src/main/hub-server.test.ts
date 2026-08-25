@@ -25,7 +25,7 @@ async function server(): Promise<RunningHubServer> {
   return running
 }
 
-async function authenticatedServer(now: () => number): Promise<{ running: RunningHubServer; cookie: string; csrf: string }> {
+async function authenticatedServer(now: () => number, publicOrigin?: string): Promise<{ running: RunningHubServer; cookie: string; csrf: string }> {
   const directory = temporaryDirectory()
   const store = new HubStore(join(directory, 'hub.sqlite'))
   const owner = store.createOwnerWithCredential({
@@ -37,9 +37,10 @@ async function authenticatedServer(now: () => number): Promise<{ running: Runnin
   })
   const session = store.createSession(owner.id, now(), 10 * 60_000)
   store.close()
-  const running = await startHubServer({ dataDir: directory, port: 0, now })
+  const running = await startHubServer({ dataDir: directory, port: 0, now, publicOrigin })
   cleanups.push(() => running.close())
-  return { running, cookie: `crewcode_hub_session=${encodeURIComponent(session.token)}`, csrf: session.csrf }
+  const cookieName = publicOrigin?.startsWith('https:') ? '__Host-crewcode_hub_session' : 'crewcode_hub_session'
+  return { running, cookie: `${cookieName}=${encodeURIComponent(session.token)}`, csrf: session.csrf }
 }
 
 describe('Hub enrollment credentials', () => {
@@ -147,6 +148,53 @@ describe('Hub HTTP security boundary', () => {
     expect(internal.status).toBe(403)
     const configured = await fetch(`${running.url}/api/v1/hub/status`, { headers: { origin: 'https://crewcode.example' } })
     expect(configured.status).toBe(200)
+  })
+
+  it('serves the stable HTTPS mobile URL as an authenticated QR without credentials', async () => {
+    const { running, cookie } = await authenticatedServer(() => 10_000, 'https://crewcode.example')
+    const unauthorized = await fetch(`${running.url}/api/v1/hub/mobile-qr.svg`, { headers: { origin: 'https://crewcode.example' } })
+    expect(unauthorized.status).toBe(401)
+    const response = await fetch(`${running.url}/api/v1/hub/mobile-qr.svg`, { headers: { origin: 'https://crewcode.example', cookie } })
+    const svg = await response.text()
+    expect(response.status).toBe(200)
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(response.headers.get('content-type')).toContain('image/svg+xml')
+    expect(svg).toContain('<svg')
+    expect(svg).not.toContain(cookie)
+  })
+
+  it('completes phone-approved enrollment without exposing the machine credential to the phone', async () => {
+    const { running, cookie, csrf } = await authenticatedServer(() => 10_000)
+    const publicKey = generateKeyPairSync('ed25519').publicKey.export({ type: 'spki', format: 'der' }).toString('base64url')
+    const requestedResponse = await fetch(`${running.url}/api/v1/hub/device-enrollments/request`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ publicKey, name: 'phone-approved-pc', platform: 'linux', version: 'test' }),
+    })
+    expect(requestedResponse.status).toBe(201)
+    const requested = await requestedResponse.json() as { requestToken: string; requestId: string; userCode: string }
+    const pendingPoll = await fetch(`${running.url}/api/v1/hub/device-enrollments/poll`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ requestToken: requested.requestToken }),
+    })
+    expect(pendingPoll.status).toBe(202)
+
+    const listedResponse = await fetch(`${running.url}/api/v1/hub/device-enrollments`, { headers: { cookie } })
+    const listedText = await listedResponse.text()
+    expect(JSON.parse(listedText)).toMatchObject({ requests: [{ id: requested.requestId, userCode: requested.userCode, name: 'phone-approved-pc', publicKeyFingerprint: expect.any(String) }] })
+    expect(listedText).not.toContain(requested.requestToken)
+    const approvedResponse = await fetch(`${running.url}/api/v1/hub/device-enrollments/${requested.requestId}/approve`, {
+      method: 'POST', headers: { cookie, 'x-crewcode-csrf': csrf, 'content-type': 'application/json' }, body: '{}',
+    })
+    const approvedText = await approvedResponse.text()
+    expect(approvedResponse.status).toBe(201)
+    expect(approvedText).not.toContain('token')
+
+    const completed = await (await fetch(`${running.url}/api/v1/hub/device-enrollments/poll`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ requestToken: requested.requestToken }),
+    })).json() as { status: string; machineId: string; token: string }
+    expect(completed).toMatchObject({ status: 'approved', machineId: expect.any(String), token: expect.any(String) })
+    expect((await fetch(`${running.url}/api/v1/hub/device-enrollments/poll`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ requestToken: requested.requestToken }),
+    })).status).toBe(401)
   })
 
   it('enrolls, tracks, expires, and revokes an authenticated outbound machine', async () => {

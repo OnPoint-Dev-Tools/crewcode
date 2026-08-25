@@ -23,6 +23,8 @@ export type AppMenuAction =
   | { kind: 'start-canvas' }
   | { kind: 'docs' }
   | { kind: 'updates' }
+  | { kind: 'toggle-menulet' }
+  | { kind: 'toggle-system-monitor' }
 
 interface AppMenuItem {
   id:        string

@@ -351,6 +351,7 @@ export function useBridgeRegistry({ setMessagesForTab }: UseBridgeRegistryOpts) 
     ensureBridge,
     prompt: bridge.prompt,
     compact: bridge.compact,
+    handoff: bridge.handoff,
     abort:  bridge.abort,
     getBridgeId,
     isBridgeRunning,

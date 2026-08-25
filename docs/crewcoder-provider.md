@@ -77,7 +77,9 @@ failure.
 CrewCoder ACP respects CrewCoder's persisted `autoCompact` setting. CrewCode does not force
 compaction or retry context-window failures. Automatic and provider-neutral safety compaction are
 reported live through `_crewcoder/compaction_update`, allowing CrewCode to show the compaction meter
-while CrewCoder summarizes in the background. When automatic compaction is off, the user explicitly
+while CrewCoder summarizes in the background. If the ACP child exits, CrewCode removes that dead
+bridge registration; the next composer submission uses normal missing-bridge recovery rather than
+attempting to write to closed stdin and surfacing `crewcoder acp: process not writable`. When automatic compaction is off, the user explicitly
 runs `/compact` before continuing; this policy does not affect Pi or other providers.
 
 A prompt has a ten-minute **inactivity** watchdog rather than a wall-clock turn

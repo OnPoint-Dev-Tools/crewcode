@@ -168,6 +168,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   bridgeCompact: (bridgeId: string) =>
     ipcRenderer.invoke('bridge:compact', { bridgeId }),
 
+  bridgeHandoff: (bridgeId: string, sourceConversationKey: string, options: {
+    fromProvider?: string
+    toProvider?: string
+    model?: string
+    mode?: 'ask' | 'plan' | 'build' | 'full'
+    workspace?: { name?: string; path?: string; branch?: string }
+  }) => ipcRenderer.invoke('bridge:handoff', { bridgeId, sourceConversationKey, options }),
+
   // Cancel a locally queued follow-up (claude) before the bridge sends it.
   bridgeRemoveFollowUp: (bridgeId: string, followUpId: string) =>
     ipcRenderer.invoke('bridge:removeFollowUp', { bridgeId, followUpId }),

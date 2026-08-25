@@ -59,9 +59,33 @@ import {
   type VoiceTranscriptionRequest,
 } from '../shared/voice-types'
 import { localVoiceService } from './local-voice-service'
+import { packagedHeadlessArgs } from './packaged-cli-dispatch'
 
 const { app, BrowserWindow, clipboard, ipcMain, nativeImage, protocol, session, shell } = electron
 import { spawn } from 'child_process'
+
+// The packaged AppImage executable is also named `crewcode`. Dispatch recognized
+// server commands in the main process with all window initialization disabled:
+// `crewcode` remains desktop, while `crewcode hub|serve|brain|enroll` is headless.
+// Running here (rather than ELECTRON_RUN_AS_NODE) preserves compatibility for
+// shared backend modules that intentionally import Electron's app-path adapter.
+const packagedCliArgs = app.isPackaged ? packagedHeadlessArgs(process.argv) : null
+if (packagedCliArgs) {
+  const [command, ...args] = packagedCliArgs
+  const run = command === 'hub'
+    ? import('./hub').then(module => module.runHub(args))
+    : command === 'serve'
+      ? import('./headless').then(module => module.runHeadless(args))
+      : import('./hub-machine-enrollment').then(module => module.runBrainCommand(command as 'brain' | 'enroll', args))
+  void run.then(() => {
+    // Long-running Hub/direct servers return after binding and remain alive on
+    // their sockets. Help and enrollment are finite commands and should exit.
+    if (command === 'enroll' || args.includes('--help') || args.includes('-h')) app.exit(0)
+  }).catch(error => {
+    console.error((error as Error).message)
+    app.exit(1)
+  })
+}
 
 const isDev = process.env['NODE_ENV'] === 'development'
 
@@ -159,13 +183,13 @@ async function loadReactDevtools(): Promise<void> {
   console.warn('[devtools] React DevTools auto-install is disabled on Electron 42; use CREWCODE_REACT_DEVTOOLS=1 only after migrating to session.extensions.* APIs.')
 }
 
-if (isWaylandSession()) {
+if (!packagedCliArgs && isWaylandSession()) {
   // Chromium's Vulkan surface path can be unstable on Wayland/NVIDIA; keep
   // Wayland enabled while avoiding that compatibility path.
   app.commandLine.appendSwitch('disable-vulkan-surface')
 }
 
-app.whenReady().then(async () => {
+if (!packagedCliArgs) app.whenReady().then(async () => {
   registerPtyIpc()
   registerWorkspaceIpc()
   registerFsIpc()

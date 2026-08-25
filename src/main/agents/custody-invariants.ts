@@ -118,7 +118,7 @@ export function decideModeChange(current: ModeLevel | undefined, next: ModeLevel
  * inspection (status, journal reads) is deliberately not in this set — a halt
  * must never hide the evidence it was raised to preserve.
  */
-export type PrivilegedAction = 'prompt' | 'authorize' | 'respond' | 'compact' | 'setMode' | 'removeFollowUp'
+export type PrivilegedAction = 'prompt' | 'authorize' | 'respond' | 'compact' | 'handoff' | 'setMode' | 'removeFollowUp'
 
 export function refusalMessage(action: PrivilegedAction, halt: CustodyViolation): string {
   return `${action} refused: ${CUSTODY_INVARIANTS[halt.invariant].title.toLowerCase()} — ${halt.detail}. Reauthorize this thread to continue.`

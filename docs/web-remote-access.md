@@ -318,12 +318,35 @@ npx crewcode serve --host 127.0.0.1
 npx crewcode serve --host 0.0.0.0 --public-origin https://your-hub.example
 ```
 
-Implemented self-hosted Hub command:
+Implemented self-hosted Hub and mobile QR commands:
 
 ```bash
 crewcode hub
+crewcode hub mobile --tailscale
+crewcode hub mobile --public-origin https://your-hub.example
 crewcode hub --host 0.0.0.0 --public-origin https://your-hub.example
 ```
+
+`hub mobile --tailscale` requires a connected Tailscale client, MagicDNS, and HTTPS
+certificates enabled for the tailnet. It derives the exact `https://<node>.<tailnet>`
+origin, refuses to overwrite an existing Serve configuration unless
+`--tailscale-replace` is explicitly supplied, proxies HTTPS to the loopback Hub,
+and prints a terminal QR. On first startup, a distinctly labeled setup QR contains
+the same short-lived, single-use 10-minute bootstrap fragment as the printed owner
+setup link; this is necessary to create the first passkey and must not be shared.
+After owner creation, terminal and authenticated-dashboard QR payloads contain only
+the stable Hub URL—no session, enrollment credential, or Brain ticket. The phone
+must belong to the tailnet and still signs in normally.
+
+Users without Tailscale provide their own trusted HTTPS reverse proxy/domain with
+`hub mobile --public-origin`. The proxy must forward HTTP and WebSocket upgrades to
+the loopback Hub. A QR code is address transfer, not a tunnel; plain LAN HTTP and
+self-signed certificates are intentionally not treated as safe iPhone deployment.
+
+Passkeys are bound to the exact hostname. Changing an already-configured Hub from
+`localhost` or another domain to a Tailscale/domain origin requires registering the
+owner credential for that final origin (for an early test install, use a separate Hub
+data directory and re-enroll Brain). Once selected, keep the HTTPS origin stable.
 
 The Hub defaults to `127.0.0.1:3774`, stores state in `~/.crewcode/hub/hub.sqlite`,
 and prints a ten-minute single-use owner setup URL on first launch. Interactive
@@ -336,12 +359,23 @@ require an explicit final public origin; non-loopback origins require HTTPS beca
 the origin is cryptographically bound to passkeys. Put a TLS reverse proxy or
 Tailscale HTTPS in front of the HTTP listener for network deployment.
 
-After signing in, select **Enroll a machine**. The Hub issues a memory-only,
-ten-minute, single-use token. On that machine run the displayed command and paste
-the token at the hidden prompt:
+After signing in on the phone, run this on the machine:
 
 ```bash
 crewcode enroll --hub https://your-hub.example
+```
+
+The PC generates its Ed25519 identity locally, prints a short `XXXX-XXXX` comparison
+code and public-key fingerprint, and polls with a separate 256-bit private request
+secret. The authenticated phone dashboard automatically shows the pending machine.
+Verify the code/fingerprint, then tap **Approve** or **Reject**. The short code is
+identification only and cannot retrieve a credential; approval returns the one-time
+machine bearer credential exclusively to the polling PC. Requests expire after ten
+minutes, are memory-only, rate/bound limited, and disappear on Hub restart. The
+legacy `--token` path remains for controlled automation but is no longer the default.
+Then start the relay:
+
+```bash
 crewcode brain
 ```
 
@@ -367,9 +401,13 @@ crewcode brain \
   --allow-scope agent
 ```
 
-Hub sign-in and ticket scope requests cannot widen these grants. Every RPC method is
-classified again at the Brain and filesystem/PTY/agent operations retain registered-
-workspace enforcement. The enrolled Ed25519 identity signs each ephemeral P-256
+The first Brain start seeds an owner-only persisted policy from these flags. After
+that, the web Settings → Brain Access section manages Brain-local roots and scopes
+through the E2EE tunnel without restarting Brain. Reductions apply immediately and
+stop affected agents/terminals; additions renew the encrypted tunnel with a fresh
+ticket. Hub sign-in and ticket scope requests cannot widen these grants. Every RPC
+method is classified again at the Brain and filesystem/PTY/agent operations retain
+live workspace enforcement. The enrolled Ed25519 identity signs each ephemeral P-256
 handshake; HKDF-derived AES-256-GCM keys encrypt ordered application frames so the Hub
 routes ciphertext rather than source, terminal, prompt, or response content.
 

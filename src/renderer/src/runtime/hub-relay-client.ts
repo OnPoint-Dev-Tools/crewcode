@@ -83,7 +83,7 @@ export type HubRelayConnectionStatus =
 export interface ManagedHubRelayTransport {
   transport: WebClientTransport
   grantedScopes: BrainAccessScope[]
-  reconnect(): Promise<void>
+  reconnect(options?: { force?: boolean }): Promise<void>
   onStatus(listener: (status: HubRelayConnectionStatus) => void): () => void
   close(): void
 }
@@ -282,9 +282,13 @@ export async function connectHubRelayTransport(
       })
     })
   }
-  const reconnect = async (): Promise<void> => {
+  const reconnect = async (options: { force?: boolean } = {}): Promise<void> => {
     if (stopped) throw new WebRpcError('Hub relay transport is closed', 'UNAUTHENTICATED')
-    if (active) return
+    if (active && !options.force) return
+    if (active && options.force) {
+      const previous = active
+      activeEventDisposer?.(); activeEventDisposer = null; active = null; previous.close()
+    }
     if (reconnecting) return reconnecting
     emitStatus({ state: 'connecting' })
     reconnecting = open().then(connection => {

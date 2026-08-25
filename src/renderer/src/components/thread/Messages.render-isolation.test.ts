@@ -25,6 +25,43 @@ import { Messages } from './Messages'
 import type { Message, ToolCallMessage } from '../../types'
 
 describe('Messages render isolation', () => {
+  it('rerenders a consolidated final-response work log when its tool source changes', () => {
+    counters.workLogRenders = 0
+    const tool: ToolCallMessage = {
+      kind: 'toolcall',
+      time: '7:03 PM',
+      turnId: 'turn-final',
+      toolCallId: 'tool-final',
+      toolName: 'bash',
+      args: { command: 'npm test' },
+      status: 'running',
+    }
+    const response: Message = {
+      kind: 'agent',
+      time: '7:03 PM',
+      turnId: 'turn-final',
+      blocks: [],
+      text: 'Done',
+      chunks: ['Done'],
+      streaming: false,
+    }
+
+    let renderer!: TestRenderer.ReactTestRenderer
+    TestRenderer.act(() => {
+      renderer = TestRenderer.create(createElement(Messages, { messages: [tool, response] }))
+    })
+    const initialRenders = counters.workLogRenders
+
+    TestRenderer.act(() => {
+      renderer.update(createElement(Messages, {
+        messages: [{ ...tool, status: 'completed', result: 'passed' }, response],
+      }))
+    })
+
+    expect(counters.workLogRenders).toBeGreaterThan(initialRenders)
+    TestRenderer.act(() => renderer.unmount())
+  })
+
   it('does not rerender a work log when only same-turn thinking changes', () => {
     counters.workLogRenders = 0
     const tool: ToolCallMessage = {

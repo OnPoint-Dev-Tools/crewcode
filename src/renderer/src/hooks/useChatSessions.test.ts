@@ -133,6 +133,33 @@ describe('chat session skill isolation', () => {
   })
 })
 
+describe('new chat default branch', () => {
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  it('captures the current default branch only on newly created sessions', () => {
+    const data = new Map<string, string>()
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => data.get(key) ?? null,
+      setItem: (key: string, value: string) => { data.set(key, value) },
+    })
+    let initialBranch = 'dev'
+    const hook = renderHook(() => useChatSessions({
+      agentId: 'codex', model: '', mode: 'build', effort: 'medium', initialBranch,
+    }), undefined)
+
+    act(() => { hook.result.current.ensureTab('chat-a', 'Project') })
+    expect(hook.result.current.getActiveSession('chat-a')?.initialBranch).toBe('dev')
+
+    initialBranch = 'release'
+    hook.rerender(undefined)
+    act(() => { hook.result.current.add('chat-a', 'Second') })
+    const sessions = hook.result.current.getSessions('chat-a')
+    expect(sessions[0]?.initialBranch).toBe('dev')
+    expect(sessions[1]?.initialBranch).toBe('release')
+    hook.unmount()
+  })
+})
+
 describe('chat session pinning', () => {
   afterEach(() => {
     vi.unstubAllGlobals()

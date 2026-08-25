@@ -989,6 +989,22 @@ body.light .menulet-trigger:hover { background: rgba(0,0,0,0.08); }
 
 /* Responsive — collapse the side feed below 1200px.
    At narrow widths we stack: main on top (scrolls), feed below with a height cap. */
+@media (max-width: 768px) {
+  .menulet-trigger { display: none; }
+  .menulet {
+    top: 48px;
+    left: 8px;
+    right: 8px;
+    width: auto;
+    max-height: calc(100dvh - 100px - env(safe-area-inset-bottom));
+    border-radius: 12px;
+  }
+  .menulet::before { display: none; }
+  .menulet-row .actions { display: flex; }
+  .menulet-row .right-meta { display: none; }
+  .menulet-block-reply input { font-size: 16px; }
+}
+
 @media (max-width: 1200px) {
   .mc {
     display: flex;

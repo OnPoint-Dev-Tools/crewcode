@@ -60,6 +60,8 @@ export interface RunningRemoteAccessServer {
   pairingToken: string
   pairingUrl: string
   close: () => Promise<void>
+  updateAllowedWorkspaceRoots(roots: string[]): void
+  stopResources(input: { terminal: boolean; agent: boolean; allowedRoots: string[] }): Promise<{ paneIds: string[]; bridgeIds: string[] }>
 }
 
 type RpcHandler = (params: Record<string, unknown>) => unknown | Promise<unknown>
@@ -161,7 +163,7 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
   const auth = options.auth ?? new RemoteAccessAuth({ storePath: join(options.dataDir, 'remote-access-sessions.json') })
   const pairingLimiter = new RemoteAccessRateLimiter(REMOTE_PAIR_ATTEMPTS_PER_WINDOW)
   const unauthenticatedLimiter = new RemoteAccessRateLimiter(REMOTE_UNAUTHENTICATED_ATTEMPTS_PER_WINDOW)
-  const allowedWorkspaceRoots = (options.allowedWorkspaceRoots?.length ? options.allowedWorkspaceRoots : [homedir()])
+  let allowedWorkspaceRoots = (options.allowedWorkspaceRoots?.length ? options.allowedWorkspaceRoots : [homedir()])
     .map(root => realpathSync(root))
   const allowedPath = (candidate: unknown): string => {
     const raw = String(candidate ?? '').trim()
@@ -196,7 +198,7 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
   // workspace store. Desktop IPC historically accepts any caller-supplied root;
   // carrying that behavior onto the network would expose the whole host filesystem.
   const registeredRoot = (params: Record<string, unknown>): string => {
-    const root = String(params.root ?? '')
+    const root = allowedPath(params.root)
     if (!workspaceService.list().some(workspace => workspace.path === root)) {
       throw Object.assign(new Error('filesystem root is not a registered workspace'), { remoteCode: 'FORBIDDEN' })
     }
@@ -234,7 +236,9 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
   const handlers = new Map<string, RpcHandler>([
     ['auth.sessions', () => auth.list()],
     ['auth.revoke', params => ({ revoked: auth.revoke(String(params.sessionId ?? '')) })],
-    ['workspaces.list', () => workspaceService.list()],
+    ['workspaces.list', () => workspaceService.list().filter(workspace => {
+      try { allowedPath(workspace.path); return true } catch { return false }
+    })],
     ['workspaces.inspectPath', params => {
       const path = allowedPath(params.path)
       if (!statSync(path).isDirectory()) throw new Error('path is not a directory')
@@ -445,6 +449,7 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
     }],
     ['bridge.prompt', params => agentService.prompt(String(params.bridgeId ?? ''), String(params.text ?? ''), params.options as PromptOptions | undefined)],
     ['bridge.compact', params => agentService.compact(String(params.bridgeId ?? ''))],
+    ['bridge.handoff', params => agentService.handoff(String(params.bridgeId ?? ''), String(params.sourceConversationKey ?? ''))],
     ['bridge.removeFollowUp', params => agentService.removeFollowUp(String(params.bridgeId ?? ''), String(params.followUpId ?? ''))],
     ['bridge.respondUserRequest', params => agentService.respond(params.response as Parameters<AgentBridgeService['respond']>[0])],
     // Returns { deferred, reason } when the change was refused mid-turn, so a
@@ -587,6 +592,13 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
     url,
     pairingToken: pairing.token,
     pairingUrl: `${url}/pair#token=${encodeURIComponent(pairing.token)}`,
+    updateAllowedWorkspaceRoots(roots) { allowedWorkspaceRoots = roots.map(root => realpathSync(root)) },
+    async stopResources(input) {
+      const permitted = (cwd: string): boolean => input.allowedRoots.some(root => cwd === root || cwd.startsWith(root + sep))
+      const paneIds = input.terminal ? ptyService.killWhere(() => true) : ptyService.killWhere(cwd => !permitted(cwd))
+      const bridgeIds = await agentService.stopWhere(entry => input.agent || !permitted(entry.cwd))
+      return { paneIds, bridgeIds }
+    },
     close: () => new Promise<void>((resolve, reject) => {
       clearInterval(attachmentSweep)
       for (const uploadId of [...attachmentUploads.keys()]) discardAttachmentUpload(uploadId)

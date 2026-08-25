@@ -1,0 +1,31 @@
+/* Tailwind is intentionally utilities-only. CrewCode's established reset and
+   design tokens remain authoritative, while renderer components can adopt
+   responsive utility classes incrementally without changing legacy surfaces. */
+@layer theme, utilities;
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+
+@theme inline {
+  --color-cc-canvas: var(--background);
+  --color-cc-surface: var(--card);
+  --color-cc-field: var(--muted);
+  --color-cc-hover: var(--secondary);
+  --color-cc-ink: var(--foreground);
+  --color-cc-muted: var(--muted-foreground);
+  --color-cc-line: var(--border);
+  --color-cc-accent: var(--primary);
+  --color-cc-success: var(--success);
+  --color-cc-danger: var(--destructive);
+  --font-sans: var(--font-family-sans);
+  --font-mono: var(--font-family-mono);
+}
+
+@keyframes cc-fade-up {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes cc-shimmer-text {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}

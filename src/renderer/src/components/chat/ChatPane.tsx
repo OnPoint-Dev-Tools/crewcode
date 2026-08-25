@@ -6,6 +6,7 @@ import type { Layout } from '../../hooks/useTerminalSessions'
 import { Splitter } from './Splitter'
 import { SoloChatView } from './SoloChatView'
 import { ExternalDirectoriesModal } from './ExternalDirectoriesModal'
+import { HandoffCard, type HandoffSelection } from './HandoffCard'
 import { CrewBranch } from './CrewBranch'
 import { GitSidebar } from '../git/GitSidebar'
 import { TurnChangesDrawer } from '../thread/TurnChangesDrawer'
@@ -279,6 +280,13 @@ export function ChatPane({
   const [terminalHidden, setTerminalHidden] = useState(false)
   const [sendInFlight, setSendInFlight] = useState(false)
   const [externalDirsMode, setExternalDirsMode] = useState<'add' | 'remove' | null>(null)
+  const [handoffOpen, setHandoffOpen] = useState(false)
+  const [handoffBusy, setHandoffBusy] = useState(false)
+  const [handoffError, setHandoffError] = useState<string | null>(null)
+  const openHandoff = useCallback(() => {
+    setHandoffError(null)
+    setHandoffOpen(true)
+  }, [])
   useEffect(() => {
     const open = () => setExternalDirsMode('add')
     window.addEventListener('crewcode:manage-external-directories', open)
@@ -443,6 +451,11 @@ export function ChatPane({
     // routing through the composer draft (which would lag a tick behind state).
     const text = (overrideText ?? composer).trim()
     if (!text) return
+    if (text === '/handoff') {
+      setComposer('')
+      openHandoff()
+      return
+    }
     // Cover the gap between appending the user message and bridge runtime state
     // propagation, so the loader appears immediately and stays through await.
     setSendInFlight(true)
@@ -458,7 +471,7 @@ export function ChatPane({
     } finally {
       setSendInFlight(false)
     }
-  }, [activeSession?.label, attachmentsRef, chatSessions, composer, messages.length, send, sendText, sessActive, tabId, workspace.name])
+  }, [activeSession?.label, attachmentsRef, chatSessions, composer, messages.length, openHandoff, send, sendText, sessActive, setComposer, tabId, workspace.name])
 
   const queueFollowUp = useCallback(() => {
     const text = composer.trim()
@@ -544,12 +557,81 @@ export function ChatPane({
     sendText,
   })
 
+  const performHandoff = useCallback(async (selection: HandoffSelection) => {
+    if (!activeSession || handoffBusy) return
+    const sourceSession = activeSession
+    let target = selection.targetSessionId === 'new'
+      ? chatSessions.add(tabId, `Handoff from ${sourceSession.label}`)
+      : chatSessions.getSessions(tabId).find((session: any) => session.id === selection.targetSessionId) ?? null
+    if (!target) {
+      setHandoffError('Unable to create or find the destination chat.')
+      return
+    }
+    if (selection.targetSessionId === 'new') {
+      chatSessions.update(tabId, target.id, {
+        agentId: selection.provider,
+        model: selection.model,
+        effort: selection.effort,
+      })
+      target = { ...target, agentId: selection.provider, model: selection.model, effort: selection.effort }
+    }
+
+    const handoffId = `handoff-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`
+    const handoffTime = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+    setMessagesForTab(target.id, prev => [...prev, {
+      kind: 'handoff', id: handoffId, time: handoffTime, status: 'started',
+      message: 'summarizing context for destination chat', percent: 35,
+      fromProvider: sourceSession.agentId, toProvider: target.agentId,
+    }])
+    chatSessions.activate(tabId, target.id)
+    setHandoffBusy(true)
+    setHandoffError(null)
+
+    const targetAgent = agents.find(agent => agent.id === target!.agentId)
+    if (!targetAgent || targetAgent.transport !== 'bridge') {
+      setMessagesForTab(target.id, prev => prev.map(message => message.kind === 'handoff' && message.id === handoffId
+        ? { ...message, status: 'failed', message: 'destination provider does not support chat handoff', percent: 100 }
+        : message))
+      setHandoffBusy(false)
+      setHandoffError('The destination provider does not support bridge context handoff.')
+      return
+    }
+
+    const targetMcp = resolveSessionMcpServers(mcpEnabled, mcpServers, target.mcpServerIds)
+    const started = await bridges.ensureBridge(
+      target.id, target.agentId, target.agentId, effectivePath, target.model || undefined,
+      target.effort, normalizeModeLevel(target.mode), undefined, false, targetMcp, true, target.externalDirectories ?? [],
+    )
+    let result: { ok: boolean; error?: string }
+    if ('error' in started) result = { ok: false, error: started.error }
+    // Main stores local transcripts under the session-scoped `thread:` key.
+    // Passing the bare renderer session id makes every handoff look empty.
+    else result = await bridges.handoff(started.bridgeId, `thread:${sourceSession.id}`, {
+      fromProvider: sourceSession.agentId,
+      toProvider: target.agentId,
+      model: target.model || undefined,
+      mode: normalizeModeLevel(target.mode),
+      workspace: { name: workspace.name, path: effectivePath, branch: worktreeBranch ?? effectiveBranch },
+    })
+
+    setMessagesForTab(target.id, prev => prev.map(message => message.kind === 'handoff' && message.id === handoffId
+      ? { ...message, status: result.ok ? 'completed' : 'failed', message: result.ok ? 'handoff complete' : 'handoff failed', percent: 100 }
+      : message))
+    setHandoffBusy(false)
+    if (result.ok) setHandoffOpen(false)
+    else setHandoffError(result.error ?? 'Context handoff failed.')
+  }, [activeSession, agents, bridges, chatSessions, effectiveBranch, effectivePath, handoffBusy, mcpEnabled, mcpServers, setMessagesForTab, tabId, workspace.name, worktreeBranch])
+
   // A custom slash-command fires the moment it is picked. While the agent is
   // running the body is queued as a follow-up (mirroring composer send); idle,
   // it dispatches immediately with session-title/loader handling.
   const runCommand = useCallback((body: string) => {
     const text = body.trim()
     if (!text) return
+    if (text === '/handoff') {
+      openHandoff()
+      return
+    }
     if (text === '/add-dir' || text === '/remove-dir') {
       setExternalDirsMode(text === '/add-dir' ? 'add' : 'remove')
       return
@@ -559,7 +641,7 @@ export function ChatPane({
       return
     }
     void sendWithSessionTitle(text)
-  }, [isRunning, sendText, attachmentsRef, sendWithSessionTitle, workspace.kind, setMessages, chatSessions, tabId, bridges, activeAgentId])
+  }, [isRunning, sendText, attachmentsRef, sendWithSessionTitle, openHandoff])
 
   // Agents offered as chat providers / crew lanes. Terminal-only CLIs (Claude
   // Code) are filtered out here but stay available via the terminal column.
@@ -690,6 +772,7 @@ export function ChatPane({
             onStartCrew={() => crewCtl?.handleStartCrew?.()}
             onOpenCanvas={onOpenCanvas}
             onOpenTerminal={openHeaderTerminal}
+            onHandoff={openHandoff}
             composerMode={composerMode}
             setComposerMode={setComposerMode}
             composer={composer}
@@ -779,6 +862,19 @@ export function ChatPane({
           </>
         )}
       </div>
+      <HandoffCard
+        open={handoffOpen}
+        sourceSessionId={sessActive}
+        sessions={chatSessions.getSessions(tabId)}
+        agents={chatAgents}
+        defaultProvider={activeAgentId}
+        defaultModel={model}
+        defaultEffort={effort}
+        busy={handoffBusy}
+        error={handoffError}
+        onClose={() => { if (!handoffBusy) setHandoffOpen(false) }}
+        onConfirm={selection => { void performHandoff(selection) }}
+      />
       <ExternalDirectoriesModal
         open={externalDirsMode !== null}
         initialMode={externalDirsMode ?? 'add'}

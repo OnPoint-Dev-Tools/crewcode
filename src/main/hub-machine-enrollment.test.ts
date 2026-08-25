@@ -2,8 +2,10 @@ import { generateKeyPairSync } from 'crypto'
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  HubDeviceEnrollmentIssuer,
+  enrollMachineByApproval,
   machineCredentialPath,
   normalizeHubUrl,
   parseBrainOptions,
@@ -14,6 +16,7 @@ import {
 
 const directories: string[] = []
 afterEach(() => {
+  vi.unstubAllGlobals()
   while (directories.length) rmSync(directories.pop() as string, { recursive: true, force: true })
 })
 
@@ -22,6 +25,28 @@ function directory(): string {
   directories.push(value)
   return value
 }
+
+describe('phone-approved device enrollment issuer', () => {
+  it('uses a short display code but keeps authority in a one-time 256-bit polling secret', () => {
+    let now = 1_000
+    const issuer = new HubDeviceEnrollmentIssuer(() => now)
+    const keys = generateKeyPairSync('ed25519')
+    const publicKey = keys.publicKey.export({ type: 'spki', format: 'der' }).toString('base64url')
+    const request = issuer.request({ publicKey, name: 'Cortex', platform: 'linux', version: 'test' })
+    expect(request.userCode).toMatch(/^[A-Z2-9]{4}-[A-Z2-9]{4}$/)
+    expect(request.requestToken).not.toContain(request.userCode)
+    expect(Buffer.from(request.requestToken.split('.')[1], 'base64url')).toHaveLength(32)
+    expect(issuer.list()[0]).toMatchObject({ id: request.requestId, userCode: request.userCode, name: 'Cortex' })
+    expect(issuer.poll(request.requestToken)).toEqual({ status: 'pending' })
+    expect(issuer.approve(request.requestId, { machineId: 'a'.repeat(32), token: 'machine.secret' })).toBe(true)
+    expect(issuer.poll(request.requestToken)).toEqual({ status: 'approved', machineId: 'a'.repeat(32), token: 'machine.secret' })
+    expect(issuer.poll(request.requestToken)).toBeNull()
+
+    const expired = issuer.request({ publicKey, name: 'Old', platform: null, version: null })
+    now = expired.expiresAt
+    expect(issuer.poll(expired.requestToken)).toBeNull()
+  })
+})
 
 describe('Hub machine client security', () => {
   it('accepts HTTPS and loopback HTTP Hub origins only', () => {
@@ -42,6 +67,31 @@ describe('Hub machine client security', () => {
       allowedWorkspaceRoots: ['/tmp'], allowedScopes: ['workspace:read', 'agent'],
     })
     expect(() => parseBrainOptions(['--allow-scope', 'everything'], 'brain')).toThrow('invalid Brain scope')
+  })
+
+  it('polls privately until phone approval and persists the PC-generated identity', async () => {
+    const dataDir = directory()
+    const machineId = 'b'.repeat(32)
+    const machineToken = `${machineId}.${Buffer.alloc(32, 9).toString('base64url')}`
+    let polls = 0
+    let requestedPublicKey = ''
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+      if (url.endsWith('/request')) {
+        requestedPublicKey = (JSON.parse(String(init.body)) as { publicKey: string }).publicKey
+        return new Response(JSON.stringify({ requestToken: `request.${Buffer.alloc(32, 3).toString('base64url')}`, userCode: 'ABCD-2345', expiresAt: 10_000 }), { status: 201 })
+      }
+      polls += 1
+      return new Response(JSON.stringify(polls === 1 ? { status: 'pending' } : { status: 'approved', machineId, token: machineToken }), { status: polls === 1 ? 202 : 200 })
+    }))
+    let now = 1_000
+    const pending = vi.fn()
+    const credential = await enrollMachineByApproval({
+      dataDir, hubOrigin: 'https://hub.example', name: 'Cortex', allowedWorkspaceRoots: [], allowedScopes: [],
+    }, { now: () => now, sleep: async ms => { now += ms }, onPending: pending })
+
+    expect(pending).toHaveBeenCalledWith(expect.objectContaining({ userCode: 'ABCD-2345', verificationUrl: 'https://hub.example' }))
+    expect(credential).toMatchObject({ machineId, token: machineToken, publicKey: requestedPublicKey })
+    expect(readMachineCredential(machineCredentialPath(dataDir))).toEqual(credential)
   })
 
   it('writes and validates an owner-only machine credential file', () => {

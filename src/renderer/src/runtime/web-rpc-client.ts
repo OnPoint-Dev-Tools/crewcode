@@ -329,6 +329,7 @@ export function createWebCrewCodeClient(sessionOrTransport: string | WebClientTr
     }),
     bridgePrompt: (bridgeId, text, options) => rpc('bridge.prompt', { bridgeId, text, options }),
     bridgeCompact: bridgeId => rpc('bridge.compact', { bridgeId }),
+    bridgeHandoff: (bridgeId, sourceConversationKey, options) => rpc('bridge.handoff', { bridgeId, sourceConversationKey, options }),
     bridgeRemoveFollowUp: (bridgeId, followUpId) => rpc('bridge.removeFollowUp', { bridgeId, followUpId }),
     bridgeRespondUserRequest: response => rpc('bridge.respondUserRequest', { response }),
     bridgeSetMode: (bridgeId, mode) => { void rpc('bridge.setMode', { bridgeId, mode }) },

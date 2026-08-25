@@ -375,6 +375,9 @@ export interface Session {
   // Whether CrewCode injects the selected mode's advisory prompt when this
   // session first sends. Provider-native permission policy is independent.
   modePromptsEnabled?: boolean
+  // One-shot branch provisioning request captured from Settings when a new chat
+  // is created. App clears it after selecting/creating the matching worktree.
+  initialBranch?: string
   // Local roots granted to this session in addition to its workspace.
   externalDirectories?: string[]
   // Pinned sessions sort before unpinned peers in their existing drawer group.
@@ -711,6 +714,7 @@ declare global {
       }) => Promise<{ ok?: boolean; error?: string; custodyHalt?: CustodyHaltPayload }>
       bridgePrompt: (bridgeId: string, text: string, options?: ChatPromptOptions) => Promise<{ ok: boolean; error?: string }>
       bridgeCompact: (bridgeId: string) => Promise<{ ok: boolean; error?: string; unsupported?: boolean }>
+      bridgeHandoff: (bridgeId: string, sourceConversationKey: string, options: HandoffPromptOptions) => Promise<{ ok: boolean; error?: string }>
       bridgeRemoveFollowUp: (bridgeId: string, followUpId: string) => Promise<{ ok: boolean; error?: string }>
       bridgeRespondUserRequest: (response: AgentUserResponse) => Promise<{ ok?: boolean; error?: string }>
       bridgeSetMode: (bridgeId: string, mode: ModeLevel) => void
