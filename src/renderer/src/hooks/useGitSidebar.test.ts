@@ -3,7 +3,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, flush, renderHook } from './hook-test-host'
 import { useGitSidebar } from './useGitSidebar'
 
-function apiStub() {
+vi.mock('../runtime/crewcode-client', () => ({
+  getCrewCodeClient: () => window.electronAPI,
+}))
+
+function apiStub(): Record<string, any> {
   return {
     worktreeCreate: vi.fn(async () => ({ ok: true, path: '/repo/.worktrees/feature' })),
     worktreeList: vi.fn(async () => ({ worktrees: [
@@ -14,7 +18,9 @@ function apiStub() {
     gitLog: vi.fn(async () => ({ commits: [] })),
     gitBranches: vi.fn(async () => ({ branches: [] })),
     ghStatus: vi.fn(async () => ({})),
+    githubStatus: vi.fn(async () => ({})),
     gitRemotes: vi.fn(async () => ({ isRepo: true, remotes: [], remoteUrls: [] })),
+    gitChangesVsRef: vi.fn(async () => ({ ok: true, files: [] })),
   }
 }
 
@@ -44,6 +50,42 @@ describe('useGitSidebar isolated branch switching', () => {
     expect(onWorktreesChanged).toHaveBeenCalled()
     expect(onSwitchWorktree).toHaveBeenCalledWith('feature-wt')
 
+    hook.unmount()
+  })
+
+  it('adds committed comparison changes without making them stageable', async () => {
+    const api = apiStub()
+    api.gitStatus.mockResolvedValue({
+      branch: 'feature', staged: [],
+      unstaged: [{ path: 'local.ts', status: 'M', staged: false }],
+      untracked: [], ahead: 1, behind: 0,
+    })
+    api.gitChangesVsRef.mockResolvedValue({
+      ok: true,
+      files: [
+        { path: 'local.ts', status: 'M', staged: false },
+        { path: 'committed.ts', status: 'A', staged: false },
+      ],
+    })
+    vi.stubGlobal('window', { electronAPI: api })
+    const hook = renderHook(useGitSidebar, {
+      repoPath: '/repo/.worktrees/feature',
+      workspacePath: '/repo',
+      mainBranch: 'main',
+      comparisonRef: 'develop',
+      currentWorktreeId: 'feature-wt',
+      enabled: false,
+      onSwitchWorktree: vi.fn(),
+    })
+
+    await act(async () => { await hook.result.current.refresh() })
+
+    expect(api.gitChangesVsRef).toHaveBeenCalledWith('/repo/.worktrees/feature', 'develop')
+    expect(hook.result.current.state.comparisonRef).toBe('develop')
+    expect(hook.result.current.state.changes).toEqual([
+      expect.objectContaining({ path: 'local.ts', staged: false }),
+      expect.objectContaining({ path: 'committed.ts', staged: false, stageable: false }),
+    ])
     hook.unmount()
   })
 })

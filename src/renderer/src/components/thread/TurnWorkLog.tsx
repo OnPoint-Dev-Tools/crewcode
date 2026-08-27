@@ -65,12 +65,23 @@ export interface WorkLogRow {
   diagnostics?: Diagnostic[]
 }
 
+export interface WorkLogChangedFile {
+  path:    string
+  name:    string
+  added:   number
+  removed: number
+}
+
 interface TurnWorkLogProps {
   rows:    WorkLogRow[]
   live:    boolean
   total?:  number
+  /** Unique files changed during a completed turn, shown below its tool rows. */
+  changedFiles?: WorkLogChangedFile[]
   /** Click handler for filenames in the row title. */
   onOpenFile?: (path: string) => void
+  /** Opens a changed-file chip in the turn diff drawer. */
+  onOpenChangedFile?: (path: string) => void
 }
 
 function rowIconName(kind: WorkLogRowKind): IconName {
@@ -273,7 +284,7 @@ function RowTitle({ row, onOpenFile }: RowTitleProps): React.ReactElement {
   )
 }
 
-export function TurnWorkLog({ rows, live, total, onOpenFile }: TurnWorkLogProps) {
+export function TurnWorkLog({ rows, live, total, changedFiles = [], onOpenFile, onOpenChangedFile }: TurnWorkLogProps) {
   // Keep the consolidated turn summary visible when it lands immediately before
   // the final response; users can still collapse it from the header.
   const [open, setOpen] = useState(true)
@@ -392,6 +403,47 @@ export function TurnWorkLog({ rows, live, total, onOpenFile }: TurnWorkLogProps)
                 </div>
               )
             })}
+            {changedFiles.length > 0 && (
+              <div
+                className="mt-1.5 flex min-w-0 flex-wrap gap-1.5 border-t border-cc-line pt-2.5"
+                data-worklog-changed-files
+                role="group"
+                aria-label="Files changed in this turn"
+              >
+                {changedFiles.map((file, index) => {
+                  const content = (
+                    <>
+                      <span className="min-w-0 truncate">{file.name}</span>
+                      {file.added > 0 && <span className="shrink-0 text-cc-success tabular-nums">+{file.added}</span>}
+                      {file.removed > 0 && <span className="shrink-0 text-cc-danger tabular-nums">-{file.removed}</span>}
+                    </>
+                  )
+                  const className = "inline-flex h-7 max-w-full items-center gap-1.5 rounded-md border border-cc-line bg-cc-field px-2 font-mono text-[11px] text-cc-ink transition-colors hover:bg-cc-hover focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1 focus-visible:outline-cc-accent sm:text-[11.5px]"
+
+                  return onOpenChangedFile ? (
+                    <button
+                      key={file.path}
+                      type="button"
+                      className={`${className} cursor-pointer appearance-none`}
+                      onClick={() => onOpenChangedFile(file.path)}
+                      title={`View turn diff for ${file.path}`}
+                      style={{ animation: `cc-pop-in 220ms cubic-bezier(0.23,1,0.32,1) ${index * 55}ms both` }}
+                    >
+                      {content}
+                    </button>
+                  ) : (
+                    <span
+                      key={file.path}
+                      className={className}
+                      title={file.path}
+                      style={{ animation: `cc-pop-in 220ms cubic-bezier(0.23,1,0.32,1) ${index * 55}ms both` }}
+                    >
+                      {content}
+                    </span>
+                  )
+                })}
+              </div>
+            )}
           </div>
         </div>
       </div>

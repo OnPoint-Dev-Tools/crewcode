@@ -52,6 +52,42 @@ describe('web RPC client', () => {
     expect(rpc.mock.calls[0]?.[1]).not.toHaveProperty('mcpServers')
   })
 
+  it('maps desktop thread keys into the Brain browser conversation namespace', async () => {
+    const rpc = vi.fn<(method: string, params: Record<string, unknown>) => void>()
+    const client = createWebCrewCodeClient({
+      rpc: async <T,>(method: string, params: Record<string, unknown>) => {
+        rpc(method, params)
+        return { ok: true } as T
+      },
+      subscribe: () => () => undefined,
+    })
+
+    await client.bridgeHandoff('target-bridge', 'thread:source-session', { fromProvider: 'claude', toProvider: 'codex' })
+
+    expect(rpc).toHaveBeenCalledWith('bridge.handoff', {
+      bridgeId: 'target-bridge',
+      sourceConversationKey: 'source-session',
+      options: { fromProvider: 'claude', toProvider: 'codex' },
+    })
+  })
+
+  it('maps default-branch comparison calls through the web client', async () => {
+    const rpc = vi.fn<(method: string, params: Record<string, unknown>) => void>()
+    const client = createWebCrewCodeClient({
+      rpc: async <T,>(method: string, params: Record<string, unknown>) => {
+        rpc(method, params)
+        return { ok: true } as T
+      },
+      subscribe: () => () => undefined,
+    })
+
+    await client.gitChangesVsRef('/repo', 'develop')
+    await client.gitDiffVsRef('/repo', 'develop', 'src/app.ts')
+
+    expect(rpc).toHaveBeenNthCalledWith(1, 'git.changesVsRef', { cwd: '/repo', ref: 'develop' })
+    expect(rpc).toHaveBeenNthCalledWith(2, 'git.diffVsRef', { cwd: '/repo', ref: 'develop', path: 'src/app.ts' })
+  })
+
   it('maps supported client calls and rejects unavailable features', async () => {
     vi.stubGlobal('fetch', vi.fn().mockImplementation((_url: string, init: RequestInit) => {
       const request = JSON.parse(String(init.body)) as { id: string; method: string }
@@ -65,6 +101,12 @@ describe('web RPC client', () => {
           }
         : request.method === 'mcp.list'
           ? { path: '/brain/.crewcode/mcp.json', exists: true, servers: [], errors: [] }
+          : request.method === 'delegation.enable'
+            ? { ok: true, credentials: { endpoint: 'http://127.0.0.1:1', token: 'token' } }
+            : request.method === 'delegation.disable'
+              ? { ok: true }
+              : request.method === 'plugins.list'
+                ? { root: '/brain/plugins', plugins: [], errors: [], contributions: {}, declaredContributions: {} }
           : []
       return Promise.resolve(new Response(JSON.stringify({ protocolVersion: 1, id: request.id, ok: true, result }), { status: 200 }))
     }))
@@ -82,7 +124,7 @@ describe('web RPC client', () => {
     expect(client.onKeybindsChanged(() => undefined)).toEqual(expect.any(Function))
     expect(await client.delegationDisable('session')).toEqual({ ok: true })
     expect(await client.delegationEnable('session', { allowFullAccess: false, parentMode: 'build', maxConcurrent: 1, remote: false }))
-      .toMatchObject({ ok: false })
+      .toMatchObject({ ok: true, credentials: { token: 'token' } })
     expect(client.editorWatchAdd('/workspace', 'file.ts')).toBeUndefined()
     expect(client.editorWatchRemove('/workspace', 'file.ts')).toBeUndefined()
     expect(await client.voiceProviderAvailability()).toMatchObject({
@@ -90,6 +132,6 @@ describe('web RPC client', () => {
       openai: { available: false },
       local: { available: false },
     })
-    await expect(client.pluginsList()).rejects.toEqual(expect.objectContaining({ code: 'UNSUPPORTED' }))
+    expect(await client.pluginsList()).toMatchObject({ root: '/brain/plugins', plugins: [] })
   })
 })

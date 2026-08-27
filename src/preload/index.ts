@@ -358,6 +358,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('notify:click', listener)
   },
 
+  // ─── YuHeard terminal agent alerts ────────────────────────────
+  // Server pushes state transitions; renderer plays sound + optional
+  // OS notify. The socket path is exposed so settings can show it.
+  yuheardStatus: () =>
+    ipcRenderer.invoke('yuheard:status') as Promise<{ socket: string | null; running: boolean }>,
+  onYuheardState: (cb: (event: { paneId: string; state: 'running' | 'complete'; message: string | null; source: string; at: number }) => void) => {
+    const listener = (_e: unknown, event: { paneId: string; state: 'running' | 'complete'; message: string | null; source: string; at: number }) => cb(event)
+    ipcRenderer.on('yuheard:state', listener)
+    return () => ipcRenderer.removeListener('yuheard:state', listener)
+  },
+
   clipboardWriteText: (text: string) =>
     ipcRenderer.invoke('clipboard:writeText', text),
   clipboardReadText: () =>

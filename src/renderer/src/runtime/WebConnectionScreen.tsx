@@ -1,8 +1,16 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { CrewCodeServerCapabilities } from '../../../shared/remote-access-types'
 import App from '../App'
+import CrewCodeMobileDashboard, { type MobileHubMachine } from '../components/ui/MobileDashboard'
+import MobileMachineOverview, {
+  type MobileMachineStats,
+  type MobileRecentThread,
+} from '../components/ui/MobileMachineOverview'
+import { deriveMissionStats } from '../components/mission/mission-stats'
+import type { AgentStatus } from '../components/mission/missionTypes'
 import { SettingsProvider } from '../hooks/useSettings'
 import { NotificationsProvider } from '../hooks/useNotifications'
+import { useMobileLayout } from '../hooks/useMobileLayout'
 import { hydrateMessagesFromBackend } from '../stores/chat-messages-store'
 import { installCrewCodeRuntime } from './crewcode-client'
 import { installBrainAuthorizationRelay } from './brain-authorization-runtime'
@@ -19,6 +27,7 @@ import {
   exchangePairingToken,
   fetchServerCapabilities,
   savedWebSession,
+  WebRpcError,
   webRpc,
 } from './web-rpc-client'
 
@@ -29,8 +38,55 @@ interface BrainExecutionSummary {
   provider?: string
   cwd?: string
   conversationScopeKey?: string
+  createdAt?: number
   lastEventAt: number
   droppedEvents: number
+}
+
+interface MobileOverviewWorkspace {
+  id: string
+  name: string
+  path: string
+  branch: string | null
+  kind: 'repo' | 'folder' | 'remote'
+}
+
+interface MobileOverviewWorktree {
+  path: string
+  branch: string
+}
+
+interface MobileOverviewWorktreeRecord extends MobileOverviewWorktree {
+  projectId: string
+}
+
+interface RecentTranscriptSummary {
+  scopeId: string
+  updatedAt: number
+  firstUserText: string | null
+}
+
+const EMPTY_MACHINE_STATS: MobileMachineStats = { worktrees: null, agents: null, running: null, done: null }
+
+async function loadRecentTranscriptSummaries(
+  relay: ManagedHubRelayTransport,
+  fallbackMtimes: Promise<Record<string, number>>,
+): Promise<RecentTranscriptSummary[]> {
+  try {
+    return await relay.transport.rpc<RecentTranscriptSummary[]>('transcripts.recent', { limit: 5 })
+  } catch (cause) {
+    // Brains started before transcripts.recent was added still expose the
+    // metadata-only mtime index. Keep those sessions useful without falling
+    // back to transcripts.loadAll, which would decrypt complete histories just
+    // to render a five-row overview.
+    if (!(cause instanceof WebRpcError) || cause.code !== 'UNSUPPORTED') throw cause
+    const mtimes = await fallbackMtimes
+    return Object.entries(mtimes)
+      .filter((entry): entry is [string, number] => !!entry[0] && Number.isFinite(entry[1]))
+      .sort((left, right) => right[1] - left[1])
+      .slice(0, 5)
+      .map(([scopeId, updatedAt]) => ({ scopeId, updatedAt, firstUserText: null }))
+  }
 }
 
 function pairingToken(): string {
@@ -38,7 +94,319 @@ function pairingToken(): string {
   return params.get('token') ?? ''
 }
 
+async function hubMobileJson<T>(path: string): Promise<T> {
+  const response = await fetch(path, { cache: 'no-store', credentials: 'same-origin' })
+  const body = await response.json() as T & { error?: string }
+  if (response.status === 401) throw Object.assign(new Error('Hub sign-in is required'), { unauthenticated: true })
+  if (!response.ok) throw new Error(body.error ?? `Hub request failed with ${response.status}`)
+  return body
+}
+
+async function loadHubMobileSession(): Promise<string> {
+  const session = await hubMobileJson<{ user?: { username?: string } }>('/api/v1/hub/session')
+  return session.user?.username ?? ''
+}
+
+async function loadHubMobileMachines(): Promise<MobileHubMachine[]> {
+  const result = await hubMobileJson<{ machines?: MobileHubMachine[] }>('/api/v1/hub/machines')
+  return Array.isArray(result.machines) ? result.machines : []
+}
+
+function HubMobileHome() {
+  const [username, setUsername] = useState('')
+  const [machines, setMachines] = useState<MobileHubMachine[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const refresh = useCallback(async () => {
+    setLoading(true)
+    try {
+      setMachines(await loadHubMobileMachines())
+      setError(null)
+    } catch (cause) {
+      if ((cause as { unauthenticated?: boolean }).unauthenticated) {
+        window.location.replace('/')
+        return
+      }
+      setError((cause as Error).message)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void loadHubMobileSession().then(setUsername).catch(cause => {
+      if ((cause as { unauthenticated?: boolean }).unauthenticated) window.location.replace('/')
+      else setError((cause as Error).message)
+    })
+    void refresh()
+    const poll = window.setInterval(() => { if (document.visibilityState === 'visible') void refresh() }, 10_000)
+    return () => window.clearInterval(poll)
+  }, [refresh])
+
+  return (
+    <CrewCodeMobileDashboard
+      username={username}
+      machines={machines}
+      loading={loading}
+      error={error}
+      onRefresh={() => { void refresh() }}
+      onOpenHubSettings={() => window.location.assign('/?hub-admin=1')}
+      onOpenMachine={machineId => window.location.assign(`/app?hub=mobile&machine=${encodeURIComponent(machineId)}`)}
+    />
+  )
+}
+
+function threadTitle(text: string | null): string {
+  const normalized = text?.replace(/\s+/g, ' ').trim() ?? ''
+  if (!normalized) return 'Untitled thread'
+  return normalized.length > 52 ? `${normalized.slice(0, 51).trimEnd()}…` : normalized
+}
+
+function pathLeaf(value: string | undefined): string {
+  if (!value) return ''
+  const parts = value.split(/[\\/]/).filter(Boolean)
+  return parts.at(-1) ?? value
+}
+
+function tabIdForScope(scopeId: string): string {
+  return scopeId.includes('::') ? scopeId.slice(0, scopeId.indexOf('::')) : scopeId
+}
+
+function workspaceForThread(
+  tabId: string,
+  execution: BrainExecutionSummary | undefined,
+  workspaces: MobileOverviewWorkspace[],
+  worktrees: MobileOverviewWorktreeRecord[],
+): MobileOverviewWorkspace | undefined {
+  const byTab = workspaces
+    .filter(workspace => tabId === workspace.id || tabId.startsWith(`${workspace.id}-`))
+    .sort((left, right) => right.id.length - left.id.length)[0]
+  if (byTab) return byTab
+  const worktree = worktrees.find(item => item.path === execution?.cwd)
+  return workspaces.find(workspace => workspace.path === execution?.cwd || workspace.id === worktree?.projectId)
+}
+
+function missionStatusForScope(scopeId: string, execution: BrainExecutionSummary | undefined): AgentStatus {
+  if (execution?.status === 'running') return 'running'
+  if (execution?.status === 'blocked') return 'blocked'
+  // Mission Control's solo derivation returns idle after a completed turn.
+  // Done is a crew-lane lifecycle state, not a generic bridge completion.
+  if (scopeId.startsWith('crew/') && execution?.status === 'completed') return 'done'
+  return 'idle'
+}
+
+async function loadMachineOverview(relay: ManagedHubRelayTransport): Promise<{
+  stats: MobileMachineStats
+  recentThreads: MobileRecentThread[]
+  errors: string[]
+}> {
+  const transcriptMtimesRequest = relay.transport.rpc<Record<string, number>>('transcripts.mtimes', {})
+  const [workspaceResult, executionResult, transcriptMtimesResult, transcriptResult] = await Promise.allSettled([
+    relay.transport.rpc<MobileOverviewWorkspace[]>('workspaces.list', {}),
+    relay.transport.rpc<{ executions: BrainExecutionSummary[] }>('bridge.list', {}),
+    transcriptMtimesRequest,
+    loadRecentTranscriptSummaries(relay, transcriptMtimesRequest),
+  ])
+  const errors = [workspaceResult, executionResult, transcriptMtimesResult, transcriptResult]
+    .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+    .map(result => (result.reason as Error).message)
+
+  const workspaces = workspaceResult.status === 'fulfilled' ? workspaceResult.value : []
+  const worktreeResults = workspaceResult.status === 'fulfilled'
+    ? await Promise.allSettled(workspaces.filter(workspace => workspace.kind !== 'remote').map(async workspace => ({
+      workspace,
+      result: await relay.transport.rpc<{ worktrees?: MobileOverviewWorktree[]; error?: string }>('worktrees.list', { repoPath: workspace.path }),
+    })))
+    : []
+  const rejectedWorktreeLookups = worktreeResults.filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+  errors.push(...rejectedWorktreeLookups.map(result => (result.reason as Error).message))
+  const worktrees: MobileOverviewWorktreeRecord[] = worktreeResults.flatMap(result => result.status === 'fulfilled'
+    ? (result.value.result.worktrees ?? []).map(worktree => ({ ...worktree, projectId: result.value.workspace.id }))
+    : [])
+  const executions = executionResult.status === 'fulfilled' ? executionResult.value.executions : []
+  const transcriptMtimes = transcriptMtimesResult.status === 'fulfilled' ? transcriptMtimesResult.value : {}
+  const transcripts = transcriptResult.status === 'fulfilled' ? transcriptResult.value : []
+  const detailForExecution = (execution: BrainExecutionSummary | undefined): string => {
+    if (!execution) return 'Saved thread'
+    const worktree = worktrees.find(item => item.path === execution.cwd)
+    const workspace = workspaces.find(item => item.path === execution.cwd)
+    const location = workspace?.name ?? pathLeaf(execution.cwd)
+    const branch = worktree?.branch
+    return [execution.provider ?? 'Agent', location, branch].filter(Boolean).join(' · ')
+  }
+  const recentThreads = transcripts.flatMap(transcript => {
+    const execution = executions.find(item => item.conversationScopeKey === transcript.scopeId)
+    const tabId = tabIdForScope(transcript.scopeId)
+    // Crew-lane scopes need their persisted crew-session owner to navigate
+    // correctly. Do not misrepresent one as a solo chat when that catalog is
+    // unavailable on the pre-runtime overview.
+    if (tabId.startsWith('crew/')) return []
+    const workspace = workspaceForThread(tabId, execution, workspaces, worktrees)
+    if (!workspace) return []
+    const status: MobileRecentThread['status'] = execution?.status === 'running' || execution?.status === 'blocked'
+      ? 'running'
+      : 'saved'
+    return {
+      scopeId: transcript.scopeId,
+      tabId,
+      workspaceId: workspace.id,
+      title: threadTitle(transcript.firstUserText),
+      detail: detailForExecution(execution),
+      updatedAt: transcript.updatedAt,
+      status,
+      ...(execution?.provider ? { agentId: execution.provider } : {}),
+    }
+  })
+  const representedExecutions = new Set<string>()
+  const missionAgents = Object.keys(transcriptMtimes).flatMap(scopeId => {
+    const execution = executions.find(item => item.conversationScopeKey === scopeId)
+    if (execution) representedExecutions.add(execution.bridgeId)
+    const tabId = tabIdForScope(scopeId)
+    const workspace = workspaceForThread(tabId, execution, workspaces, worktrees)
+    if (!workspace) return []
+    const worktree = worktrees.find(item => item.path === execution?.cwd)
+    return [{
+      status: missionStatusForScope(scopeId, execution),
+      projectId: workspace.id,
+      worktree: worktree?.path ?? (workspace.branch ? `wt-${workspace.branch}` : 'wt-main'),
+      tokens: 0,
+    }]
+  })
+  // A just-started agent may not have flushed its first transcript shard yet.
+  // Include that observed live execution exactly once until persistence catches up.
+  for (const execution of executions) {
+    if (representedExecutions.has(execution.bridgeId)) continue
+    const worktree = worktrees.find(item => item.path === execution.cwd)
+    const workspace = workspaces.find(item => item.path === execution.cwd || item.id === worktree?.projectId)
+    missionAgents.push({
+      status: missionStatusForScope(execution.conversationScopeKey ?? '', execution),
+      projectId: workspace?.id ?? worktree?.projectId ?? (pathLeaf(execution.cwd) || execution.bridgeId),
+      worktree: worktree?.path ?? execution.cwd ?? execution.bridgeId,
+      tokens: 0,
+    })
+  }
+  const missionStats = deriveMissionStats(missionAgents)
+  const stats: MobileMachineStats = workspaceResult.status === 'fulfilled'
+    && executionResult.status === 'fulfilled'
+    && transcriptMtimesResult.status === 'fulfilled'
+    ? {
+      worktrees: workspaceResult.status === 'fulfilled' && rejectedWorktreeLookups.length === 0 ? missionStats.worktrees : null,
+      agents: missionStats.agents,
+      running: missionStats.running,
+      done: missionStats.done,
+    }
+    : EMPTY_MACHINE_STATS
+  return { stats, recentThreads, errors }
+}
+
+function HubMobileMachineOverview({ machineId }: { machineId: string }) {
+  const [machineName, setMachineName] = useState('Desktop')
+  const [relay, setRelay] = useState<ManagedHubRelayTransport | null>(null)
+  const [connected, setConnected] = useState(false)
+  const [stats, setStats] = useState<MobileMachineStats>(EMPTY_MACHINE_STATS)
+  const [recentThreads, setRecentThreads] = useState<MobileRecentThread[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const refresh = useCallback(async (activeRelay: ManagedHubRelayTransport | null) => {
+    if (!activeRelay) return
+    setLoading(true)
+    try {
+      const snapshot = await loadMachineOverview(activeRelay)
+      setStats(snapshot.stats)
+      setRecentThreads(snapshot.recentThreads)
+      setError(snapshot.errors.length ? [...new Set(snapshot.errors)].join(' ') : null)
+    } catch (cause) {
+      setError((cause as Error).message)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    let activeRelay: ManagedHubRelayTransport | null = null
+    let disposeStatus: (() => void) | null = null
+    void loadHubMobileMachines().then(machines => {
+      if (!cancelled) setMachineName(machines.find(machine => machine.id === machineId)?.name ?? 'Desktop')
+    }).catch(() => undefined)
+    void connectHubRelayTransport(machineId, ['workspace:read', 'agent']).then(async nextRelay => {
+      if (cancelled) { nextRelay.close(); return }
+      activeRelay = nextRelay
+      setRelay(nextRelay)
+      disposeStatus = nextRelay.onStatus(status => {
+        if (cancelled) return
+        setConnected(status.state === 'connected')
+        if (status.state === 'disconnected') {
+          setStats(EMPTY_MACHINE_STATS)
+          setError(status.message)
+        }
+      })
+      await refresh(nextRelay)
+    }).catch(cause => {
+      if (!cancelled) { setError((cause as Error).message); setLoading(false) }
+    })
+    return () => {
+      cancelled = true
+      disposeStatus?.()
+      activeRelay?.close()
+    }
+  }, [machineId, refresh])
+
+  useEffect(() => {
+    if (!relay) return
+    const poll = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void refresh(relay)
+    }, 10_000)
+    return () => window.clearInterval(poll)
+  }, [refresh, relay])
+
+  const enterCrewCode = (thread?: MobileRecentThread): void => {
+    const query = new URLSearchParams({ machine: machineId })
+    if (thread) {
+      query.set('thread', thread.scopeId)
+      query.set('threadTab', thread.tabId)
+      query.set('threadWorkspace', thread.workspaceId)
+      query.set('threadLabel', thread.title)
+      if (thread.agentId) query.set('threadAgent', thread.agentId)
+    }
+    window.location.assign(`/app?${query.toString()}`)
+  }
+
+  return (
+    <MobileMachineOverview
+      machineName={machineName}
+      connected={connected}
+      stats={stats}
+      recentThreads={recentThreads}
+      loading={loading}
+      error={error}
+      onBack={() => window.location.assign('/app?hub=mobile')}
+      onOpenSettings={() => window.location.assign('/?hub-admin=1')}
+      onRefresh={() => { void refresh(relay) }}
+      onEnterCrewCode={enterCrewCode}
+    />
+  )
+}
+
+function HubDesktopRedirect() {
+  useEffect(() => { window.location.replace('/') }, [])
+  return null
+}
+
 export function WebConnectionScreen() {
+  const { isMobile } = useMobileLayout()
+  const search = new URLSearchParams(window.location.search)
+  const hubMobileHome = search.get('hub') === 'mobile'
+  const machineId = search.get('machine')
+  if (hubMobileHome) return isMobile
+    ? machineId ? <HubMobileMachineOverview machineId={machineId} /> : <HubMobileHome />
+    : <HubDesktopRedirect />
+  return <WebRuntimeConnectionScreen />
+}
+
+function WebRuntimeConnectionScreen() {
   const [status, setStatus] = useState('Checking CrewCode server…')
   const [capabilities, setCapabilities] = useState<CrewCodeServerCapabilities | null>(null)
   const [connected, setConnected] = useState(false)

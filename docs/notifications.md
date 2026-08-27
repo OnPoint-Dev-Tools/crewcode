@@ -501,3 +501,16 @@ Ensure `duration` is set to a positive number. A duration of `0` disables the pr
 ### Too Many Notifications
 
 The system caps at 5 stored notifications and displays only the top 3. Older notifications are automatically dropped. If you need to show more, consider consolidating messages or using a different UI pattern (e.g., a dedicated status panel).
+
+## YuHeard — terminal-pane agent alerts
+
+YuHeard is a **separate channel** from the in-app notification bar
+above and the native OS notifications triggered by bridge turn-end.
+It plays a short **knock sound** (and optional OS notification) when
+any agent running in a CrewCode terminal pane finishes a turn.
+
+YuHeard is the universal companion to the in-app notifications: it
+works for every built-in agent (bridge transport) and for any
+pty-transport agent whose binary talks to the YuHeard socket. See
+[`docs/yuheard.md`](./yuheard.md) for the protocol, the
+`bin/yuheard` CLI, the auto-wrap behavior, and the privacy model.

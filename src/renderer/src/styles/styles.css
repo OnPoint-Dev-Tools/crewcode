@@ -7311,6 +7311,141 @@ body.light .writer-prompt-textarea {
   .canvas-mode-pane-grid { grid-template-columns: 1fr; }
 }
 
+/* =============================================================
+   Canvas Mode — phone (≤768px) and very narrow (≤480px)
+   Mirrors `useMobileLayout()`. Pane row height drops so two panes
+   can share a phone screen, the action cluster wraps instead of
+   overflowing, and touch targets grow to ≥36px. A FAB with the
+   "Add chat / Add terminal" actions sits at the bottom-right of
+   the grid state so users don't have to reach into a pane bar
+   just to add another pane.
+   ============================================================= */
+@media (max-width: 768px) {
+  .canvas-mode-pane-grid {
+    /* Each pane takes at least 60dvh (capped at 600px) so the chat
+       composer + recent messages fit comfortably. Large content scrolls
+       inside the pane body. */
+    grid-auto-rows: minmax(min(60dvh, 600px), 1fr);
+    padding: 8px 8px 96px; /* extra bottom space for FAB */
+  }
+  .canvas-mode-pane-bar {
+    height: auto;
+    min-height: 36px;
+    padding: 4px 8px;
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+  .canvas-mode-pane-title { font-size: 12px; }
+  /* Phone layout replaces the inline cluster with a single overflow button +
+     popover. Hide the desktop cluster; the popover owns every action. */
+  .canvas-mode-pane-actions { display: none; }
+
+  .canvas-mode-pane-menu { position: relative; }
+  .canvas-mode-pane-more {
+    width: 36px; height: 36px;
+    display: grid; place-items: center;
+    background: transparent; border: 0; cursor: pointer;
+    color: var(--muted-foreground);
+    border-radius: 8px;
+  }
+  .canvas-mode-pane-more:active { background: var(--muted); color: var(--foreground); }
+  .canvas-mode-pane-more[aria-expanded="true"] { background: var(--muted); color: var(--foreground); }
+  .canvas-mode-pane-menu-pop {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 20;
+    min-width: 220px;
+    background: var(--popover);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 6px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+  }
+  .canvas-mode-pane-menu-item {
+    display: flex; align-items: center; gap: 10px;
+    width: 100%; text-align: left;
+    background: transparent; border: 0;
+    color: var(--foreground);
+    font-family: var(--font-family-sans); font-size: 13px;
+    padding: 10px 12px; border-radius: 7px;
+    cursor: pointer;
+    min-height: 40px;
+  }
+  .canvas-mode-pane-menu-item .lbl { flex: 1; }
+  .canvas-mode-pane-menu-item:active { background: var(--accent); }
+  .canvas-mode-pane-menu-item:disabled { opacity: 0.55; cursor: not-allowed; }
+  .canvas-mode-pane-menu-item.danger { color: var(--destructive, #f87171); }
+  .canvas-mode-pane-menu-item.danger svg { color: var(--destructive, #f87171); }
+
+  .canvas-mode-pane-log,
+  .canvas-mode-pane-close,
+  .canvas-mode-pane-actions .canvas-mode-button {
+    min-height: 36px;
+  }
+  .canvas-mode-pane-log { padding: 0 9px; }
+  .canvas-mode-pane-close { width: 36px; }
+  .canvas-mode-pane-log:active,
+  .canvas-mode-pane-close:active,
+  .canvas-mode-pane-actions .canvas-mode-button:active { background: var(--muted); }
+  .canvas-mode-pane-toggle-track { width: 36px; height: 20px; }
+  .canvas-mode-pane-toggle-thumb { width: 14px; height: 14px; }
+  .canvas-mode-pane-prompt.on .canvas-mode-pane-toggle-thumb { transform: translateX(16px); }
+
+  /* Header capacity text drops to a short form. */
+  .canvas-mode-cap { font-size: 10.5px; }
+
+  /* FAB and its menu. */
+  .canvas-mode-fab-wrap {
+    position: fixed;
+    right: 12px;
+    bottom: calc(12px + env(safe-area-inset-bottom));
+    z-index: 60;
+    display: flex; flex-direction: column; align-items: flex-end;
+    gap: 8px;
+  }
+  .canvas-mode-fab {
+    width: 48px; height: 48px;
+    border-radius: 50%;
+    display: grid; place-items: center;
+    background: var(--primary);
+    color: var(--primary-foreground, #fafafa);
+    border: 1px solid var(--border);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+    cursor: pointer;
+  }
+  .canvas-mode-fab:active { filter: brightness(1.08); }
+  .canvas-mode-fab-menu {
+    display: flex; flex-direction: column; gap: 4px;
+    background: var(--popover);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 6px;
+    min-width: 180px;
+  }
+  .canvas-mode-fab-item {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: var(--font-family-sans); font-size: 13px;
+    color: var(--foreground);
+    background: transparent; border: 0;
+    padding: 9px 12px; border-radius: 7px; cursor: pointer;
+    text-align: left;
+  }
+  .canvas-mode-fab-item:active { background: var(--accent); }
+}
+
+@media (max-width: 480px) {
+  /* On very narrow phones, drop the empty-hub start-card grid to one column
+     and trim the icon box. */
+  .canvas-mode-start-card {
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 10px;
+  }
+  .canvas-mode-start-icon { width: 32px; height: 32px; }
+  .canvas-mode-start-card h2 { font-size: 14px; }
+  .canvas-mode-start-card p { font-size: 12px; }
+}
+
 @media (max-width: 768px) and (prefers-reduced-motion: reduce) {
   .window-tabs,
   .window-tabs > .wintabs { transition: none; }

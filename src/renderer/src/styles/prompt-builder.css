@@ -972,3 +972,267 @@ body.light .pb-new:hover,
 body.light .pb-card:hover {
   background: color-mix(in srgb, var(--primary) 8%, var(--popover));
 }
+
+/* =============================================================
+   Responsive — tablet (≤1024px) and phone (≤768px)
+   Mirrors `useMobileLayout()` breakpoints. Single source of truth:
+   - ≥1025px: 360px left rail + 1fr detail (default)
+   - 769–1024px: tightened two-pane
+   - ≤768px: one column, list↔detail navigation in PromptBuilder
+   ============================================================= */
+
+/* Back button is rendered conditionally by `PromptDetail` when `onBack` is
+   set (i.e. only on phones). Hidden by default; the 768px block reveals it
+   if the parent forgot to gate it. */
+.pd-back-btn { display: none; }
+
+@media (max-width: 1024px) {
+  .pb { grid-template-columns: 300px 1fr; }
+  .pb-tabs { overflow-x: auto; scrollbar-width: none; flex: 1; min-width: 0; }
+  .pb-tabs::-webkit-scrollbar { display: none; }
+  .pb-tab { white-space: nowrap; }
+  .pb-cats { overflow-x: auto; flex-wrap: nowrap; scrollbar-width: none; }
+  .pb-cats::-webkit-scrollbar { display: none; }
+  .pb-cat { white-space: nowrap; }
+}
+
+@media (max-width: 768px) {
+  .pb { grid-template-columns: 1fr; }
+
+  /* PromptBuilder wires `data-view="detail"` on the root in JSX so we can hide
+     either the rail or the detail without unmounting either subtree. */
+  .pb[data-view="list"]   .pb-right  { display: none; }
+  .pb[data-view="detail"] .pb-left   { display: none; }
+
+  /* ── pb-left: floating centered card on phones. ──────────────────
+     The desktop's full-bleed dark `#0c0f0c` rail becomes a centered
+     floating column with `var(--background)` (light card on dark page).
+     `width: 85%` lets the dark page background frame the sidebar
+     rather than the sidebar spanning edge-to-edge, so it reads as a
+     proper mobile card stack. The wrapper, padding, and radius below
+     keep the card visually contained. */
+  .pb-left {
+    border-right: 0;
+    background: var(--background);
+    margin: auto;
+    width: 85%;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    margin-top: 16px;
+    margin-bottom: 16px;
+    min-height: 0;
+  }
+  .pb-inner {
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .pb-left-h { padding: 12px 16px 10px; gap: 8px; align-items: stretch; }
+  .pb-tabs,
+  .pb-search,
+  .pb-cats,
+  .pb-left-foot { min-width: 0; }
+  /* `.pb-list` is the scrollable region that fills remaining space. With
+     the new `.pb-inner` wrapper between `.pb-left` and the list, the
+     flex chain still needs `flex: 1` on the list so it grows to the
+     bottom of the sidebar instead of collapsing to its content height. */
+  .pb-list {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .pb-title-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+  .pb-tabs {
+    width: 100%;
+    justify-content: center;
+  }
+  .pb-new {
+    margin-left: 0;
+    align-self: center;
+    min-height: 36px;
+    padding: 8px 18px;
+  }
+
+  /* Category chips: scrollable on their own line; the trailing icon
+     buttons form a separate toolbar underneath. */
+  .pb-cats {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    padding: 6px 16px 8px;
+  }
+  .pb-cats-scroll {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 4px;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .pb-cats-scroll::-webkit-scrollbar { display: none; }
+  .pb-cat { white-space: nowrap; }
+  .pb-cats-tools {
+    display: flex;
+    gap: 4px;
+    justify-content: flex-end;
+    align-items: center;
+    border-top: 1px dashed var(--border);
+    padding-top: 6px;
+  }
+  .pb-cats-spacer { display: none; }
+
+  .pb-list { padding: 6px 12px 12px; gap: 6px; }
+
+  /* Card is too tall on phones — tighten padding, type, and gap so a
+     typical phone shows 4–5 cards without scrolling past the metadata. */
+  .pb-card {
+    padding: 9px 12px 9px 16px;
+    gap: 2px;
+    border-radius: 9px;
+    text-align: left;
+    align-items: flex-start;
+  }
+  .pb-card-bar { top: 8px; bottom: 8px; width: 3px; }
+  .pb-card-h    { gap: 6px; font-size: 10.5px; letter-spacing: 0.06em; }
+  .pb-card-title {
+    font-size: 14px;
+    text-align: left;
+    width: 100%;
+    line-height: 1.3;
+  }
+  .pb-card-desc  {
+    font-size: 12px;
+    line-height: 1.4;
+    -webkit-line-clamp: 1;
+    width: 100%;
+  }
+  .pb-card-foot  { gap: 6px; font-size: 10.5px; margin-top: 2px; width: 100%; }
+  .pb-card-on    { font-size: 9.5px; }
+
+  /* Row layout — tighten the row card too so a row with the active dot +
+     metadata reads as a single list line. */
+  .pb-row   { padding: 7px 12px; gap: 8px; border-radius: 6px; }
+  .pb-row-title { font-size: 12px; }
+  .pb-row-desc  { font-size: 10.5px; }
+
+  .pb-search   { padding: 4px 12px; }
+  .pb-search input { font-size: 13px; }
+
+  .pb-icobtn { width: 36px; height: 36px; }
+  .pb-icobtn:active { background: var(--accent); color: var(--foreground); }
+  .pb-left-foot { padding: 8px 16px; justify-content: space-between; }
+  .pb-card:active { background: var(--popover); }
+  .pb-row:active { background: var(--card); border-color: var(--border); }
+  .pb-cat:active { background: var(--accent); color: var(--foreground); }
+  .pb-tab:active { color: var(--foreground); }
+  .pb-new { padding: 8px 12px; min-height: 36px; }
+
+  /* Keyboard hints are noise on a phone. */
+  .pb-search .kbd,
+  .pb-foot-kbd,
+  .pd-save-kbd,
+  .pd-use-kbd,
+  .ppicker-kbd { display: none; }
+
+  /* iOS auto-zoom protection for inputs inside this page. */
+  .pb-search input,
+  .ppicker-search input,
+  .ppicker-fill-row input { font-size: 16px; }
+
+  .pd-h { padding: 8px 12px; gap: 8px; }
+  .pd-h-meta { flex: 1 1 auto; min-width: 0; gap: 6px; }
+  .pd-id { max-width: 100%; }
+  .pd-when { display: none; }
+  .pd-h-actions { gap: 4px; }
+  .pd-icobtn { width: 36px; height: 36px; }
+  .pd-icobtn:active { background: var(--accent); color: var(--foreground); }
+  .pd-save { padding: 7px 11px; min-height: 36px; }
+  .pd-use { padding: 7px 13px; min-height: 36px; }
+
+  .pd-title-row { padding: 12px 14px 2px; }
+  .pd-title { font-size: 20px; }
+  .pd-desc { padding: 2px 14px 6px; }
+
+  .pd-chips { padding: 4px 12px 10px; gap: 6px; flex-wrap: wrap; }
+  .pd-mdt { padding: 4px 8px; gap: 2px; flex-wrap: wrap; }
+  .pd-mdt-btn { width: 36px; height: 36px; }
+  .pd-mdt-btn:active { background: var(--accent); color: var(--foreground); }
+  .pd-view-seg button { padding: 5px 10px; min-height: 32px; }
+
+  .pd-toggle { width: 44px; height: 24px; }
+  .pd-toggle-knob { width: 18px; height: 18px; }
+  .pd-toggle.on .pd-toggle-knob { transform: translateX(20px); }
+
+  /* On phones, the 50/50 split is unreadable. Always stack source over preview
+     regardless of the `mdMode` prop. The user can still choose to hide either
+     side via the segmented control. */
+  .pd-body.md-mode-split { grid-template-columns: 1fr; }
+  .pd-body.md-mode-split .pd-source { min-height: 180px; max-height: 45vh; }
+  .pd-body.md-mode-split .pd-preview { border-left: 0; border-top: 1px solid var(--border); }
+
+  .pd-source { padding: 14px 16px; }
+  .pd-preview { padding: 16px 18px; }
+
+  .pd-vars { padding: 10px 14px; }
+
+  .pd-back-btn {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-family: var(--font-family-sans); font-size: 12.5px; font-weight: 500;
+    color: var(--foreground);
+    background: var(--card); border: 1px solid var(--border);
+    padding: 7px 12px; border-radius: 8px; cursor: pointer;
+    min-height: 36px;
+  }
+  .pd-back-btn:active { background: var(--accent); }
+
+  .pd-blank { padding: 32px 16px; }
+
+  /* Prompt Picker popover (composer-launched, same CSS file). On phones the
+     fixed center-positioned overlay becomes a full-bleed bottom sheet and the
+     side fill panel collapses to a top section. */
+  .ppicker {
+    top: auto; bottom: 0; left: 0; right: 0;
+    transform: none;
+    width: 100%;
+    max-width: none;
+    max-height: 86dvh;
+    border-radius: 16px 16px 0 0;
+  }
+  .ppicker-body { flex-direction: column; }
+  .ppicker-fill {
+    width: 100%;
+    border-left: 0;
+    border-bottom: 1px solid var(--border);
+    max-height: 180px;
+    flex-shrink: 0;
+  }
+
+  .pd-menu { min-width: 0; }
+  .pb-cat-menu-wrap .pd-menu {
+    position: fixed;
+    left: 8px; right: 8px; bottom: calc(8px + env(safe-area-inset-bottom)); top: auto;
+    min-width: 0;
+  }
+}
+
+@media (max-width: 768px) and (prefers-reduced-motion: reduce) {
+  .pb-card, .pb-row, .pb-cat, .pb-tab, .pb-icobtn, .pd-icobtn, .pd-mdt-btn, .pd-back-btn {
+    transition: none;
+  }
+}
+
+@media (max-width: 414px) {
+.pb-left {
+    background: var(--background);
+    margin: auto;
+    width: 85%;
+  }
+}

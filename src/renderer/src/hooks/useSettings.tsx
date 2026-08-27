@@ -114,6 +114,12 @@ export interface SettingsState {
   // Native OS notifications can use the platform sound, a restrained CrewCode
   // tone, or remain silent. Custom tones are synthesized without bundled media.
   notificationSound: NotificationSoundId
+  // YuHeard: terminal agent-done alerts. Plays a knock sound (and optionally
+  // an OS notification) when an agent running in a CrewCode PtyPane reports
+  // completion. Disabled by toggling yuheardEnabled off; auto-wrap controls
+  // whether plain shell panes also intercept `claude`/`codex`/etc. commands.
+  yuheardEnabled: boolean
+  yuheardAutoWrap: boolean
   // Hide internal reasoning/tool/work-log rows in chat surfaces, leaving the
   // conversation focused on user prompts and final agent replies.
   hideVerboseAgentLogs: boolean
@@ -203,6 +209,8 @@ export const DEFAULT_SETTINGS: SettingsState = {
   onboardingCompleted: false,
   nativeNotifications: true,
   notificationSound: 'system',
+  yuheardEnabled: true,
+  yuheardAutoWrap: true,
   hideVerboseAgentLogs: false,
   showTodoActivity: true,
   alwaysCommitUnsigned: false,
@@ -401,6 +409,13 @@ export function useSettings(): SettingsCtx {
   const ctx = useContext(Ctx)
   if (!ctx) throw new Error('useSettings must be used within <SettingsProvider>')
   return ctx
+}
+
+/** Read the current settings from localStorage without subscribing.
+ *  Use this from imperative callbacks (socket listeners, IPC handlers)
+ *  where you need the live value but cannot use the React hook. */
+export function getCurrentSettings(): SettingsState {
+  return loadInitial()
 }
 
 // Resolve per-surface typography against the global mono fallback. Empty

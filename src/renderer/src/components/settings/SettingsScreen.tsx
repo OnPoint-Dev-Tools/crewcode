@@ -359,10 +359,10 @@ function GeneralSection({ state, set, workspace }: { state: SettingsState; set: 
           </div>
           <Seg<DefaultMode> value={state.defaultMode} options={['ask','plan','build','full']} onChange={v => set('defaultMode', v)} />
         </div>
-        <div className="ss-row" data-q="default branch git detected branches new chat session worktree">
+        <div className="ss-row" data-q="default branch git detected branches new chat session worktree comparison base sidebar workspace">
           <div>
-            <div className="label">Default branch for new chats</div>
-            <div className="help">New chat sessions in {workspace?.name ?? 'the active workspace'} start on this detected branch. Existing chats keep their current branch.</div>
+            <div className="label">Default branch</div>
+            <div className="help">New chats in {workspace?.name ?? 'the active workspace'} start on this branch. Git Workspace and Git Sidebar also compare the active worktree against it; existing chats keep their current branch.</div>
             {branchesError ? <div className="help" style={{ color: 'var(--destructive)' }}>{branchesError}</div> : null}
           </div>
           <select
@@ -370,7 +370,7 @@ function GeneralSection({ state, set, workspace }: { state: SettingsState; set: 
             value={selectedDefaultBranch}
             disabled={!workspace || workspace.kind !== 'repo' || branchesLoading}
             onChange={event => setDefaultBranch(event.target.value)}
-            aria-label="Default branch for new chats"
+            aria-label="Default branch"
           >
             <option value="">{branchesLoading ? 'Detecting branches…' : workspace?.branch ? `Workspace checkout (${workspace.branch})` : 'Workspace checkout'}</option>
             {selectedDefaultBranch && !detectedBranches.includes(selectedDefaultBranch) ? <option value={selectedDefaultBranch}>{selectedDefaultBranch} (unavailable)</option> : null}
@@ -442,6 +442,27 @@ function GeneralSection({ state, set, workspace }: { state: SettingsState; set: 
             options={[...NOTIFICATION_SOUND_IDS]}
             onChange={selectNotificationSound}
           />
+        </div>
+        <div className="ss-row" data-q="yuheard terminal agent alert knock">
+          <div>
+            <div className="label">YuHeard alerts</div>
+            <div className="help">Play a knock sound (and optional OS notification) when an agent in a CrewCode terminal pane finishes. Works for built-in bridge agents and for any pty-transport agent that reports via the YuHeard socket. See <code>docs/yuheard.md</code>.</div>
+          </div>
+          <Toggle value={state.yuheardEnabled} onChange={v => set('yuheardEnabled', v)} />
+        </div>
+        <div className="ss-row" data-q="yuheard auto wrap shell function shim">
+          <div>
+            <div className="label">Auto-wrap agent commands</div>
+            <div className="help">In plain shell panes, prepend a shim directory to PATH so typing <code>claude</code>, <code>codex</code>, <code>opencode</code>, <code>grok</code>, <code>hermes</code>, <code>pi</code>, <code>crewcoder</code>, or <code>ollama</code> auto-reports lifecycle to YuHeard. The real binary is exec'd unchanged.</div>
+          </div>
+          <Toggle value={state.yuheardAutoWrap} onChange={v => set('yuheardAutoWrap', v)} />
+        </div>
+        <div className="ss-row" data-q="yuheard test knock sound">
+          <div>
+            <div className="label">Test knock sound</div>
+            <div className="help">Play the knock that YuHeard plays on agent completion.</div>
+          </div>
+          <button className="ss-btn" onClick={() => playNotificationSound('knock')}>Play</button>
         </div>
         <div className="ss-row" data-q="git commit signing gpg ssh passphrase unsigned sign key">
           <div>

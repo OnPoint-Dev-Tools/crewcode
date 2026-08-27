@@ -19,6 +19,7 @@ import type { Mode } from '../composer/ModeSegment'
 import type { EffortLevel } from '../composer/EffortPicker'
 import type { McpServerConfig } from '../../hooks/useSettings'
 import type { VoiceControlSurface } from '../../../../shared/voice-types'
+import type { TurnChangeTarget } from '../thread/turn-changes-data'
 
 type ThreadView = 'chat' | 'code' | 'md'
 
@@ -92,6 +93,8 @@ export interface SoloChatViewProps {
   shortcutOverrides: any
   /** Switch to the code view and reveal the given file in the editor. */
   onOpenFile?: (path: string) => void
+  /** Open one turn/file directly in the turn changes drawer. */
+  onOpenTurnChange?: (target: TurnChangeTarget) => void
   /** File to focus when the code view mounts (relative to workspace root). */
   editorInitialFile?: string | null
   /** Right-click on the thread area — used to open the chat context menu. */
@@ -146,7 +149,7 @@ export function SoloChatView(props: SoloChatViewProps) {
     composerMode, setComposerMode, composer, setComposer, onSend, onRunCommand, onQueueFollowUp, queuedFollowUps = [], onRemoveQueuedFollowUp, isRunning, loadingStatus = null, onStop, agentRequest, custodyHalt, onReauthorizeCustody, onAgentRequestResponse,
     agents, activeAgentId, setActiveAgentId, model, setModel, effort, setEffort,
     mcpEnabled, mcpServers, selectedMcpIds, onToggleMcp,
-    shortcutOverrides, onOpenFile, editorInitialFile, onThreadContextMenu, onOpenPrompts, onOpenBrowser,
+    shortcutOverrides, onOpenFile, onOpenTurnChange, editorInitialFile, onThreadContextMenu, onOpenPrompts, onOpenBrowser,
     delegationEnabled, onToggleDelegation,
     modePromptsEnabled, modePromptsLocked, onToggleModePrompts,
     pluginChatHeaderItems = [], onPluginChatHeaderItem,
@@ -352,7 +355,7 @@ export function SoloChatView(props: SoloChatViewProps) {
             {threadView === 'chat' && (
               messages.length === 0
                 ? <div className="thread-empty">start typing below to begin a chat in <b>{workspace.name}</b></div>
-                : <Messages messages={messages} workspacePath={effectivePath} isRunning={isRunning} loadingStatus={loadingStatus} onOpenFile={onOpenFile} onOpenLink={openThreadLink} scrollParent={threadEl} />
+                : <Messages messages={messages} workspacePath={effectivePath} isRunning={isRunning} loadingStatus={loadingStatus} onOpenFile={onOpenFile} onOpenTurnChange={onOpenTurnChange} onOpenLink={openThreadLink} scrollParent={threadEl} />
             )}
             {threadView === 'md' && <MarkdownEditor root={workspace.path} persistKey={sessionKey} />}
           </div>

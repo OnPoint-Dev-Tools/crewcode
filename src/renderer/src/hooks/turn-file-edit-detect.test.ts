@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildUnifiedDiff, collectTouchedPaths, diffStats, extractFilePathFromToolArgs, extractFilePathsFromToolArgs, extractProviderPatchChanges, isFileEditTool, normalizePatchForPierre, parsePreviewDiff, resultHasPatchSignal } from './turn-file-edit-detect'
+import { buildUnifiedDiff, collectTouchedPaths, diffStats, extractFilePathFromToolArgs, extractFilePathsFromToolArgs, extractPathsFromPatchText, extractProviderPatchChanges, isFileEditTool, normalizePatchForPierre, parsePreviewDiff, resultHasPatchSignal } from './turn-file-edit-detect'
 
 describe('extractFilePathFromToolArgs', () => {
   it('recognizes lowercase file-editing tool names', () => {
@@ -24,6 +24,21 @@ describe('extractFilePathFromToolArgs', () => {
     }
     expect(extractFilePathFromToolArgs('apply_patch', args)).toBe('src/a.ts')
     expect(extractFilePathsFromToolArgs('apply_patch', args)).toEqual(['src/a.ts', 'src/b.ts'])
+  })
+
+  it('extracts every path from apply-patch text and nested edit arrays', () => {
+    const patch = [
+      '*** Begin Patch',
+      '*** Update File: src/a.ts',
+      '*** Add File: src/b.ts',
+      '*** Delete File: src/c.ts',
+      '*** End Patch',
+    ].join('\n')
+    expect(extractPathsFromPatchText(patch)).toEqual(['src/a.ts', 'src/b.ts', 'src/c.ts'])
+    expect(extractFilePathsFromToolArgs('apply_patch', { patch })).toEqual(['src/a.ts', 'src/b.ts', 'src/c.ts'])
+    expect(extractFilePathsFromToolArgs('multiedit', {
+      edits: [{ file_path: 'src/d.ts' }, { path: 'src/e.ts' }],
+    })).toEqual(['src/d.ts', 'src/e.ts'])
   })
 
   it('falls back to common path field names', () => {
@@ -56,6 +71,30 @@ describe('extractFilePathFromToolArgs', () => {
 })
 
 describe('extractProviderPatchChanges', () => {
+  it('splits a multi-file git patch into one Pierre-compatible patch per file', () => {
+    const raw = [
+      'diff --git a/src/a.ts b/src/a.ts',
+      '--- a/src/a.ts',
+      '+++ b/src/a.ts',
+      '@@ -1 +1 @@',
+      '-old a',
+      '+new a',
+      'diff --git a/src/b.ts b/src/b.ts',
+      '--- a/src/b.ts',
+      '+++ b/src/b.ts',
+      '@@ -2 +2 @@',
+      '-old b',
+      '+new b',
+    ].join('\n')
+
+    const changes = extractProviderPatchChanges({ patch: raw })
+    expect(changes.map(change => change.path)).toEqual(['src/a.ts', 'src/b.ts'])
+    for (const change of changes) {
+      expect(change.patch.match(/^diff --git /gm)).toHaveLength(1)
+      expect(change.patch).toMatch(/^@@ .* @@/m)
+    }
+  })
+
   it('normalizes provider patch payloads for Pierre', () => {
     const changes = extractProviderPatchChanges({
       changes: [{ path: 'src/a.ts', kind: { type: 'modify' }, diff: '--- src/a.ts\n+++ src/a.ts\n@@ -1 +1 @@\n-old\n+new\n' }],

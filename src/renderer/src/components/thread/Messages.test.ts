@@ -178,6 +178,60 @@ describe('Messages transcript ordering', () => {
     })
   })
 
+  it('shows every changed file with real stats below the consolidated work log', () => {
+    const messages: Message[] = [
+      {
+        kind: 'toolcall',
+        time: '7:03 PM',
+        turnId: 'turn-files',
+        toolCallId: 'tool-files',
+        toolName: 'edit',
+        args: { path: 'src/alpha.ts' },
+        status: 'completed',
+        fileChanges: [
+          {
+            path: 'src/alpha.ts',
+            beforeText: 'old',
+            afterText: 'new\nnext',
+            patch: 'diff --git a/src/alpha.ts b/src/alpha.ts\n--- a/src/alpha.ts\n+++ b/src/alpha.ts\n@@ -1 +1,2 @@\n-old\n+new\n+next',
+          },
+          {
+            path: 'src/beta.css',
+            beforeText: '',
+            afterText: '.beta {}',
+            patch: 'diff --git a/src/beta.css b/src/beta.css\n--- a/src/beta.css\n+++ b/src/beta.css\n@@ -0,0 +1 @@\n+.beta {}',
+          },
+        ],
+      },
+      {
+        kind: 'agent',
+        time: '7:03 PM',
+        turnId: 'turn-files',
+        blocks: [],
+        text: 'Done',
+        streaming: false,
+      },
+    ]
+    const onOpenTurnChange = vi.fn()
+    let renderer!: TestRenderer.ReactTestRenderer
+    TestRenderer.act(() => {
+      renderer = TestRenderer.create(createElement(Messages, { messages, onOpenTurnChange }))
+    })
+
+    const strip = renderer.root.findByProps({ 'data-worklog-changed-files': true })
+    const text = collectText(renderer.toJSON()).join(' ').replace(/\s+/g, ' ')
+    expect(text).toMatch(/alpha\.ts\s+\+\s*2\s+-\s*1/)
+    expect(text).toMatch(/beta\.css\s+\+\s*1/)
+    expect(strip.findAllByType('button')).toHaveLength(2)
+
+    TestRenderer.act(() => {
+      strip.findByProps({ title: 'View turn diff for src/alpha.ts' }).props.onClick()
+    })
+    expect(onOpenTurnChange).toHaveBeenCalledWith({ turnId: 'turn-files', filePath: 'src/alpha.ts' })
+
+    TestRenderer.act(() => renderer.unmount())
+  })
+
   it('never renders the raw tool-result JSON as a diff for preview-format edits', () => {
     // Regression: an edit tool whose result nests a line-numbered preview under
     // `details.diff` (not a real unified diff) and has no fileChange. The old

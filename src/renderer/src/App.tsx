@@ -24,7 +24,7 @@ import { CrewDiffView }      from './components/crew/CrewDiffView'
 import { CrewGitSidebar }    from './components/crew/CrewGitSidebar'
 import { SettingsScreen }   from './components/settings/SettingsScreen'
 import { PromptBuilder }    from './components/promptBuilder/PromptBuilder'
-import { MissionDataProvider, MissionControlHost, MenuletHost } from './components/mission/MissionDataContext'
+import { MissionDataProvider, MissionControlHost, MenuletHost, MissionActivitySheetHost } from './components/mission/MissionDataContext'
 import { PluginTabHost } from './components/plugins/PluginTabHost'
 import { PluginsPage } from './components/plugins/PluginsPage'
 import { ArchivePage, type ArchivedEntry } from './components/archive/ArchivePage'
@@ -82,6 +82,7 @@ import { useMobileWindowTabsAutoHide } from './hooks/useMobileWindowTabsAutoHide
 import { LOCAL_SHORTCUTS, effectiveChord, matchesChord, type ActionId } from './shortcuts'
 import { useTerminalSessions } from './hooks/useTerminalSessions'
 import { useTerminalUnreadSync, useClearPane } from './stores/terminal-unread-store'
+import { useYuHeardSync, useYuHeardStore } from './stores/yuheard-store'
 import { composerDraftActions } from './stores/composer-draft-store'
 import { useUserRequestsByTab } from './stores/bridge-activity-store'
 import { useCompletedChats } from './hooks/useCompletedChats'
@@ -98,6 +99,7 @@ import { playNotificationSound, usesNativeNotificationSound } from './notificati
 import { playSelectionSpeech, useSelectionSpeechState } from './voice/selection-speech-playback'
 import { resolveSelectedWorktree, worktreeSelectionKey } from './surface-worktree-selection'
 import { isSurfaceOpen, setSurfaceOpen, type SurfaceOpenState } from './surface-ui-state'
+import { getCrewCodeClient } from './runtime/crewcode-client'
 
 import type { Message, TweakConfig, AgentInfo, AgentProviderId, ModeLevel, Session, Tab, GitHubStatus, Command } from './types'
 import type { PluginOpenContext, RegisteredPluginBrowserAction, RegisteredPluginChatAction, RegisteredPluginChatHeaderItem, RegisteredPluginEditorAction, RegisteredPluginGitLens, RegisteredPluginMissionWidget, RegisteredPluginSidebarPanel, RegisteredPluginStatusItem, RegisteredPluginTab, RegisteredPluginTerminalWatcher } from '../../shared/plugin-types'
@@ -773,6 +775,7 @@ export default function App() {
     repoPath:          effectivePath,
     workspacePath:     activeWorkspace.path,
     mainBranch:        activeWorkspace.branch ?? 'main',
+    comparisonRef:     settings.defaultBranchByWorkspace[activeWs]?.trim() || undefined,
     currentWorktreeId: activeWorktreeId,
     // Chat, writer, and Workbench panes own path-scoped Git controllers below.
     // Keep this shared controller dormant for those surfaces to avoid duplicate polling.
@@ -830,18 +833,24 @@ export default function App() {
 
   const openGitFileDiff = useCallback(async (path: string, staged: boolean) => {
     if (!activeWorkspace) return
-    const api = window.electronAPI
-    if (!api) return
-    const r = await api.gitDiff(activeWorkspace.path, path, staged)
+    const api = getCrewCodeClient()
+    const comparisonRef = settings.defaultBranchByWorkspace[activeWs]?.trim()
+    const r = comparisonRef
+      ? await api.gitDiffVsRef(effectivePath, comparisonRef, path)
+      : await api.gitDiff(effectivePath, path, staged)
+    if (r?.error) {
+      show({ type: 'error', message: `diff failed: ${r.error}` })
+      return
+    }
     const diff = r?.diff ?? ''
-    const title = `${staged ? 'staged' : 'unstaged'}: ${path}`
+    const title = comparisonRef ? `vs ${comparisonRef}: ${path}` : `${staged ? 'staged' : 'unstaged'}: ${path}`
     // The diff renders in a dedicated Code Editor tab via <CodeEditor externalDiff>.
     // Reuse the active editor tab if there is one; otherwise open a fresh one.
     if (tabsRef.current.find(t => t.id === activeTabIdRef.current)?.kind !== 'code') {
       handleNewTab('code')
     }
     setPendingGitDiff({ title, diff })
-  }, [activeWorkspace?.path, handleNewTab])
+  }, [activeWorkspace, activeWs, effectivePath, handleNewTab, settings.defaultBranchByWorkspace, show])
 
   // ── Agent registry ───────────────────────────────────────────────────────
   const [agents, setAgents] = useState<AgentInfo[]>([])
@@ -923,6 +932,9 @@ export default function App() {
   // shell, which is what made the Workbench page stutter. Only the drawer badges
   // (useUnreadByPane) re-render on output.
   useTerminalUnreadSync(pty.panes, activeTabId)
+  // Mount the YuHeard IPC listener once. The store dispatches the
+  // sound + OS notification on every `complete` transition.
+  useYuHeardSync()
   const clearPane = useClearPane()
   // Completion metadata (not message arrays) comes straight from the store, so
   // streamed tokens do not make App rebuild the drawer's Completed section.
@@ -1198,6 +1210,43 @@ export default function App() {
     if (session) chatSessions.activate(session.tabId, session.id)
   }, [chatSessions, jumpToWorkspaceTab, restoreChatTabInWorkspace, sessionById, setActiveTabId, tabInfoById, workspaceByChatTabId, ws.workspaces])
 
+  const mobileThreadDeepLinkHandledRef = useRef(false)
+  useEffect(() => {
+    if (mobileThreadDeepLinkHandledRef.current || ws.loading) return
+    const query = new URLSearchParams(window.location.search)
+    const scopeId = query.get('thread')?.trim() ?? ''
+    if (!scopeId) return
+    const tabId = query.get('threadTab')?.trim() ?? ''
+    const workspaceId = query.get('threadWorkspace')?.trim() ?? ''
+    const label = query.get('threadLabel')?.trim() ?? 'Recovered thread'
+    const agentHint = query.get('threadAgent')?.trim() ?? ''
+    const workspace = ws.workspaces.find(item => item.id === workspaceId)
+    const ownsTab = !!workspace && (tabId === workspace.id || tabId.startsWith(`${workspace.id}-`))
+    const ownsScope = scopeId === tabId || scopeId.startsWith(`${tabId}::s`)
+    if (!workspace || !ownsTab || !ownsScope || scopeId.length > 512 || tabId.length > 512) {
+      mobileThreadDeepLinkHandledRef.current = true
+      return
+    }
+    const restored = chatSessions.restoreRemote({
+      id: scopeId,
+      tabId,
+      label,
+      ...(agents.some(agent => agent.id === agentHint) ? { agentId: agentHint } : {}),
+    })
+    if (!restored) {
+      mobileThreadDeepLinkHandledRef.current = true
+      return
+    }
+    if (restored.archived) chatSessions.setArchived(restored.tabId, restored.id, false)
+    restoreChatTabInWorkspace(workspace.id, workspace.name, tabId)
+    setActiveWs(workspace.id)
+    setActiveTabInWorkspace(workspace.id, tabId)
+    chatSessions.activate(tabId, scopeId)
+    mobileThreadDeepLinkHandledRef.current = true
+    for (const key of ['thread', 'threadTab', 'threadWorkspace', 'threadLabel', 'threadAgent']) query.delete(key)
+    window.history.replaceState(null, '', `${window.location.pathname}?${query.toString()}`)
+  }, [agents, chatSessions, restoreChatTabInWorkspace, setActiveTabInWorkspace, ws.loading, ws.workspaces])
+
   const voiceNotificationSource = useCallback((scopeId: string): { chatName: string; workspaceName?: string } => {
     const session = sessionById[scopeId]
     const chatTabId = session?.tabId ?? (scopeId.includes('::') ? scopeId.split('::')[0] : scopeId)
@@ -1319,8 +1368,18 @@ export default function App() {
       if (nativeNotificationsRef.current) {
         queueNativeNotification({ chatName, preview, scopeId })
       }
+
+      // YuHeard: fire a `complete` for the matching PtyPane so the knock
+      // sound + optional OS notification fires for built-in bridge
+      // agents too. Falls back to the chat tab id if no PtyPane exists
+      // for this session (pure-bridge, no embedded terminal).
+      const yuheardPane = pty.panes.find(p =>
+        p.tabId === chatTabId && (session?.agentId ? p.agentId === session.agentId : true)
+      )
+      const yuheardKey = yuheardPane?.paneId ?? `chat:${chatTabId}`
+      useYuHeardStore.getState().applyComplete(yuheardKey, preview, 'bridge')
     })
-  }, [activeWs, completeChatRecency, navigateToChatScope, queueNativeNotification, sessionById, show, subscribeBridgeTurnEnd, tabInfoById, workspaceByChatTabId, ws.workspaces])
+  }, [activeWs, completeChatRecency, navigateToChatScope, pty.panes, queueNativeNotification, sessionById, show, subscribeBridgeTurnEnd, tabInfoById, workspaceByChatTabId, ws.workspaces])
 
   const workspaceAgentStatus = useMemo<Record<string, AgentActivityState | undefined>>(() => {
     const byWorkspace: Record<string, AgentActivityState | undefined> = {}
@@ -2373,6 +2432,7 @@ export default function App() {
           onRespondRequest={bridges.respondUserRequest}
           pluginMissionWidgets={pluginMissionWidgets}
           onPluginMissionWidget={(target) => runPluginActionTarget(target, { source: 'mission-widget' })}
+          onOpenActivity={mobile.isMobile ? () => mobile.onSheetToggle('mission-activity') : undefined}
         />
       )
     }
@@ -3348,6 +3408,11 @@ export default function App() {
             open: mobile.sheets.more?.open ?? false,
             title: 'More',
             content: <MoreSheetContent />
+          },
+          'mission-activity': {
+            open: mobile.sheets['mission-activity']?.open ?? false,
+            title: 'Activity',
+            content: <MissionActivitySheetHost />
           },
         }}
         onSheetToggle={mobile.onSheetToggle}

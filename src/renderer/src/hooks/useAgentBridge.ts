@@ -535,12 +535,16 @@ export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, br
           // tool_end carries no toolName; recover it from the stored toolcall so
           // the git fallback below can gate on whether this was a file edit.
           let endedToolName = ''
+          let endedArgs: unknown = ev.args
+          let endedMetadata: Record<string, unknown> | undefined
           setMessagesForTab(tabId, m => {
             const idx = st.toolByCallId[ev.toolCallId]
             if (idx === undefined || m[idx]?.kind !== 'toolcall') return m
             const next = m.slice()
             const cur  = next[idx] as Extract<Message, { kind: 'toolcall' }>
             endedToolName = cur.toolName
+            endedArgs = ev.args !== undefined ? ev.args : cur.args
+            endedMetadata = cur.metadata
             next[idx] = {
               ...cur,
               status:  ev.isError ? 'error' : 'completed',
@@ -549,7 +553,7 @@ export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, br
               // Opencode often only fills `state.input` / `state.title` by the
               // time the tool completes. Absorb whatever the bridge surfaces
               // on tool_end so the row title can finally render the command.
-              args:    ev.args !== undefined ? ev.args : cur.args,
+              args:    endedArgs,
               title:   ev.title ?? cur.title,
             }
             return next
@@ -563,54 +567,55 @@ export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, br
           if (!ev.isError) {
             const cwd = bridgeToCwdRef.current[ev.bridgeId]
             const api = window.electronAPI
-            if (cwd && api) {
-              ;(async () => {
-                const changes: TurnFileChange[] = []
-                // 1. Before/after snapshots captured at tool_start — most precise.
-                if (pending) {
-                  for (const path of pending.paths) {
-                    const beforeText = await pending.beforeP[path]
-                    const r          = await api.fsReadFile(cwd, path).catch(() => ({ text: '' }))
-                    const afterText  = r.text ?? ''
-                    const patch      = buildUnifiedDiff(path, beforeText, afterText)
-                    if (!patch) continue   // no-op write: same content
-                    changes.push({ path, beforeText, afterText, patch })
-                  }
+            ;(async () => {
+              const changes: TurnFileChange[] = []
+              // 1. Before/after snapshots captured at tool_start — most precise.
+              if (pending && cwd && api) {
+                for (const path of pending.paths) {
+                  const beforeText = await pending.beforeP[path]
+                  const r          = await api.fsReadFile(cwd, path).catch(() => ({ text: '' }))
+                  const afterText  = r.text ?? ''
+                  const patch      = buildUnifiedDiff(path, beforeText, afterText)
+                  if (!patch) continue   // no-op write: same content
+                  changes.push({ path, beforeText, afterText, patch })
                 }
-                // 2. Provider-embedded unified diffs (incl. nested result.details.diff).
-                for (const change of extractProviderPatchChanges(ev.args, ev.result)) {
-                  const relPath = workspaceRelativePath(cwd, change.path)
-                  if (changes.some(c => c.path === relPath)) continue
-                  changes.push({ path: relPath, beforeText: '', afterText: '', patch: change.patch })
+              }
+              // 2. Provider-embedded unified diffs (incl. nested result.details.diff).
+              // This path is transport-neutral: browser clients have no
+              // `window.electronAPI`, but provider patches are already present
+              // in the transcript and still belong in the turn drawer.
+              for (const change of extractProviderPatchChanges(endedMetadata, endedArgs, ev.result)) {
+                const relPath = cwd ? workspaceRelativePath(cwd, change.path) : change.path
+                if (changes.some(c => c.path === relPath)) continue
+                changes.push({ path: relPath, beforeText: '', afterText: '', patch: change.patch })
+              }
+              // 3. Scoped git fallback: when the result format is one we can't
+              // parse (e.g. a line-numbered preview) but the tool still wrote a
+              // file, diff just the touched path(s) against the working tree.
+              // Gated to plausible edits so reads/bash never trigger it, and
+              // scoped to specific files so unrelated changes aren't attributed
+              // to this turn.
+              if (cwd && api && changes.length === 0 && (pending || isFileEditTool(endedToolName, endedArgs) || resultHasPatchSignal(endedMetadata, ev.result))) {
+                const candidates = collectTouchedPaths(endedArgs, endedMetadata, ev.result)
+                  .map(p => workspaceRelativePath(cwd, p))
+                  .filter(Boolean)
+                for (const path of candidates) {
+                  const res  = await api.gitDiff(cwd, path, false).catch(() => null)
+                  const diff = res && 'diff' in res && typeof res.diff === 'string' ? res.diff : ''
+                  if (!diff.trim()) continue
+                  changes.push({ path, beforeText: '', afterText: '', patch: diff })
                 }
-                // 3. Scoped git fallback: when the result format is one we can't
-                // parse (e.g. a line-numbered preview) but the tool still wrote a
-                // file, diff just the touched path(s) against the working tree.
-                // Gated to plausible edits so reads/bash never trigger it, and
-                // scoped to specific files so unrelated changes aren't attributed
-                // to this turn.
-                if (changes.length === 0 && (pending || isFileEditTool(endedToolName, ev.args) || resultHasPatchSignal(ev.result))) {
-                  const candidates = collectTouchedPaths(ev.args, ev.result)
-                    .map(p => workspaceRelativePath(cwd, p))
-                    .filter(Boolean)
-                  for (const path of candidates) {
-                    const res  = await api.gitDiff(cwd, path, false).catch(() => null)
-                    const diff = res && 'diff' in res && typeof res.diff === 'string' ? res.diff : ''
-                    if (!diff.trim()) continue
-                    changes.push({ path, beforeText: '', afterText: '', patch: diff })
-                  }
-                }
-                if (changes.length === 0) return
-                setMessagesForTab(tabId, m => {
-                  const idx = st.toolByCallId[ev.toolCallId]
-                  if (idx === undefined || m[idx]?.kind !== 'toolcall') return m
-                  const next = m.slice()
-                  const cur  = next[idx] as Extract<Message, { kind: 'toolcall' }>
-                  next[idx] = { ...cur, fileChange: changes[0], fileChanges: changes }
-                  return next
-                })
-              })()
-            }
+              }
+              if (changes.length === 0) return
+              setMessagesForTab(tabId, m => {
+                const idx = st.toolByCallId[ev.toolCallId]
+                if (idx === undefined || m[idx]?.kind !== 'toolcall') return m
+                const next = m.slice()
+                const cur  = next[idx] as Extract<Message, { kind: 'toolcall' }>
+                next[idx] = { ...cur, fileChange: changes[0], fileChanges: changes }
+                return next
+              })
+            })()
           }
           return
         }

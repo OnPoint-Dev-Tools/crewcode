@@ -9,6 +9,7 @@
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import type { PtyPane } from '../types'
+import { getCurrentSettings } from './useSettings'
 
 let counter = 0
 function nextPaneId(prefix: string): string {
@@ -124,11 +125,21 @@ export function useTerminalSessions() {
   const startPty = useCallback((pane: PtyPane) => {
     // Start on creation, not xterm mount: hidden tabs/workspaces must keep
     // shell and agent work running until the user explicitly closes them.
+    // YuHeard: read settings live (no subscription) so toggles take effect
+    // without a re-mount. The main process decides what to inject based on
+    // these flags.
+    const settings = getCurrentSettings()
+    const wrapAgentIds = settings.yuheardAutoWrap
+      ? Object.entries(settings.connections).filter(([, on]) => on).map(([id]) => id)
+      : []
     void window.electronAPI?.ptyCreate?.({
       paneId: pane.paneId,
       cwd: pane.cwd,
       shell: pane.shell,
       argv: pane.argv,
+      agentId: pane.agentId ?? null,
+      autoWrap: settings.yuheardAutoWrap && !pane.agentId && pane.shell !== 'ssh',
+      wrapAgentIds,
     })
   }, [])
 

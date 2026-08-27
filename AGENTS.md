@@ -147,7 +147,19 @@ The shared React renderer supports desktop and direct browser clients. New rende
 
 Remote-access credentials are authority boundaries. Pairing tokens must remain short-lived, memory-only, and single-use. Persist only device-session digests in owner-only atomic stores; enforce expiry and revocation. Browser HTTP/WebSocket origins must match exactly or be explicitly configured—never reflect arbitrary `Origin`/forwarded headers. Keep authentication limiters bounded, and do not hardcode CJ's `crewcode.logixhub.icu` deployment as a default Hub URL.
 
+Browser delegation keeps its agent-facing endpoint Brain-loopback and bearer-scoped;
+delegate requests, editor watches, and LSP handles remain bound to the authenticated
+browser session that owns them. Browser plugin iframes load only approved plugin
+assets through expiring asset-only grants and continue to invoke capabilities through
+the trusted renderer plus manifest permission gate. Remote GitHub UI may drive the
+Brain's `gh` device login and registered-workspace publishing, but must never expose
+the Brain's GitHub credential or allow remote logout.
+
 The self-hosted Hub is a separate `crewcode hub` process, not Electron renderer state. Keep its SQLite store owner-only and server-side; persist WebAuthn public credentials and only digests of browser/CSRF secrets. Bootstrap credentials and WebAuthn challenges stay short-lived and memory-only. Require user verification, exact configured RP origin/id, one-use challenges, secure HttpOnly SameSite cookies, and CSRF checks for mutations. Machine enrollment tokens must also stay short-lived, memory-only, single-use, and rate-limited; persist only machine bearer digests at the Hub and keep the brain credential file owner-only. Presence and relay connections are outbound-only and revocation must fail closed. Hub connection tickets remain short-lived, memory-only, one-shot, browser-session/user/machine bound, and exact-origin protected. Relay application frames must stay end-to-end encrypted and ordered; the Hub may route metadata but must not receive RPC/source/terminal/agent plaintext. Do not let Hub identity, machine presence, or requested ticket scope imply Brain execution authority: `crewcode brain` defaults to no RPC grants, and every decrypted method must pass both explicit Brain-local scope and registered-workspace validation. Relay loss means pending outcomes are interrupted, never successful.
+
+Remote cross-thread conversation handoff stays Brain-local. Namespace browser replay shards under `web:`; never copy the replay store into browser persistence. Require an authenticated owner-held destination bridge and Brain-local `agent` scope, refuse handoff while the destination is running, perform bounded disposable summarization on the Brain, clear the destination native resume id, and replay the combined destination history exactly once on its next native-provider prompt. Missing history, lost ownership, or summary failure is an explicit failure, never inferred success.
+
+The Hub mobile home is control-plane-only until a user selects an online machine. At ≤768px an authenticated Hub root may route to `/app?hub=mobile`, where `MobileDashboard` reads only cookie-authenticated Hub session and machine-presence data. Do not install a Brain runtime, request relay authority, expose fake agent/worktree statistics, or affect Electron/direct-server/desktop startup from this route. Machine selection enters `/app?hub=mobile&machine=…`, which may open a disposable end-to-end encrypted, Brain-scoped mobile overview; it must request only the scopes needed for real stats, render unavailable values explicitly, return bounded recent-thread metadata rather than transcript bodies, and close its relay before the full renderer opens. Compatibility fallback for an older Brain may use `transcripts.mtimes` to render untitled saved rows, but must never use `transcripts.loadAll` for this overview. Mobile overview counts must use the canonical Mission Control `deriveMissionStats` aggregation over Brain-visible transcript sessions and executions; do not duplicate `mc-stats` semantics, and do not classify completed solo turns as done. A recent-row deep link must carry a bounded workspace/tab/scope descriptor, validate workspace→tab→scope ownership after transcript hydration, preserve the exact transcript scope id when restoring a missing browser session, and refuse invalid/conflicting descriptors. Only the explicit full-app action enters `/app?machine=…` without a thread target. Keep `/?hub-admin=1` as the mobile escape hatch for Hub account and device administration.
 
 ### Path alias
 
@@ -158,6 +170,12 @@ The self-hosted Hub is a separate `crewcode hub` process, not Electron renderer 
 The design system lives in `.design/crewcode-design-system/`. The canonical CSS tokens are in `src/renderer/src/styles/colors_and_type.css`.
 
 Renderer components may use Tailwind v4 utilities through the utilities-only integration in `src/renderer/src/styles/tailwind.css`. Preflight must stay disabled so incremental conversions do not reset unrelated app surfaces. Use the `cc-*` semantic Tailwind colors, which map to the canonical live CSS tokens; see `docs/tailwind-renderer.md`.
+
+The final work-log changed-file chips and Turn Changes drawer must use the same turn-change aggregation. A chip targets its exact turn/file in the drawer with the agent-summary/list sidebar closed; do not route it through the ordinary editor file-open action or rebuild a second, lossy file list.
+
+Normalize multi-file provider output into one unified patch per file before rendering. Repeated edits to one file must merge their hunks under one canonical `diff --git` header so `PierreDiff` receives a single-file patch and does not drop to the raw fallback.
+
+Git Sidebar `gs-changes-list` rows open the active worktree's diff in Code Editor's existing `PierreDiff` surface. Git Workspace and Git Sidebar share `useGitSidebar` comparison state and use the workspace-scoped Settings default branch as a read-only base; never checkout that branch implicitly, diff the primary workspace when a worktree is active, or expose staging actions for committed comparison-only rows.
 
 **Hard rules:**
 
@@ -177,7 +195,7 @@ Three tsconfigs compose via project references:
 
 ## Current state
 
-Read this file only when working on any of the features below and need the Current state of them `CrewCoder provider`, `ACP Grok Build`, `Sidebar Folder Creation`, `Crew Supervisor`, `Delegated Threads`,`Chat Archiving`, `Hide work Logs`, `Realtime Voice Orb`, `Notifcation Sound`, `Agent Messages`, `Agent Task Activity`, `Cusromization Panel`, `Queued Messages`, `Composer Execution Modes & reasoning`, `Claude SDK Global skills isolation`, `Provider Switch Handoff & Compact`, `Chat`, `Markdown Editor`, `Code Editor`, `Workbench Mode`, `Git Workspace/Sidebar`, [Current State](docs/current-state.md)
+Read this file only when working on any of the features below and need the Current state of them `CrewCoder provider`, `ACP Grok Build`, `Sidebar Folder Creation`, `Crew Supervisor`, `Delegated Threads`,`Chat Archiving`, `Hide work Logs`, `Realtime Voice Orb`, `Notifcation Sound`, `Agent Messages`, `Agent Task Activity`, `Cusromization Panel`, `Queued Messages`, `Composer Execution Modes & reasoning`, `Claude SDK Global skills isolation`, `Provider Switch Handoff & Compact`, `Chat`, `Markdown Editor`, `Code Editor`, `Workbench Mode`, `Git Workspace/Sidebar`, `Mobile-responsive Pages`, [Current State](docs/current-state.md)
 
 Provider context handoff is initiated from the Solo Chat header or `/handoff`. Preserve the destination-card behavior, existing-chat provider/model/effort locking, visible destination meter, and disposable destination-provider summary flow documented in `docs/provider-context-handoff.md`.
 

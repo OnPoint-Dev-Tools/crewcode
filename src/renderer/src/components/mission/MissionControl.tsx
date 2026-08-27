@@ -4,7 +4,9 @@ import type { AgentUserResponse } from '../../types'
 import {
   StatStrip, BlockingBanner, Toolbar, AgentCard, GroupHeader, ActivityFeed,
 } from './MCComponents'
+import { deriveMissionStats } from './mission-stats'
 import { DEFAULT_HUB_TITLE, useHubTitle } from './useHubTitle'
+import { useMobileLayout } from '../../hooks/useMobileLayout'
 import type { RegisteredPluginMissionWidget } from '../../../../shared/plugin-types'
 
 function groupAgents(agents: MCAgent[], projects: MCProject[], grouping: Grouping): Group[] {
@@ -66,15 +68,22 @@ interface MissionControlProps {
   onRespondRequest?: (response: AgentUserResponse) => void | Promise<unknown>
   pluginMissionWidgets?: RegisteredPluginMissionWidget[]
   onPluginMissionWidget?: (target: { pluginId: string; sidebarPanel?: string; tab?: string; command?: string }) => void
+  /**
+   * Phone-only — the activity feed is moved out of layout into a MobileShell
+   * sheet. When this is set, `.mc-side` is hidden on mobile and a header
+   * "Activity" button calls it to reveal the sheet.
+   */
+  onOpenActivity?:  () => void
 }
 
 export function MissionControl({
   agents, projects, feed,
   onOpenAgent, onPauseAgent, onResumeAgent, onSpawnAgent, onRespondRequest,
-  pluginMissionWidgets = [], onPluginMissionWidget,
+  pluginMissionWidgets = [], onPluginMissionWidget, onOpenActivity,
 }: MissionControlProps) {
   const [filter,   setFilter]   = useState<Filter>('all')
   const [grouping, setGrouping] = useState<Grouping>('project')
+  const { isMobile } = useMobileLayout()
 
   // Hero title — Mission Control's own label, independent of CrewSession.name.
   const { title: hubTitle, setTitle: setHubTitle } = useHubTitle()
@@ -112,7 +121,7 @@ export function MissionControl({
     [filtered, projects, grouping],
   )
 
-  const worktreeCount = new Set(agents.map(a => `${a.projectId}/${a.worktree}`)).size
+  const missionStats = deriveMissionStats(agents)
 
   return (
     <div className="mc">
@@ -144,7 +153,7 @@ export function MissionControl({
                   {hubTitle || DEFAULT_HUB_TITLE}
                 </button>
               )}
-              <span className="ct">{agents.length} agents · {projects.length} projects · {worktreeCount} worktrees</span>
+              <span className="ct">{missionStats.agents} agents · {projects.length} projects · {missionStats.worktrees} worktrees</span>
             </h1>
           </div>
           <StatStrip agents={agents} />
@@ -157,6 +166,8 @@ export function MissionControl({
           grouping={grouping} setGrouping={setGrouping}
           agents={agents}
           onSpawn={onSpawnAgent}
+          onOpenActivity={isMobile ? onOpenActivity : undefined}
+          activityCount={feed.length}
         />
 
         <div className="mc-groups">
@@ -197,21 +208,23 @@ export function MissionControl({
         </div>
       </div>
 
-      <div className="mc-side">
-        {pluginMissionWidgets.length > 0 && (
-          <div style={{ border: '1px solid var(--border)', background: 'var(--card)', padding: 12, marginBottom: 12 }}>
-            <div style={{ fontFamily: 'var(--font-family-mono)', fontSize: 11, color: 'var(--muted-foreground)', marginBottom: 8 }}>plugin widgets</div>
-            <div style={{ display: 'grid', gap: 8 }}>
-              {pluginMissionWidgets.map(widget => (
-                <button key={widget.registrationId} className="ss-btn" onClick={() => onPluginMissionWidget?.(widget)} title={`${widget.title} · ${widget.pluginId}`}>
-                  {widget.text ?? widget.title}
-                </button>
-              ))}
+      {!isMobile && (
+        <div className="mc-side">
+          {pluginMissionWidgets.length > 0 && (
+            <div style={{ border: '1px solid var(--border)', background: 'var(--card)', padding: 12, marginBottom: 12 }}>
+              <div style={{ fontFamily: 'var(--font-family-mono)', fontSize: 11, color: 'var(--muted-foreground)', marginBottom: 8 }}>plugin widgets</div>
+              <div style={{ display: 'grid', gap: 8 }}>
+                {pluginMissionWidgets.map(widget => (
+                  <button key={widget.registrationId} className="ss-btn" onClick={() => onPluginMissionWidget?.(widget)} title={`${widget.title} · ${widget.pluginId}`}>
+                    {widget.text ?? widget.title}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
-        )}
-        <ActivityFeed feed={feed} projects={projects} />
-      </div>
+          )}
+          <ActivityFeed feed={feed} projects={projects} />
+        </div>
+      )}
     </div>
   )
 }

@@ -57,6 +57,62 @@ CrewCode supports two distinct deployment modes. They must share the typed clien
 contract, but must not share credentials or silently fall back from one trust model
 to the other.
 
+### `crewcode serve` compared with Hub relay
+
+`crewcode serve` is a single-machine direct server: the browser connects to the
+same process that owns the workspaces, terminals, agents, transcripts, and provider
+credentials. Hub relay is a multi-machine access architecture: the browser signs in
+to a separate `crewcode hub`, chooses an enrolled machine, and reaches that machine's
+outbound-connected `crewcode brain` through an end-to-end encrypted tunnel. The Hub
+is identity, discovery, ticketing, and routing infrastructure; it is not the Brain
+and does not execute workspace operations.
+
+| Concern | `crewcode serve` | Self-hosted Hub relay |
+| --- | --- | --- |
+| Processes | One direct server | One `crewcode hub` plus `crewcode brain` on each enrolled machine |
+| Browser route | Browser connects directly to the Brain | Browser connects to Hub; Hub routes encrypted frames to the selected Brain |
+| Network reachability | The Brain must be reachable from the browser | Brains connect outbound; only the Hub needs a browser-reachable endpoint |
+| Authentication | One-time pairing URL exchanged for a revocable Brain-local device session | Passkey Hub session, machine selection, and a short-lived one-shot connection ticket |
+| Authorization | The direct server enforces its configured workspace roots | Hub identity cannot grant execution; the Brain independently enforces explicit roots and `workspace:read`, `workspace:write`, `terminal`, and `agent` scopes |
+| Encryption | Direct HTTP/WebSocket; use Tailscale HTTPS or a deliberately configured TLS reverse proxy outside loopback | HTTPS to the Hub plus end-to-end encrypted application frames between browser and Brain; the Hub cannot read RPC, source, terminal, or agent plaintext |
+| Machine discovery | None; each direct server has its own URL | Enrolled machines and presence appear in one owner dashboard |
+| Browser disconnect | The Brain process can remain alive, but direct mode has no Hub-owned detached-event claim protocol | The Brain retains bounded detached events and supports same-owner bridge claiming and persisted latest-reply recovery while Brain custody remains valid |
+| Default data | `~/.crewcode` | Hub identity in `~/.crewcode/hub`; Brain credentials/policy in `~/.crewcode/brain` and runtime state in its `runtime/` child |
+| Operational cost | One process and one pairing flow | Hub TLS/passkeys, machine enrollment, Brain policy, connection tickets, presence, and relay lifecycle |
+
+Choose direct mode for one machine over loopback, a trusted LAN, or a trusted
+tailnet. Choose Hub relay when users need one authenticated dashboard for multiple
+machines, phone access, passkey login, or machines that cannot accept inbound
+connections. Hub relay provides a stronger multi-machine topology, not a blanket
+security upgrade: it has more moving parts and remains a preview with the limitations
+listed below.
+
+Example direct server:
+
+```bash
+crewcode serve \
+  --host 127.0.0.1 \
+  --workspace-root /path/to/projects
+```
+
+Example Hub deployment:
+
+```bash
+# On the persistent Hub host:
+crewcode hub mobile --tailscale
+
+# On each development machine, enroll once:
+crewcode enroll --hub https://your-hub.example
+
+# Then run the outbound Brain with explicit local authority:
+crewcode brain \
+  --workspace-root /path/to/projects \
+  --allow-scope workspace:read \
+  --allow-scope workspace:write \
+  --allow-scope terminal \
+  --allow-scope agent
+```
+
 ### Direct mode (implemented preview)
 
 The brain serves the React application and API itself. A browser opens a one-time
@@ -72,6 +128,34 @@ enrollment/presence, short-lived one-shot connection tickets, a bounded outbound
 relay, and an end-to-end encrypted browser-to-Brain transport. The Hub dashboard can
 open the shared renderer for an online machine. Workspace, terminal, and agent RPC
 use the existing typed web-client adapter through the encrypted tunnel.
+
+After passkey authentication, Hub visits at the renderer's mobile breakpoint
+(`innerWidth <= 768`) enter `/app?hub=mobile` and show `MobileDashboard` before a
+machine is selected. This home reads only the owner name and enrolled-machine
+presence from the Hub control plane; it does not install a Brain client, request a
+connection ticket, or invent agent/worktree activity. Selecting an online machine
+opens `/app?hub=mobile&machine=<id>` first. That selected-machine overview obtains a
+short-lived ticket and a disposable end-to-end encrypted tunnel requesting only
+`workspace:read` and `agent`. It reads real workspace/worktree counts and the
+same-owner Brain execution registry; a denied value is shown as unavailable rather
+than replaced with zero or mock data. The recent-thread RPC returns at most five
+metadata summaries (opaque scope id, file timestamp, and a 240-character first-user
+title seed), never assistant replies or complete transcript bodies. The Hub still
+sees only relay metadata and ciphertext. When an older, already-running Brain returns
+`UNSUPPORTED` for that method, the renderer uses the existing `transcripts.mtimes`
+index to show timestamped untitled rows; it never falls back to `transcripts.loadAll`.
+The overview adapts the Brain's transcript timestamp index plus live execution registry
+into Mission-agent status records and runs the same `deriveMissionStats` aggregation
+used by desktop `mc-stats`; completed solo turns remain idle, while only completed
+crew-lane lifecycles count as done. A recent row includes a bounded workspace id, tab
+id, scope id, label, and optional provider hint in the full-app URL. After authoritative
+transcript hydration, App validates that the workspace owns the tab and the tab owns
+the scope, restores the exact session id when necessary, and focuses it. The generic
+full-app action omits that descriptor. Either navigation closes the overview tunnel
+before the full runtime requests its own ticket. `/?hub-admin=1`
+deliberately returns a phone to Hub device/account administration without triggering
+the mobile redirect. Desktop Hub visits and direct `crewcode serve` browsers keep
+their existing startup behavior.
 
 This is still a preview: recovery codes, live dashboard updates, persisted remote
 crash-durable execution custody, attachment tunneling, cross-device chat discovery,
@@ -93,6 +177,15 @@ not replay the unobserved prompt. After reconnect, CrewCode can recover the late
 persisted assistant reply and an explicit new user prompt idempotently reasserts the
 stable bridge, creating a replacement provider process only when the Brain's
 process-local execution registry is gone.
+
+Cross-thread context handoff also remains Brain-local. Browser chat scopes are
+namespaced as `web:<session>` and persisted in per-session conversation shards; the
+browser never receives the replay store. An authenticated browser may hand a source
+chat into a destination bridge it owns while the Brain-local `agent` grant remains
+valid. The Brain performs bounded disposable summarization, updates the destination
+shard, clears its native resume id, and replays that combined history on the next
+prompt. Handoff refuses a running destination and reports missing history or summary
+failure explicitly.
 
 A user runs one always-on **CrewCode Hub** on a Linux desktop, headless server,
 NAS, or other trusted host. The Hub serves the React application, local sign-in,
@@ -475,7 +568,25 @@ dictation, and speech; permanent keys remain server-side, remote key mutation is
 denied, and remote audio is bounded to 8 MiB. Browser editor formatting is routed to
 workspace-local Prettier through the sandboxed filesystem service.
 
-Delegation/Crew lifecycle transport, plugin iframe asset/capability routing,
-Brain-local voice sidecars, remote GitHub login/logout/repository publishing, file
-watch events, and language-server framing remain incomplete browser work. They must
-not be represented as enabled merely because the shared desktop UI mounts.
+Browser delegation now mints a Brain-loopback, per-parent bearer endpoint and
+correlates its thread operations to the authenticated browser that owns the parent.
+The renderer still authoritatively enforces depth one and parent/child ownership;
+the Brain additionally enforces token-leak refusal, request limits, mode policy,
+and concurrency caps before forwarding a request.
+
+Approved plugin panels load in sandboxed iframes from short-lived, asset-only
+capability URLs. Those URLs grant access only to files under one approved plugin
+folder; they do not contain the browser session credential. Capability calls still
+flow through the trusted renderer and the existing manifest permission gate, with
+workspace roots revalidated against the Brain registry. Approval, enablement, and
+installation remain Brain-local administration operations.
+
+Open-file polling and TypeScript language-server framing run on the Brain. Watch
+events and LSP messages are delivered only to the authenticated browser session
+that owns the watch/handle, and handle send/stop operations reject cross-session
+ownership. GitHub device login output and codes stream from Brain-owned `gh`; PR
+operations and repository publishing are confined to registered workspace roots,
+and the browser never receives GitHub credentials. Remote GitHub logout remains
+disabled so a browser cannot revoke the Brain's host credential unexpectedly.
+
+Brain-local voice sidecars remain incomplete browser work.

@@ -310,11 +310,13 @@ interface ChangesBodyProps {
   onUnstageAll?: (paths: string[]) => void
   onDiscard?:  (path: string) => void
   onOpenDiff?: (path: string, staged: boolean) => void
+  comparisonRef?: string
 }
 
-function ChangesBody({ changes, onStage, onUnstage, onStageAll, onUnstageAll, hasUnpushed, onOpenDiff }: ChangesBodyProps) {
+function ChangesBody({ changes, onStage, onUnstage, onStageAll, onUnstageAll, hasUnpushed, onOpenDiff, comparisonRef }: ChangesBodyProps) {
   const staged = changes.filter(c => c.staged)
   const unstaged = changes.filter(c => !c.staged)
+  const stageableUnstaged = unstaged.filter(c => c.stageable !== false)
 
   return (
     <>
@@ -352,8 +354,8 @@ function ChangesBody({ changes, onStage, onUnstage, onStageAll, onUnstageAll, ha
       {unstaged.length > 0 && (
         <>
           <div className="gs-section-head">
-            Changes · {unstaged.length}
-            <button className="stage-toggle" onClick={() => onStageAll ? onStageAll(unstaged.map(f => f.path)) : unstaged.forEach(f => onStage?.(f.path))}>stage all</button>
+            {comparisonRef ? `Changes vs ${comparisonRef}` : 'Changes'} · {unstaged.length}
+            {stageableUnstaged.length > 0 && <button className="stage-toggle" onClick={() => onStageAll ? onStageAll(stageableUnstaged.map(f => f.path)) : stageableUnstaged.forEach(f => onStage?.(f.path))}>stage all</button>}
           </div>
           <div className="gs-changes-list">
             {unstaged.map(f => (
@@ -369,11 +371,13 @@ function ChangesBody({ changes, onStage, onUnstage, onStageAll, onUnstageAll, ha
                   {f.add ? <span className="add">+{f.add}</span> : null}
                   {f.del ? <span className="del">−{f.del}</span> : null}
                 </span>
-                <button
-                  className="gs-file-action"
-                  title="stage"
-                  onClick={e => { e.stopPropagation(); onStage?.(f.path) }}
-                >+</button>
+                {f.stageable !== false && (
+                  <button
+                    className="gs-file-action"
+                    title="stage"
+                    onClick={e => { e.stopPropagation(); onStage?.(f.path) }}
+                  >+</button>
+                )}
               </div>
             ))}
           </div>
@@ -928,7 +932,7 @@ export function GitSidebar({
         {!hideSections.changes && (
           <GsCard
             icon="gitCompare"
-            title="Changes"
+            title={state.comparisonRef ? `Changes vs ${state.comparisonRef}` : 'Changes'}
             count={(state.changes || []).length || null}
             open={open.changes}
             onToggle={() => toggle('changes')}
@@ -942,6 +946,7 @@ export function GitSidebar({
               onUnstageAll={onUnstageAll}
               onDiscard={onDiscardFile}
               onOpenDiff={onOpenFileDiff}
+              comparisonRef={state.comparisonRef}
             />
           </GsCard>
         )}

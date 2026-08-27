@@ -10,6 +10,8 @@ import { HandoffCard, type HandoffSelection } from './HandoffCard'
 import { CrewBranch } from './CrewBranch'
 import { GitSidebar } from '../git/GitSidebar'
 import { TurnChangesDrawer } from '../thread/TurnChangesDrawer'
+import { collectTurnChangeEntries } from '../thread/turn-changes-data'
+import type { TurnChangeTarget } from '../thread/turn-changes-data'
 import { useGitSidebar, type GitAuthCredentials, type GitAuthRequest, type GitSigningRequest } from '../../hooks/useGitSidebar'
 import { MODE_FROM_SETTINGS, MODE_TO_LEVEL, normalizeModeLevel } from '../../app-constants'
 import { titleFromFirstMessage } from '../../hooks/useChatSessions'
@@ -23,7 +25,6 @@ import { useComposerDraft } from '../../stores/composer-draft-store'
 import { bridgeActivity, useBridgeStatus, useCustodyHalt, useIsBridgeRunning, useQueuedFollowUps, useUserRequestsByTab, useUserRequestsForTab } from '../../stores/bridge-activity-store'
 import { useAppliedSkillsBySession } from '../../hooks/useAppliedSkillsBySession'
 import { useAppliedModesBySession } from '../../hooks/useAppliedModesBySession'
-import { extractProviderPatchChanges, pathField } from '../../hooks/turn-file-edit-detect'
 import { orchestrationAgents } from '../../terminal-only-agents'
 import type { AgentInfo, ChatAttachment, GitHubStatus, Message, ModeLevel, Workspace } from '../../types'
 import type { RegisteredPluginChatHeaderItem, RegisteredPluginGitLens, RegisteredPluginTerminalWatcher } from '../../../../shared/plugin-types'
@@ -202,12 +203,14 @@ export function ChatPane({
   const termWidth = externalTermWidth ?? fallbackTermWidth
   const setTermWidth = externalSetTermWidth ?? setFallbackTermWidth
   const threadRef = useRef<HTMLDivElement>(null)
+  const { state: appSettings } = useSettings()
   // Each mounted chat owns a path-scoped Git controller. It stays dormant while
   // its sidebar is closed, avoiding polling/fetch work for hidden Workbench panes.
   const git = useGitSidebar({
     repoPath: effectivePath,
     workspacePath: workspace.path,
     mainBranch: workspace.branch ?? 'main',
+    comparisonRef: appSettings.defaultBranchByWorkspace[activeWs]?.trim() || undefined,
     currentWorktreeId,
     enabled: gitOpen,
     onSwitchWorktree,
@@ -283,6 +286,7 @@ export function ChatPane({
   const [handoffOpen, setHandoffOpen] = useState(false)
   const [handoffBusy, setHandoffBusy] = useState(false)
   const [handoffError, setHandoffError] = useState<string | null>(null)
+  const [changesDrawerTarget, setChangesDrawerTarget] = useState<TurnChangeTarget | null>(null)
   const openHandoff = useCallback(() => {
     setHandoffError(null)
     setHandoffOpen(true)
@@ -317,25 +321,16 @@ export function ChatPane({
 
   const activeChangesCount = useMemo(() => {
     const seen = new Set<string>()
-    for (const msg of messages) {
-      if (msg.kind !== 'toolcall') continue
-      for (const change of msg.fileChanges ?? (msg.fileChange ? [msg.fileChange] : [])) seen.add(change.path)
-      for (const change of extractProviderPatchChanges(msg.metadata, msg.args, msg.result)) seen.add(change.path)
-      if (msg.args && typeof msg.args === 'object') {
-        const args = msg.args as Record<string, unknown>
-        const p = pathField(args)
-        const rawPatch = typeof msg.metadata?.diff === 'string'
-          ? msg.metadata.diff
-          : typeof args.patch === 'string'
-            ? args.patch
-            : typeof msg.result === 'string'
-              ? msg.result
-              : ''
-        if (p && /^diff --git |^--- |^@@ /m.test(rawPatch)) seen.add(p)
-      }
+    for (const turn of collectTurnChangeEntries(messages)) {
+      for (const change of turn.changes) seen.add(change.path)
     }
     return seen.size
   }, [messages])
+
+  const openTurnChange = useCallback((target: TurnChangeTarget) => {
+    setChangesDrawerTarget(target)
+    setChangesDrawerOpen(true)
+  }, [setChangesDrawerOpen])
 
   const setActiveAgentId = useCallback((id: string) => {
     chatSessions.update(tabId, sessActive, { agentId: id })
@@ -378,7 +373,6 @@ export function ChatPane({
 
   // Delegation credentials for THIS pane's session. Per-pane on purpose: a split
   // layout has two live chats, and each needs its own token.
-  const { state: appSettings } = useSettings()
   const delegationProviders = useCallback(
     () => describeProviders(agents, knownModelIds, agentId => knownModelIds(agentId)[0]),
     [agents],
@@ -768,7 +762,10 @@ export function ChatPane({
             dirtyCount={dirtyCount}
             changesOpen={changesDrawerOpen}
             changesCount={activeChangesCount}
-            toggleChangesOpen={() => setChangesDrawerOpen(!changesDrawerOpen)}
+            toggleChangesOpen={() => {
+              setChangesDrawerTarget(null)
+              setChangesDrawerOpen(!changesDrawerOpen)
+            }}
             onStartCrew={() => crewCtl?.handleStartCrew?.()}
             onOpenCanvas={onOpenCanvas}
             onOpenTerminal={openHeaderTerminal}
@@ -807,6 +804,7 @@ export function ChatPane({
             onToggleMcp={onToggleMcp}
             shortcutOverrides={shortcutOverrides}
             onOpenFile={onOpenFile}
+            onOpenTurnChange={openTurnChange}
             editorInitialFile={editorInitialFile}
             onThreadContextMenu={onThreadContextMenu}
             onOpenBrowser={onOpenBrowser}
@@ -898,6 +896,7 @@ export function ChatPane({
       <TurnChangesDrawer
         open={changesDrawerOpen}
         messages={messages}
+        target={changesDrawerTarget}
         onClose={() => setChangesDrawerOpen(false)}
       />
       {gitOpen && (

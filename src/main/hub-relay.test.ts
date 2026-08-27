@@ -230,6 +230,7 @@ describe('Brain-local RPC authorization', () => {
     expect(brainScopeForMethod('bridge.prompt')).toBe('agent')
     expect(brainScopeForMethod('mcp.list')).toBe('agent')
     expect(brainScopeForMethod('voice.transcribe')).toBe('agent')
+    expect(brainScopeForMethod('transcripts.recent')).toBe('agent')
     expect(brainScopeForMethod('github.status')).toBe('workspace:read')
     expect(brainScopeForMethod('gh.prMerge')).toBe('workspace:write')
     expect(brainScopeForMethod('unknown.execute')).toBeNull()

@@ -2,8 +2,10 @@ import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 're
 import { renderToStaticMarkup } from 'react-dom/server'
 import { normalizePatchForPierre, pathField, extractProviderPatchChanges, diffStats } from '../../hooks/turn-file-edit-detect'
 import { TurnWorkLog } from './TurnWorkLog'
-import type { WorkLogRow, TodoItem, TaskSummaryItem, Diagnostic } from './TurnWorkLog'
+import type { WorkLogRow, WorkLogChangedFile, TodoItem, TaskSummaryItem, Diagnostic } from './TurnWorkLog'
 import { ThinkingBlock } from './ThinkingBlock'
+import { changesForToolMessages } from './turn-changes-data'
+import type { TurnChangeTarget } from './turn-changes-data'
 import { LoadingBlock } from './LoadingBlock'
 import { Markdown } from './Markdown'
 import { Icon } from '../ui/Icon'
@@ -947,11 +949,24 @@ interface TurnGroup {
   turnId: string
   rows:   WorkLogRow[]
   live:   boolean
+  changedFiles: WorkLogChangedFile[]
   // Source identities let memoized anchors distinguish a real tool update from
   // unrelated thinking/text mutations elsewhere in the same live turn.
   sources: ToolCallMessage[]
   // Position of the first event in this contiguous tool run.
   anchorIdx: number
+}
+
+function changedFilesForSources(sources: ToolCallMessage[]): WorkLogChangedFile[] {
+  return changesForToolMessages(sources).map(change => {
+    const stats = diffStats(change.patch)
+    return {
+      path: change.path,
+      name: basename(change.path),
+      added: stats.added,
+      removed: stats.removed,
+    }
+  })
 }
 
 /**
@@ -992,6 +1007,7 @@ function buildTurnGroups(messages: Message[]): Map<number, TurnGroup> {
         turnId,
         rows: [],
         live: false,
+        changedFiles: [],
         sources: [],
         anchorIdx: responseAnchor,
       }
@@ -999,7 +1015,7 @@ function buildTurnGroups(messages: Message[]): Map<number, TurnGroup> {
       current = null
     } else {
       if (!current || current.turnId !== turnId) {
-        current = { turnId, rows: [], live: false, sources: [], anchorIdx: i }
+        current = { turnId, rows: [], live: false, changedFiles: [], sources: [], anchorIdx: i }
         groups.set(i, current)
       }
       group = current
@@ -1012,6 +1028,7 @@ function buildTurnGroups(messages: Message[]): Map<number, TurnGroup> {
     group.rows.push(row)
     if (msg.status === 'running' || msg.status === 'pending') group.live = true
   }
+  for (const group of groups.values()) group.changedFiles = changedFilesForSources(group.sources)
   return groups
 }
 
@@ -1028,6 +1045,7 @@ interface MessagesProps {
   isRunning?: boolean
   loadingStatus?: string | null
   onOpenFile?: (path: string) => void
+  onOpenTurnChange?: (target: TurnChangeTarget) => void
   onOpenLink?: (url: string) => void
   /** The thread's scroll element — used to keep the reading position pinned when
    *  older messages are prepended via the pager. */
@@ -1051,6 +1069,7 @@ interface MessageRowProps {
   turnChangeKey:   string
   workspacePath?:  string
   onOpenFile?:     (path: string) => void
+  onOpenTurnChange?: (target: TurnChangeTarget) => void
   onOpenLink?:     (url: string) => void
 }
 
@@ -1081,7 +1100,7 @@ function areRowsEqual(prev: MessageRowProps, next: MessageRowProps): boolean {
 }
 
 const MessageRow = React.memo(function MessageRow({
-  msg, index, groups, isRunning, isWaitingAnchor, showTurnSummary, showStreamCursor, workspacePath, onOpenFile, onOpenLink,
+  msg, index, groups, isRunning, isWaitingAnchor, showTurnSummary, showStreamCursor, workspacePath, onOpenFile, onOpenTurnChange, onOpenLink,
 }: MessageRowProps): React.ReactElement | null {
   switch (msg.kind) {
     case 'user':
@@ -1112,7 +1131,15 @@ const MessageRow = React.memo(function MessageRow({
       const workLog = groups.get(index)
       return (
         <>
-          {workLog && <TurnWorkLog rows={workLog.rows} live={workLog.live} onOpenFile={onOpenFile} />}
+          {workLog && (
+            <TurnWorkLog
+              rows={workLog.rows}
+              live={workLog.live}
+              changedFiles={workLog.changedFiles}
+              onOpenFile={onOpenFile}
+              onOpenChangedFile={path => onOpenTurnChange?.({ turnId: workLog.turnId, filePath: path })}
+            />
+          )}
           <AgentBubble blocks={msg.blocks} text={msg.text} chunks={msg.chunks} time={msg.time} streaming={msg.streaming} showStreamCursor={showStreamCursor} durationMs={msg.durationMs} usage={msg.usage} mode={msg.mode} showTurnSummary={showTurnSummary} onOpenLink={onOpenLink} />
         </>
       )
@@ -1155,7 +1182,7 @@ function rowKey(msg: Message, index: number): string {
   }
 }
 
-export function Messages({ messages, workspacePath, isRunning = false, loadingStatus = null, onOpenFile, onOpenLink, scrollParent }: MessagesProps) {
+export function Messages({ messages, workspacePath, isRunning = false, loadingStatus = null, onOpenFile, onOpenTurnChange, onOpenLink, scrollParent }: MessagesProps) {
   const { state } = useSettings()
   // ── Pager: render only the most recent PAGE_SIZE rows ──────────────────────
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
@@ -1217,8 +1244,10 @@ export function Messages({ messages, workspacePath, isRunning = false, loadingSt
   // Stable callback identities so memoized rows never re-render on a parent
   // re-binding these handlers, and skipped rows never hold a stale closure.
   const openFileRef = useRef(onOpenFile); openFileRef.current = onOpenFile
+  const openTurnChangeRef = useRef(onOpenTurnChange); openTurnChangeRef.current = onOpenTurnChange
   const openLinkRef = useRef(onOpenLink); openLinkRef.current = onOpenLink
   const stableOpenFile = useMemo(() => (p: string) => openFileRef.current?.(p), [])
+  const stableOpenTurnChange = useMemo(() => (target: TurnChangeTarget) => openTurnChangeRef.current?.(target), [])
   const stableOpenLink = useMemo(() => (u: string) => openLinkRef.current?.(u), [])
 
   // Waiting state: keep the loader visible for the whole provider turn. Some
@@ -1244,6 +1273,7 @@ export function Messages({ messages, workspacePath, isRunning = false, loadingSt
       turnChangeKey={msg.kind === 'agent' && msg.turnId ? (turnChangeKeys.get(msg.turnId) ?? '') : ''}
       workspacePath={workspacePath}
       onOpenFile={stableOpenFile}
+      onOpenTurnChange={stableOpenTurnChange}
       onOpenLink={stableOpenLink}
     />
   )

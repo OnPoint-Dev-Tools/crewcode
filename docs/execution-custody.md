@@ -226,6 +226,13 @@ preventing a fast completed reply from falling between transport setup and App m
 Interrupted RPCs and prompts are never replayed. The completed conversation transcript remains in the
 Brain-local conversation store.
 
+Remote cross-thread handoff also stays inside that Brain-local store. The Hub
+requires the authenticated user to own the destination bridge and retain the
+Brain-local `agent` grant. `AgentBridgeService` refuses the mutation while the
+destination is running, then marks it running for the full disposable-summary and
+store-update operation. Only an observed summary updates the destination shard;
+failure leaves its prior history and native resume state intact.
+
 This custody is currently **Brain-process-resident**, not crash durable. A Brain
 process stop, VPS restart, machine revocation, or loss of the persistent Brain-to-Hub
 relay closes the loopback backend and its provider processes. Remote access still

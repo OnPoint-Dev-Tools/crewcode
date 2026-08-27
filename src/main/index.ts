@@ -42,6 +42,7 @@ function normalizeDelegationMode(value: unknown): ModeLevel {
 }
 import { RateLimitService, registerRateLimitIpc } from './rate-limits'
 import { registerNotificationIpc, setNotificationIcon } from './notify'
+import { getYuHeardServer } from './yuheard-server'
 import {
   createVoiceClientSecret,
   setVoiceProviderKey,
@@ -404,6 +405,17 @@ function registrySnapshot() {
 }
 
 ipcMain.handle('agent:registry', () => registrySnapshot())
+
+// YuHeard status — exposed so the renderer can show the socket path in
+// settings and link to docs/yuheard.md. Returns `{ socket, running }`;
+// the socket path is null if the server failed to start.
+ipcMain.handle('yuheard:status', () => {
+  const server = getYuHeardServer()
+  return {
+    socket: server?.getSocketPath() ?? null,
+    running: !!server?.isRunning(),
+  }
+})
 
 ipcMain.handle('agent:setPath', (_e, id: string, path: string | null) => {
   if (!AGENT_DEFS.some(d => d.id === id)) return { ok: false, error: 'unknown agent id' }

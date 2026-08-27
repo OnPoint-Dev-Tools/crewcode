@@ -25,11 +25,18 @@ interface PromptDetailProps {
    * live session binding, not editor content.
    */
   onToggleEnabled?: () => void
+  /**
+   * Phone-only — return to the prompt library. When set, a `[< Back]`
+   * button is rendered at the front of the detail header. The button is
+   * hidden on desktop via CSS (`.pd-back-btn { display: none }` by default
+   * and `inline-flex` only inside `@media (max-width: 768px)`).
+   */
+  onBack?:       () => void
 }
 
 export function PromptDetail({
   p, kind, mdMode, setMdMode, customCategories = [], onCommit, onUseInChat, onApplySkill, onDuplicate, onDelete,
-  onToggleEnabled,
+  onToggleEnabled, onBack,
 }: PromptDetailProps) {
   const [draft, setDraft] = useState<Prompt | Skill>(p)
   const [savedAt, setSavedAt] = useState<string>('saved')
@@ -82,6 +89,11 @@ export function PromptDetail({
   return (
     <div className="pd" ref={rootRef}>
       <div className="pd-h">
+        {onBack && (
+          <button type="button" className="pd-back-btn" onClick={onBack} title="back to library">
+            <Icon name="chevLeft" size={12} /> Back
+          </button>
+        )}
         <div className="pd-h-meta">
           <span className="pd-cat-pill" style={{ ['--cat' as string]: accent } as React.CSSProperties}>
             <span className="pd-cat-dot" />

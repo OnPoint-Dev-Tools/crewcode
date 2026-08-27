@@ -26,12 +26,17 @@ import { AgentBridgeService, type AgentPathResolver } from './agents/bridge-serv
 import { headlessAgentRegistry, listHeadlessAgentModels } from './headless-agent-resolver'
 import { readMcpConfig } from './mcp-config-service'
 import { getGhStatus, getGitHubStatus, runGh } from './github-service'
+import { RemoteGhService } from './remote-gh-service'
+import { RemoteEditorLanguageServer } from './remote-editor-language-server'
+import { RemoteEditorFileWatch } from './remote-editor-file-watch'
+import { RemoteDelegationService } from './remote-delegation-service'
+import { RemotePluginService } from './remote-plugin-service'
 import { createVoiceClientSecret, synthesizeRemoteVoiceText, transcribeRemoteVoiceAudio, voiceProviderAvailability } from './voice-provider-auth'
 import { TranscriptService, type TranscriptBatchEntry } from './transcript-service'
 import { parsePorcelainWorktrees } from './worktree-list-parse'
 import { addWorktree, removeWorktree } from './worktree-ops'
 import { GitService } from './git-service'
-import type { BridgeEvent, BridgeStartOpts, PromptOptions } from './agents/bridge-types'
+import type { BridgeEvent, BridgeStartOpts, HandoffPromptOptions, PromptOptions } from './agents/bridge-types'
 import { WebSocketServer, WebSocket } from 'ws'
 
 const MAX_REQUEST_BYTES = 2 * 1024 * 1024
@@ -161,6 +166,12 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
   const transcriptService = new TranscriptService(options.dataDir)
   const agentService = new AgentBridgeService(options.resolveAgentPath ?? (() => null))
   const auth = options.auth ?? new RemoteAccessAuth({ storePath: join(options.dataDir, 'remote-access-sessions.json') })
+  const remoteGh = new RemoteGhService()
+  const remotePlugins = new RemotePluginService()
+  let broadcastOwned = (_ownerId: string, _channel: string, _event: unknown): void => undefined
+  const remoteDelegation = new RemoteDelegationService((ownerId, request) => broadcastOwned(ownerId, 'delegation', request))
+  const remoteLsp = new RemoteEditorLanguageServer((ownerId, payload) => broadcastOwned(ownerId, payload.type === 'message' ? 'editorLspMessage' : 'editorLspStatus', payload.event))
+  const remoteWatch = new RemoteEditorFileWatch((ownerId, event) => broadcastOwned(ownerId, 'editorFileChanged', event))
   const pairingLimiter = new RemoteAccessRateLimiter(REMOTE_PAIR_ATTEMPTS_PER_WINDOW)
   const unauthenticatedLimiter = new RemoteAccessRateLimiter(REMOTE_UNAUTHENTICATED_ATTEMPTS_PER_WINDOW)
   let allowedWorkspaceRoots = (options.allowedWorkspaceRoots?.length ? options.allowedWorkspaceRoots : [homedir()])
@@ -287,6 +298,7 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
     }],
     ['transcripts.loadAll', () => transcriptService.loadAll()],
     ['transcripts.mtimes', () => transcriptService.mtimes()],
+    ['transcripts.recent', params => transcriptService.recent(Number(params.limit ?? 5))],
     ['transcripts.save', params => transcriptService.save(String(params.scopeId ?? ''), params.messages)],
     ['transcripts.saveBatch', params => transcriptService.saveBatch(params.entries as TranscriptBatchEntry[])],
     ['transcripts.remove', params => transcriptService.remove(String(params.scopeId ?? ''))],
@@ -395,6 +407,8 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
     ['git.stageAll', params => gitService.stageAll(registeredRoot({ root: params.cwd }))],
     ['git.unstage', params => gitService.unstage(registeredRoot({ root: params.cwd }), Array.isArray(params.paths) ? params.paths.map(String) : [])],
     ['git.diff', params => gitService.diff(registeredRoot({ root: params.cwd }), String(params.path ?? ''), params.staged === true)],
+    ['git.changesVsRef', params => gitService.changesVsRef(registeredRoot({ root: params.cwd }), String(params.ref ?? ''))],
+    ['git.diffVsRef', params => gitService.diffVsRef(registeredRoot({ root: params.cwd }), String(params.ref ?? ''), String(params.path ?? ''))],
     ['git.log', params => gitService.log(registeredRoot({ root: params.cwd }), Number(params.limit ?? 20))],
     ['git.branches', params => gitService.branches(registeredRoot({ root: params.cwd }))],
     ['git.remotes', params => gitService.remotes(registeredRoot({ root: params.cwd }))],
@@ -408,6 +422,20 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
     ['gh.prCreate', params => runGh(registeredRoot({ root: params.cwd }), ['pr', 'create', '--fill'])],
     ['gh.prMerge', params => runGh(registeredRoot({ root: params.cwd }), ['pr', 'merge', String(Number(params.number)), '--squash'])],
     ['gh.prApprove', params => runGh(registeredRoot({ root: params.cwd }), ['pr', 'review', String(Number(params.number)), '--approve'])],
+    ['gh.loginStart', () => remoteGh.login()],
+    ['gh.loginCancel', () => remoteGh.cancel()],
+    ['gh.repoCreate', params => remoteGh.createRepository(registeredRoot({ root: params.cwd }), params.options as Parameters<RemoteGhService['createRepository']>[1])],
+    ['editor.watchAdd', params => { const root = registeredRoot({ root: params.root }); remoteWatch.add(String(params.__remoteSessionToken), root, String(params.rel ?? '')); return { ok: true } }],
+    ['editor.watchRemove', params => { const root = registeredRoot({ root: params.root }); remoteWatch.remove(String(params.__remoteSessionToken), root, String(params.rel ?? '')); return { ok: true } }],
+    ['editor.lspStart', params => remoteLsp.start(String(params.__remoteSessionToken), registeredRoot({ root: params.root }))],
+    ['editor.lspSend', params => remoteLsp.send(String(params.__remoteSessionToken), String(params.handleId ?? ''), String(params.message ?? ''))],
+    ['editor.lspStop', params => remoteLsp.stop(String(params.__remoteSessionToken), String(params.handleId ?? ''))],
+    ['delegation.enable', async params => ({ ok: true, credentials: await remoteDelegation.enable(String(params.__remoteSessionToken), String(params.sessionId ?? ''), params.policy as Parameters<RemoteDelegationService['enable']>[2]) })],
+    ['delegation.disable', params => { remoteDelegation.disable(String(params.__remoteSessionToken), String(params.sessionId ?? '')); return { ok: true } }],
+    ['delegation.respond', params => { remoteDelegation.respond(String(params.__remoteSessionToken), String(params.id ?? ''), params.result as Parameters<RemoteDelegationService['respond']>[2]); return { ok: true } }],
+    ['plugins.list', () => remotePlugins.load()],
+    ['plugins.resolveTab', params => remotePlugins.resolve(String(params.registrationId ?? ''))],
+    ['plugins.invoke', params => remotePlugins.invoke(params.request as Parameters<RemotePluginService['invoke']>[0], value => registeredRoot({ root: value }))],
     ['git.checkout', params => gitService.checkout(registeredRoot({ root: params.cwd }), String(params.branch ?? ''), false)],
     ['git.createBranch', params => gitService.checkout(registeredRoot({ root: params.cwd }), String(params.name ?? ''), true)],
     ['git.merge', params => gitService.merge(registeredRoot({ root: params.cwd }), String(params.ref ?? ''))],
@@ -449,7 +477,14 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
     }],
     ['bridge.prompt', params => agentService.prompt(String(params.bridgeId ?? ''), String(params.text ?? ''), params.options as PromptOptions | undefined)],
     ['bridge.compact', params => agentService.compact(String(params.bridgeId ?? ''))],
-    ['bridge.handoff', params => agentService.handoff(String(params.bridgeId ?? ''), String(params.sourceConversationKey ?? ''))],
+    ['bridge.handoff', params => {
+      const sourceScope = String(params.sourceConversationKey ?? '')
+      return agentService.handoff(
+        String(params.bridgeId ?? ''),
+        sourceScope ? `web:${sourceScope}` : '',
+        params.options && typeof params.options === 'object' ? params.options as HandoffPromptOptions : {},
+      )
+    }],
     ['bridge.removeFollowUp', params => agentService.removeFollowUp(String(params.bridgeId ?? ''), String(params.followUpId ?? ''))],
     ['bridge.respondUserRequest', params => agentService.respond(params.response as Parameters<AgentBridgeService['respond']>[0])],
     // Returns { deferred, reason } when the change was refused mid-turn, so a
@@ -469,6 +504,12 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
       if (request.method === 'GET' && pathname === '/api/v1/capabilities') {
         sendJson(response, 200, capabilitySnapshot())
         return
+      }
+      if (request.method === 'GET' && pathname.startsWith('/api/v1/plugin-assets/')) {
+        const [token, ...parts] = pathname.slice('/api/v1/plugin-assets/'.length).split('/')
+        const asset = remotePlugins.asset(token || '', parts.join('/'))
+        if (!asset) { sendJson(response, 404, { error: remoteError('FORBIDDEN', 'plugin asset grant invalid or expired') }); return }
+        response.writeHead(200, { 'content-type': asset.contentType, 'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'self'", 'x-content-type-options': 'nosniff', 'cache-control': 'no-store' }); response.end(asset.body); return
       }
       if (request.method === 'POST' && pathname === '/api/v1/pair') {
         const limited = pairingLimiter.consume(remotePeerKey(request))
@@ -527,7 +568,7 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
         }
         let result: unknown
         try {
-          result = await handler(body.params as Record<string, unknown>)
+          result = await handler({ ...(body.params as Record<string, unknown>), __remoteSessionToken: bearer(request) })
         } catch (error) {
           const code = (error as Error & { remoteCode?: string }).remoteCode === 'FORBIDDEN' ? 'FORBIDDEN' : 'INTERNAL'
           const failure: CrewCodeRemoteResponse = { protocolVersion: CREWCODE_REMOTE_PROTOCOL_VERSION, id, ok: false, error: remoteError(code, (error as Error).message) }
@@ -553,6 +594,7 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
   attachmentSweep.unref()
 
   const sockets = new Set<WebSocket>()
+  const socketOwners = new Map<WebSocket, string>()
   const websocketServer = new WebSocketServer({ noServer: true, handleProtocols: protocols => protocols.has('crewcode.v1') ? 'crewcode.v1' : false })
   server.on('upgrade', (request, socket, head) => {
     const pathname = new URL(request.url ?? '/', 'http://localhost').pathname
@@ -564,18 +606,23 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
       socket.destroy()
       return
     }
-    websocketServer.handleUpgrade(request, socket, head, ws => websocketServer.emit('connection', ws, request))
+    websocketServer.handleUpgrade(request, socket, head, ws => { socketOwners.set(ws, token); websocketServer.emit('connection', ws, request) })
   })
   websocketServer.on('connection', socket => {
     sockets.add(socket)
-    socket.on('close', () => sockets.delete(socket))
+    socket.on('close', () => { sockets.delete(socket); socketOwners.delete(socket) })
   })
-  const broadcast = (channel: 'pty' | 'bridge', event: unknown): void => {
+  const broadcast = (channel: 'pty' | 'bridge' | 'gh', event: unknown): void => {
     const message = JSON.stringify({ channel, event })
     for (const socket of sockets) if (socket.readyState === WebSocket.OPEN) socket.send(message)
   }
+  broadcastOwned = (ownerId, channel, event) => {
+    const message = JSON.stringify({ channel, event })
+    for (const socket of sockets) if (socketOwners.get(socket) === ownerId && socket.readyState === WebSocket.OPEN) socket.send(message)
+  }
   const unsubscribePty = ptyService.subscribe(event => broadcast('pty', event))
   const unsubscribeAgent = agentService.subscribe((event: BridgeEvent) => broadcast('bridge', event))
+  const unsubscribeGh = remoteGh.subscribe(event => broadcast('gh', event))
 
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject)
@@ -604,7 +651,11 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
       for (const uploadId of [...attachmentUploads.keys()]) discardAttachmentUpload(uploadId)
       unsubscribePty()
       unsubscribeAgent()
+      unsubscribeGh()
       ptyService.killAll()
+      remoteWatch.stop()
+      remoteLsp.stopAll()
+      remoteDelegation.stop()
       void agentService.stopAll()
       for (const socket of sockets) socket.close()
       websocketServer.close()

@@ -32,6 +32,12 @@ On first access, CrewCode copies legacy entries into sharded files and writes `c
 
 If a sharded file is missing or unreadable, CrewCode can lazily recover that session from the legacy monolith. Explicitly cleared sessions are recorded in `conversations/.agent-conversations-cleared.json` so legacy fallback does not resurrect deleted conversations.
 
+### Browser/Brain conversation scopes
+
+Remote browser replay history remains authoritative on the Brain, not in browser `localStorage`. The shared renderer supplies an opaque chat session id; the remote boundary namespaces it as `web:<session>` before `AgentBridgeService` reads or writes the same per-session conversation shards described above. This keeps desktop `thread:` keys and browser keys from aliasing each other.
+
+Cross-thread browser handoff is a bounded Brain-side operation. The browser names a source chat and an already-owned destination bridge, but never downloads the source replay shard. The Brain summarizes the source with a disposable destination-provider bridge, appends only the resulting handoff packet to the destination shard, clears the destination's native resume id, and replays the combined destination history once on its next native-provider prompt. Stateless HTTP providers consume the updated shard directly. Missing source history, summary failure, a running destination, or lost destination ownership is an explicit failure and is never inferred as success.
+
 ## Session ids and the context-meter baseline
 
 `src/main/agents/sessionStore.ts` persists per-session bridge state under `userData/agent-sessions.json`, keyed by the `tabId:agentId` composite the renderer uses for bridge registration:

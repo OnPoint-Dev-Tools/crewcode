@@ -601,6 +601,10 @@ export interface PtyCreateOpts {
   shell?: string
   argv?:  string[]
   env?:   Record<string, string>
+  /** YuHeard metadata. Mirrors the main-side `PtyCreateOpts` extras. */
+  agentId?: string | null
+  autoWrap?: boolean
+  wrapAgentIds?: string[]
 }
 
 export interface PtyDataEvent { paneId: string; data: string }
@@ -812,6 +816,10 @@ declare global {
       onKeybindsChanged: (cb: (event: { ok: boolean; data?: Record<string, string[]> | null }) => void) => () => void
       notify: (payload: { title: string; body: string; scopeId?: string; silent?: boolean }) => Promise<{ ok: boolean; error?: string }>
       onNotificationClick: (cb: (event: { scopeId: string }) => void) => () => void
+
+      // YuHeard terminal agent alerts
+      yuheardStatus: () => Promise<{ socket: string | null; running: boolean }>
+      onYuheardState: (cb: (event: { paneId: string; state: 'running' | 'complete'; message: string | null; source: string; at: number }) => void) => () => void
       clipboardWriteText: (text: string) => Promise<{ ok: boolean; error?: string }>
       clipboardReadText: () => Promise<{ ok: boolean; text?: string; error?: string }>
       clipboardWriteImageDataUrl: (dataUrl: string) => Promise<{ ok: boolean; error?: string }>

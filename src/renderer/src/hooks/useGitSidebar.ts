@@ -9,6 +9,7 @@ import type {
   GitState, GitChange, GitConflict, GitPrRef, GitHistoryEntry,
   GitBranchRef, GitWorktreeRef, GitBanner, ChangeStatus, CheckState, GitSidebarHandlers,
 } from '../components/git/git-state'
+import { getCrewCodeClient } from '../runtime/crewcode-client'
 
 /** Synthetic id for the repo's primary checkout — git's worktree list omits it. */
 const MAIN_ID = '__main__'
@@ -78,6 +79,7 @@ export interface UseGitSidebarArgs {
   repoPath:          string                       // effective path — worktree or workspace
   workspacePath:     string                       // repo root, for worktree + GitHub lookups
   mainBranch:        string                       // branch of the primary checkout
+  comparisonRef?:    string                       // Settings-selected review base
   currentWorktreeId: string | null
   enabled:           boolean                      // only fetch while the sidebar is open
   onSwitchWorktree:  (id: string | null) => void  // App owns worktree selection
@@ -94,7 +96,7 @@ export interface UseGitSidebarArgs {
 export interface UseGitSidebarResult {
   state:    GitState
   handlers: GitSidebarHandlers
-  refresh:  () => void
+  refresh:  () => Promise<void>
 }
 
 // `warn` lets an action report success-with-a-caveat (e.g. committed unsigned).
@@ -102,7 +104,7 @@ type ActionResult = { ok?: boolean; error?: string; warn?: string } | void | und
 
 export function useGitSidebar(args: UseGitSidebarArgs): UseGitSidebarResult {
   const {
-    repoPath, workspacePath, mainBranch, currentWorktreeId,
+    repoPath, workspacePath, mainBranch, comparisonRef, currentWorktreeId,
     enabled, onSwitchWorktree, onAskAgent, onWorktreesChanged, onRequestGitAuth, onRequestSigningPassphrase,
     alwaysCommitUnsigned,
   } = args
@@ -132,8 +134,8 @@ export function useGitSidebar(args: UseGitSidebarArgs): UseGitSidebarResult {
   useEffect(() => () => { if (bannerTimer.current) clearTimeout(bannerTimer.current) }, [])
 
   const refresh = useCallback(async (opts?: { github?: boolean }) => {
-    const api = window.electronAPI
-    if (!api || !repoPath) { setState(EMPTY_STATE); return }
+    const api = getCrewCodeClient()
+    if (!repoPath) { setState(EMPTY_STATE); return }
 
     if (opts?.github) {
       const gh = await api.githubStatus(workspacePath).catch(() => null)
@@ -161,13 +163,14 @@ export function useGitSidebar(args: UseGitSidebarArgs): UseGitSidebarResult {
       }
     }
 
-    const [st, log, br, wt, auth, rem] = await Promise.all([
+    const [st, log, br, wt, auth, rem, compared] = await Promise.all([
       api.gitStatus(repoPath).catch(() => null),
       api.gitLog(repoPath, 30).catch(() => null),
       api.gitBranches(repoPath).catch(() => null),
       api.worktreeList(workspacePath).catch(() => null),
       api.ghStatus().catch(() => null),
       api.gitRemotes(repoPath).catch(() => null),
+      comparisonRef ? api.gitChangesVsRef(repoPath, comparisonRef).catch(() => null) : Promise.resolve(null),
     ])
 
     // Publish affordance keys off these: a folder that isn't a repo, or a repo
@@ -189,6 +192,16 @@ export function useGitSidebar(args: UseGitSidebarArgs): UseGitSidebarResult {
         if (status === 'U') conflictPaths.add(path)
         const { name, dir } = splitPath(path)
         changes.push({ staged: f.staged, status, path, name, dir })
+      }
+    }
+    // A clean worktree can still contain committed work relative to the chosen
+    // base. Add those paths as review-only; local status rows retain staging.
+    if (comparisonRef && compared && !compared.error) {
+      for (const file of compared.files ?? []) {
+        const path = cleanPath(file.path)
+        if (!path || changes.some(change => change.path === path)) continue
+        const { name, dir } = splitPath(path)
+        changes.push({ staged: false, stageable: false, status: toChangeStatus(file.status), path, name, dir })
       }
     }
     const conflicts: GitConflict[] = [...conflictPaths].map(path => ({ path, hunks: 0 }))
@@ -224,7 +237,9 @@ export function useGitSidebar(args: UseGitSidebarArgs): UseGitSidebarResult {
           text: `merge in progress · ${conflicts.length} file${conflicts.length === 1 ? '' : 's'} conflicted`,
           auto: 0,
         }
-      : undefined
+      : comparisonRef && compared?.error
+        ? { kind: 'warn' as const, text: `default branch ${comparisonRef}: ${compared.error}`, auto: 0 }
+        : undefined
 
     prsRef.current = ghRef.current.prs
     setState({
@@ -245,8 +260,9 @@ export function useGitSidebar(args: UseGitSidebarArgs): UseGitSidebarResult {
       isRepo,
       hasRemote,
       hasUpstream: stOk ? st!.hasUpstream : true,
+      comparisonRef,
     })
-  }, [repoPath, workspacePath, mainBranch, currentWorktreeId])
+  }, [repoPath, workspacePath, mainBranch, comparisonRef, currentWorktreeId])
 
   // Fetch shortly after opening so the sidebar can paint/animate first; GitHub
   // status is the slow path and should not make the pane feel blocked.

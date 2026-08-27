@@ -21,14 +21,16 @@ export interface GhAuthEvent {
 }
 
 let activeLogin: ChildProcess | null = null
+const authListeners = new Set<(event: GhAuthEvent) => void>()
 
 function broadcast(event: GhAuthEvent): void {
+  for (const listener of authListeners) listener(event)
   for (const win of BrowserWindow.getAllWindows()) {
     win.webContents.send('gh:authEvent', event)
   }
 }
 
-function startLogin(): { ok: boolean; error?: string } {
+export function startGhLogin(): { ok: boolean; error?: string } {
   if (activeLogin) return { ok: false, error: 'login already in progress' }
   if (!ghAvailable()) return { ok: false, error: 'gh CLI not found in PATH' }
 
@@ -77,7 +79,7 @@ function startLogin(): { ok: boolean; error?: string } {
   return { ok: true }
 }
 
-function cancelLogin(): { ok: boolean } {
+export function cancelGhLogin(): { ok: boolean } {
   if (activeLogin) {
     try { activeLogin.kill('SIGTERM') } catch { /* already exiting */ }
     activeLogin = null
@@ -96,7 +98,7 @@ function logout(): { ok: boolean; error?: string } {
 export type RepoCreateOpts = PublishRepoOpts
 
 /** Publish a local folder completely, including its first commit and push. */
-function repoCreate(cwd: string, opts: RepoCreateOpts): { ok: boolean; output: string; error?: string } {
+export function createGhRepository(cwd: string, opts: RepoCreateOpts): { ok: boolean; output: string; error?: string } {
   if (!ghAvailable()) return { ok: false, output: '', error: 'gh CLI not found in PATH' }
 
   return publishRepository(opts, (command, args) => {
@@ -109,8 +111,8 @@ function repoCreate(cwd: string, opts: RepoCreateOpts): { ok: boolean; output: s
 
 export function registerGhIpc(): void {
   ipcMain.handle('gh:status', () => getGhStatus())
-  ipcMain.handle('gh:loginStart', () => startLogin())
-  ipcMain.handle('gh:loginCancel', () => cancelLogin())
+  ipcMain.handle('gh:loginStart', () => startGhLogin())
+  ipcMain.handle('gh:loginCancel', () => cancelGhLogin())
   ipcMain.handle('gh:logout', () => logout())
 
   // Pull-request operations for the Git Sidebar.
@@ -123,7 +125,12 @@ export function registerGhIpc(): void {
 
   // Publish a local folder to GitHub (init + first commit + repo create + push).
   ipcMain.handle('gh:repoCreate', (_e, cwd: string, opts: RepoCreateOpts) =>
-    repoCreate(cwd, opts))
+    createGhRepository(cwd, opts))
+}
+
+export function subscribeGhAuth(listener: (event: GhAuthEvent) => void): () => void {
+  authListeners.add(listener)
+  return () => authListeners.delete(listener)
 }
 
 export function killActiveGhLogin(): void {

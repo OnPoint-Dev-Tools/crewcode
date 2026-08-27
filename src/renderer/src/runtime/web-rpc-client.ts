@@ -4,7 +4,9 @@ import {
   type CrewCodeServerCapabilities,
 } from '../../../shared/remote-access-types'
 import type { CrewCodeClient } from './crewcode-client'
-import type { BridgeEvent } from '../types'
+import type { BridgeEvent, GhAuthEvent } from '../types'
+import type { LanguageServerMessageEvent, LanguageServerStatusEvent } from '../../../shared/language-server-types'
+import type { DelegationRendererRequest } from '../../../shared/delegation-types'
 
 const SESSION_KEY = 'crewcode:remote-session:v1'
 let requestCounter = 0
@@ -12,6 +14,11 @@ let requestCounter = 0
 export type WebEventEnvelope =
   | { channel: 'pty'; event: { type: 'data'; paneId: string; data: string } | { type: 'exit'; paneId: string; exitCode: number; signal?: number } }
   | { channel: 'bridge'; event: BridgeEvent }
+  | { channel: 'gh'; event: GhAuthEvent }
+  | { channel: 'editorFileChanged'; event: { root: string; rel: string } }
+  | { channel: 'editorLspMessage'; event: LanguageServerMessageEvent }
+  | { channel: 'editorLspStatus'; event: LanguageServerStatusEvent }
+  | { channel: 'delegation'; event: DelegationRendererRequest & { id: string } }
 
 export class WebRpcError extends Error {
   constructor(message: string, readonly code?: string, readonly status?: number) {
@@ -68,12 +75,15 @@ export async function webRpc<T>(sessionToken: string, method: string, params: Re
 }
 
 function createEventSocket(sessionToken: string, onEvent: (envelope: WebEventEnvelope) => void): WebSocket {
+  if (!window.location || typeof WebSocket === 'undefined') {
+    return { close: () => undefined, addEventListener: () => undefined } as unknown as WebSocket
+  }
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
   const socket = new WebSocket(`${protocol}//${window.location.host}/api/v1/events`, ['crewcode.v1', sessionToken])
   socket.addEventListener('message', message => {
     try {
       const envelope = JSON.parse(String(message.data)) as WebEventEnvelope
-      if (envelope.channel === 'pty' || envelope.channel === 'bridge') onEvent(envelope)
+      onEvent(envelope)
     } catch { /* malformed server events are ignored, never executed */ }
   })
   return socket
@@ -119,12 +129,27 @@ export function createWebCrewCodeClient(sessionOrTransport: string | WebClientTr
   const dataListeners = new Set<(event: { paneId: string; data: string }) => void>()
   const exitListeners = new Set<(event: { paneId: string; exitCode: number; signal?: number }) => void>()
   const bridgeListeners = new Set<(event: BridgeEvent) => void>()
+  const ghListeners = new Set<(event: GhAuthEvent) => void>()
+  const editorFileListeners = new Set<(event: { root: string; rel: string }) => void>()
+  const editorLspMessageListeners = new Set<(event: LanguageServerMessageEvent) => void>()
+  const editorLspStatusListeners = new Set<(event: LanguageServerStatusEvent) => void>()
+  const delegationListeners = new Set<(event: DelegationRendererRequest & { id: string }) => void>()
   let eventDisposer: (() => void) | null = null
   const ensureEvents = (): void => {
     if (eventDisposer) return
     eventDisposer = transport.subscribe(envelope => {
       if (envelope.channel === 'bridge') {
         for (const listener of bridgeListeners) listener(envelope.event)
+      } else if (envelope.channel === 'gh') {
+        for (const listener of ghListeners) listener(envelope.event)
+      } else if (envelope.channel === 'editorFileChanged') {
+        for (const listener of editorFileListeners) listener(envelope.event)
+      } else if (envelope.channel === 'editorLspMessage') {
+        for (const listener of editorLspMessageListeners) listener(envelope.event)
+      } else if (envelope.channel === 'editorLspStatus') {
+        for (const listener of editorLspStatusListeners) listener(envelope.event)
+      } else if (envelope.channel === 'delegation') {
+        for (const listener of delegationListeners) listener(envelope.event)
       } else if (envelope.event.type === 'data') {
         for (const listener of dataListeners) listener({ paneId: envelope.event.paneId, data: envelope.event.data })
       } else {
@@ -169,20 +194,24 @@ export function createWebCrewCodeClient(sessionOrTransport: string | WebClientTr
     onMcpChanged: noSubscription,
     onPluginsChanged: noSubscription,
     onNotificationClick: noSubscription,
-    onDelegationRequest: noSubscription,
+    onDelegationRequest: callback => { delegationListeners.add(callback); ensureEvents(); return () => delegationListeners.delete(callback) },
     onKeybindsChanged: noSubscription,
-    onEditorFileChanged: noSubscription,
-    onEditorLanguageServerMessage: noSubscription,
-    onEditorLanguageServerStatus: noSubscription,
-    onGhAuthEvent: noSubscription,
+    onEditorFileChanged: callback => { editorFileListeners.add(callback); ensureEvents(); return () => editorFileListeners.delete(callback) },
+    onEditorLanguageServerMessage: callback => { editorLspMessageListeners.add(callback); ensureEvents(); return () => editorLspMessageListeners.delete(callback) },
+    onEditorLanguageServerStatus: callback => { editorLspStatusListeners.add(callback); ensureEvents(); return () => editorLspStatusListeners.delete(callback) },
+    onGhAuthEvent: callback => { ghListeners.add(callback); ensureEvents(); return () => ghListeners.delete(callback) },
     onUpdaterEvent: noSubscription,
     // These desktop integrations are deliberately inert in a browser. Defining
     // them explicitly matters because the Proxy fallback is a function, so
     // optional method checks would otherwise invoke a rejected Promise.
-    delegationEnable: async () => ({ ok: false, error: 'Agent delegation is unavailable in browser mode' }),
-    delegationDisable: async () => ({ ok: true }),
-    editorWatchAdd: () => undefined,
-    editorWatchRemove: () => undefined,
+    delegationEnable: (sessionId, policy) => rpc('delegation.enable', { sessionId, policy }),
+    delegationDisable: sessionId => rpc('delegation.disable', { sessionId }),
+    delegationRespond: (id, result) => { void rpc('delegation.respond', { id, result }) },
+    editorWatchAdd: (root, rel) => { void rpc('editor.watchAdd', { root, rel }) },
+    editorWatchRemove: (root, rel) => { void rpc('editor.watchRemove', { root, rel }) },
+    editorLanguageServerStart: root => rpc('editor.lspStart', { root }),
+    editorLanguageServerSend: (handleId, message) => { void rpc('editor.lspSend', { handleId, message }) },
+    editorLanguageServerStop: handleId => { void rpc('editor.lspStop', { handleId }) },
     voiceProviderAvailability: () => rpc('voice.availability', {}),
     voiceCreateClientSecret: request => rpc('voice.clientSecret', { request }),
     voiceTranscribe: request => {
@@ -201,6 +230,21 @@ export function createWebCrewCodeClient(sessionOrTransport: string | WebClientTr
     voiceSetProviderKey: async provider => ({ ok: false, error: `Configure the ${provider} voice key on the CrewCode Brain` }),
     mcpList: () => rpc('mcp.list', {}),
     mcpOpenFile: async () => ({ ok: false, error: 'Edit ~/.crewcode/mcp.json on the CrewCode Brain' }),
+    pluginsList: () => rpc('plugins.list', {}),
+    pluginsWatch: async () => ({ ok: true, registry: await rpc('plugins.list', {}) }),
+    pluginsRefresh: () => rpc('plugins.list', {}),
+    pluginsResolveTab: registrationId => rpc('plugins.resolveTab', { registrationId }),
+    pluginsInvoke: request => rpc('plugins.invoke', { request }),
+    pluginsRecordRuntimeError: async () => ({ ok: true }),
+    pluginsAudit: async () => [],
+    pluginsSetApproval: async () => ({ ok: false, error: 'Plugin approval must be changed on the Brain' }),
+    pluginsSetEnabled: async () => ({ ok: false, error: 'Plugin enablement must be changed on the Brain' }),
+    pluginsCopyExample: async () => ({ ok: false, error: 'Plugin installation is Brain-local' }),
+    pluginsInspectGit: async () => ({ ok: false, error: 'Plugin installation is Brain-local' }),
+    pluginsInstallGit: async () => ({ ok: false, error: 'Plugin installation is Brain-local' }),
+    pluginsOpenDir: async () => ({ ok: false, error: 'Plugin folders are Brain-local' }),
+    pluginsOpenPluginDir: async () => ({ ok: false, error: 'Plugin folders are Brain-local' }),
+    pluginsOpenManifest: async () => ({ ok: false, error: 'Plugin manifests are Brain-local' }),
     sshListConfig: async () => [],
     keybindsRead: async () => ({ ok: true, data: null }),
     // Browser shortcuts persist through SettingsProvider localStorage. The
@@ -272,6 +316,8 @@ export function createWebCrewCodeClient(sessionOrTransport: string | WebClientTr
     gitStageAll: cwd => rpc('git.stageAll', { cwd }),
     gitUnstage: (cwd, paths) => rpc('git.unstage', { cwd, paths }),
     gitDiff: (cwd, path, staged) => rpc('git.diff', { cwd, path, staged }),
+    gitChangesVsRef: (cwd, ref) => rpc('git.changesVsRef', { cwd, ref }),
+    gitDiffVsRef: (cwd, ref, path) => rpc('git.diffVsRef', { cwd, ref, path }),
     gitLog: (cwd, limit = 20) => rpc('git.log', { cwd, limit }),
     gitBranches: cwd => rpc('git.branches', { cwd }),
     gitRemotes: cwd => rpc('git.remotes', { cwd }),
@@ -294,10 +340,10 @@ export function createWebCrewCodeClient(sessionOrTransport: string | WebClientTr
     ghPrCreate: cwd => rpc('gh.prCreate', { cwd }),
     ghPrMerge: (cwd, number) => rpc('gh.prMerge', { cwd, number }),
     ghPrApprove: (cwd, number) => rpc('gh.prApprove', { cwd, number }),
-    ghLoginStart: async () => ({ ok: false, error: 'Authenticate gh from a Brain terminal before using GitHub UI' }),
-    ghLoginCancel: async () => ({ ok: true }),
+    ghLoginStart: () => rpc('gh.loginStart', {}),
+    ghLoginCancel: () => rpc('gh.loginCancel', {}),
     ghLogout: async () => ({ ok: false, error: 'Remote logout is disabled; manage gh credentials from the Brain' }),
-    ghRepoCreate: async () => ({ ok: false, output: '', error: 'Remote repository publishing is not enabled yet' }),
+    ghRepoCreate: (cwd, options) => rpc('gh.repoCreate', { cwd, options }),
     ptyCreate: opts => rpc('pty.create', { ...opts }),
     ptyWrite: (paneId, data) => { void rpc('pty.write', { paneId, data }) },
     ptyResize: (paneId, cols, rows) => { void rpc('pty.resize', { paneId, cols, rows }) },
@@ -329,7 +375,13 @@ export function createWebCrewCodeClient(sessionOrTransport: string | WebClientTr
     }),
     bridgePrompt: (bridgeId, text, options) => rpc('bridge.prompt', { bridgeId, text, options }),
     bridgeCompact: bridgeId => rpc('bridge.compact', { bridgeId }),
-    bridgeHandoff: (bridgeId, sourceConversationKey, options) => rpc('bridge.handoff', { bridgeId, sourceConversationKey, options }),
+    bridgeHandoff: (bridgeId, sourceConversationKey, options) => rpc('bridge.handoff', {
+      bridgeId,
+      // The shared renderer uses desktop's `thread:<session>` key. Brain keeps
+      // browser conversations in a separate namespace and adds `web:` itself.
+      sourceConversationKey: sourceConversationKey.replace(/^thread:/, ''),
+      options,
+    }),
     bridgeRemoveFollowUp: (bridgeId, followUpId) => rpc('bridge.removeFollowUp', { bridgeId, followUpId }),
     bridgeRespondUserRequest: response => rpc('bridge.respondUserRequest', { response }),
     bridgeSetMode: (bridgeId, mode) => { void rpc('bridge.setMode', { bridgeId, mode }) },

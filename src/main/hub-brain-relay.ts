@@ -230,11 +230,23 @@ export async function startBrainRelay(options: BrainRelayOptions): Promise<Runni
       else if (type === 'user_request_resolved' && owner.status === 'blocked') owner.status = 'running'
       else if (type === 'error') owner.status = 'failed'
       else if (type === 'closed') owner.status = owner.status === 'running' ? 'interrupted' : 'completed'
+      else if (type === 'idle_stopped') owner.status = 'completed'
       else if (type === 'ready' && owner.status === 'idle') owner.status = 'idle'
     } else if (String(eventRecord.type ?? '') === 'exit') owner.status = 'completed'
     const session = owner.connectionId ? sessions.get(owner.connectionId) : null
     if (session) sendEncrypted(session, { type: 'event', channel: event.channel, event: event.event })
     else appendDetachedEvent(resourceId, { channel: event.channel, event: event.event })
+    if (event.channel === 'bridge' && eventRecord.type === 'idle_stopped') {
+      // `idle_stopped` is authoritative backend teardown, not merely an idle
+      // status. Keeping its process-local owner record makes the next stable
+      // bridge.start "attach" to a resource that no longer exists.
+      bridgeOwners.delete(resourceId)
+      bridgeTextSnapshots.delete(resourceId)
+      detachedEvents.delete(resourceId)
+      for (const [requestId, ownerBridgeId] of requestOwners) {
+        if (ownerBridgeId === resourceId) requestOwners.delete(requestId)
+      }
+    }
   })
 
   const handleRelayMessage = async (raw: WebSocket.RawData): Promise<void> => {

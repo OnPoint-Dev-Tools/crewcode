@@ -49,3 +49,4 @@ packaging/arch/*.deb
 packaging/arch/*.pkg.tar.*
 tester/
 test-workspace/
+.commandcode/

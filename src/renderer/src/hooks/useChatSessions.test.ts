@@ -316,4 +316,33 @@ describe('chat session archiving', () => {
     expect(hook.result.current.getAllSessions('chat-a')).toHaveLength(1)
     hook.unmount()
   })
+
+  it('restores an exact remote transcript id without aliasing its messages', () => {
+    const hook = host()
+    act(() => {
+      hook.result.current.restoreRemote({
+        id: 'project-chat::s4',
+        tabId: 'project-chat',
+        label: 'Mobile dashboard',
+        agentId: 'claude',
+      })
+    })
+
+    expect(hook.result.current.getActiveId('project-chat')).toBe('project-chat::s4')
+    expect(hook.result.current.getAllSessions('project-chat')).toEqual([
+      expect.objectContaining({
+        id: 'project-chat::s4',
+        tabId: 'project-chat',
+        label: 'Mobile dashboard',
+        agentId: 'claude',
+      }),
+    ])
+    let conflict: unknown = 'not called'
+    act(() => {
+      conflict = hook.result.current.restoreRemote({ id: 'project-chat::s4', tabId: 'other-chat', label: 'Duplicate' })
+    })
+    expect(conflict).toBeNull()
+    expect(hook.result.current.getAllSessions('project-chat')).toHaveLength(1)
+    hook.unmount()
+  })
 })
