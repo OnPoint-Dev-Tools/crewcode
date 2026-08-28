@@ -25,6 +25,7 @@ export default defineConfig({
           index: resolve('src/main/index.ts'),
           headless: resolve('src/main/headless.ts'),
           hub: resolve('src/main/hub.ts'),
+          brain: resolve('src/main/hub-machine-enrollment.ts'),
         },
       },
     }
