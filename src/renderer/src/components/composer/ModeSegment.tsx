@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 
 import { Icon, type IconName } from '../ui/Icon'
 import { PickerSheet, type PickerItem } from './PickerSheet'
@@ -22,6 +22,8 @@ const MODE_META: Record<Mode, { icon: IconName; sub: string; badge?: string }> =
 interface ModeSegmentProps {
   mode: Mode
   onChange: (m: Mode) => void
+  disabled?: boolean
+  disabledReason?: string
 }
 
 function modeItems(): PickerItem[] {
@@ -34,10 +36,14 @@ function modeItems(): PickerItem[] {
   }))
 }
 
-export function ModeSegment({ mode, onChange }: ModeSegmentProps) {
+export function ModeSegment({ mode, onChange, disabled = false, disabledReason }: ModeSegmentProps) {
   const ref = useRef<HTMLButtonElement>(null)
   const [open, setOpen] = useState(false)
   const meta = MODE_META[mode]
+
+  useEffect(() => {
+    if (disabled) setOpen(false)
+  }, [disabled])
 
   return (
     <>
@@ -45,10 +51,11 @@ export function ModeSegment({ mode, onChange }: ModeSegmentProps) {
         ref={ref}
         type="button"
         className={`mode-select mode-${mode.toLowerCase()}`}
+        disabled={disabled}
         onClick={() => setOpen(o => !o)}
         aria-haspopup="listbox"
         aria-expanded={open}
-        title={`execution mode: ${MODE_LABEL[mode].toLowerCase()}`}
+        title={disabled ? disabledReason : `execution mode: ${MODE_LABEL[mode].toLowerCase()}`}
       >
         <span className="mode-select-icon"><Icon name={meta.icon} size={12} /></span>
         <span className="mode-select-text">

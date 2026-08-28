@@ -27,6 +27,30 @@ describe('chat session mode migration', () => {
 
     expect(migratePersistedSessions(sessions).tab?.[0]?.mode).toBe('build')
   })
+
+  it('normalizes an invalid persisted CrewCoder mode independently', () => {
+    const sessions = {
+      tab: [{
+        id: 'tab', tabId: 'tab', label: 'Session', agentId: 'crewcoder', model: '',
+        mode: 'plan' as const, crewcoderMode: 'auto' as never, effort: 'high' as const, mcpServerIds: [],
+      }],
+    }
+
+    const migrated = migratePersistedSessions(sessions)
+    expect(migrated.tab[0].mode).toBe('build')
+    expect(migrated.tab[0].crewcoderMode).toBe('general')
+  })
+
+  it('preserves normal execution modes when CrewCoder uses its configured default', () => {
+    const sessions = {
+      tab: [{
+        id: 'tab', tabId: 'tab', label: 'Session', agentId: 'crewcoder', model: '',
+        mode: 'plan' as const, effort: 'high' as const, mcpServerIds: [],
+      }],
+    }
+
+    expect(migratePersistedSessions(sessions).tab[0].mode).toBe('plan')
+  })
 })
 
 describe('chat session effort migration', () => {

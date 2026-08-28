@@ -4,6 +4,7 @@ import { PROVIDER_IMAGES, providerImageClass } from '../composer/provider-meta'
 import { AgentActivityIndicator, type AgentActivityState } from '../ui/AgentActivityIndicator'
 import { formatElapsed } from './session-elapsed'
 import { chatSessionSurface } from '../../hooks/chat-session-tab-owner'
+import { encodeSessionDrag, SESSION_DRAG_MIME } from './session-drag'
 import type { Session } from '../../types'
 
 interface SessionsProps {
@@ -19,9 +20,10 @@ interface SessionsProps {
   // so each row can show how long ago it finished.
   sessionCompletedAt?: Record<string, number>
   now?: number
+  draggable?: boolean
 }
 
-export function Sessions({ sessions, active, onActivate, onAdd, onRemove, onRowContextMenu, sessionActivity, sessionCompletedAt, now }: SessionsProps) {
+export function Sessions({ sessions, active, onActivate, onAdd, onRemove, onRowContextMenu, sessionActivity, sessionCompletedAt, now, draggable = true }: SessionsProps) {
   // This component is only mounted in the workspace drawer/sidebar, the one
   // place where destructive session deletion is allowed.
   const canRemove = !!onRemove
@@ -48,7 +50,13 @@ export function Sessions({ sessions, active, onActivate, onAdd, onRemove, onRowC
           <div
             key={s.id}
             title={title}
-            className={`sess ${active === s.id ? 'on' : ''} ${s.pinned ? 'sess-pinned' : ''} ${isWriter ? 'sess-writer' : ''} ${isDelegatedRow ? 'sess-delegated' : ''} ${isDoneRow ? 'sess-delegated-done' : ''}`}
+            className={`sess ${active === s.id ? 'on' : ''} ${s.pinned ? 'sess-pinned' : ''} ${isWriter ? 'sess-writer' : ''} ${isDelegatedRow ? 'sess-delegated' : ''} ${isDoneRow ? 'sess-delegated-done' : ''} ${draggable ? 'sess-draggable' : ''}`}
+            draggable={draggable}
+            onDragStart={draggable ? (e) => {
+              e.dataTransfer.effectAllowed = 'copy'
+              e.dataTransfer.setData(SESSION_DRAG_MIME, encodeSessionDrag({ sessionId: s.id, tabId: s.tabId }))
+              e.dataTransfer.setData('text/plain', s.label)
+            } : undefined}
             onClick={() => onActivate(s.id)}
             onContextMenu={onRowContextMenu ? (e) => {
               e.preventDefault()

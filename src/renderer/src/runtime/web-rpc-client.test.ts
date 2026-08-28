@@ -52,6 +52,25 @@ describe('web RPC client', () => {
     expect(rpc.mock.calls[0]?.[1]).not.toHaveProperty('mcpServers')
   })
 
+  it('forwards a CrewCoder mode without exposing any extra process configuration', async () => {
+    const rpc = vi.fn<(method: string, params: Record<string, unknown>) => void>()
+    const client = createWebCrewCodeClient({
+      rpc: async <T,>(method: string, params: Record<string, unknown>) => {
+        rpc(method, params)
+        return { ok: true } as T
+      },
+      subscribe: () => () => undefined,
+    })
+
+    await client.bridgeStart({
+      bridgeId: 'crew-1', provider: 'crewcoder', cwd: '/repo', crewcoderMode: 'extension',
+    })
+
+    expect(rpc).toHaveBeenCalledWith('bridge.start', expect.objectContaining({
+      provider: 'crewcoder', crewcoderMode: 'extension',
+    }))
+  })
+
   it('maps desktop thread keys into the Brain browser conversation namespace', async () => {
     const rpc = vi.fn<(method: string, params: Record<string, unknown>) => void>()
     const client = createWebCrewCodeClient({

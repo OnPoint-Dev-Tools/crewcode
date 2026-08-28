@@ -95,7 +95,7 @@ export function HandoffCard({
 
         <div className="handoff-card-tabs" role="tablist" aria-label="Handoff destination">
           <button type="button" role="tab" aria-selected={destinationTab === 'new'} className={destinationTab === 'new' ? 'on' : ''} onClick={selectNewTab} disabled={busy}>New chat</button>
-          <button type="button" role="tab" aria-selected={destinationTab === 'used'} className={destinationTab === 'used' ? 'on' : ''} onClick={selectUsedTab} disabled={busy}>Used chats <span>{targetSessions.length}</span></button>
+          <button type="button" role="tab" aria-selected={destinationTab === 'used'} className={destinationTab === 'used' ? 'on' : ''} onClick={selectUsedTab} disabled={busy}>Chats <span>{targetSessions.length}</span></button>
         </div>
 
         {destinationTab === 'new' ? (

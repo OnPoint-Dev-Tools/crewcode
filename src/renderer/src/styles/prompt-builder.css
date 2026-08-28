@@ -603,6 +603,28 @@
   font-family: var(--font-family-sans);
 }
 
+.ppicker-tabs {
+  display: flex; align-items: stretch; gap: 18px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.ppicker-tab {
+  display: inline-flex; align-items: center; gap: 7px;
+  min-height: 40px;
+  padding: 0 2px;
+  font-family: var(--font-family-sans); font-size: 12.5px; font-weight: 600;
+  color: var(--muted-foreground);
+  background: transparent; border: 0; border-bottom: 2px solid transparent;
+  cursor: pointer;
+}
+.ppicker-tab:hover { color: var(--foreground); }
+.ppicker-tab.on { color: var(--foreground); border-bottom-color: var(--primary); }
+.ppicker-tab span {
+  font-family: var(--font-family-mono); font-size: 9.5px; font-weight: 500;
+  color: var(--muted-foreground);
+}
+
 .ppicker-search {
   display: flex; align-items: center; gap: 10px;
   padding: 12px 14px;
@@ -656,6 +678,7 @@
 }
 .ppicker-item:hover { background: var(--accent); }
 .ppicker-item.on { background: var(--accent); border-color: var(--border); }
+.ppicker-item.enabled { background: color-mix(in srgb, var(--primary) 10%, transparent); }
 .ppicker-bar { width: 3px; border-radius: 2px; align-self: stretch; }
 .ppicker-main { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .ppicker-t { font-size: 13px; font-weight: 600; color: var(--foreground); }
@@ -666,6 +689,16 @@
 .ppicker-meta { display: flex; align-items: center; gap: 8px; font-family: var(--font-family-mono); font-size: 10.5px; }
 .ppicker-vars { color: #fcd452; }
 .ppicker-cat-pill { text-transform: lowercase; }
+.ppicker-skill-state {
+  display: inline-flex; align-items: center; gap: 5px;
+  color: var(--muted-foreground);
+}
+.ppicker-skill-state .dot {
+  width: 5px; height: 5px; border-radius: 50%;
+  background: var(--muted-foreground);
+}
+.ppicker-skill-state.enabled { color: var(--crew-green-bright); }
+.ppicker-skill-state.enabled .dot { background: var(--success); }
 
 .ppicker-empty {
   padding: 40px 20px; text-align: center;
@@ -997,41 +1030,45 @@ body.light .pb-card:hover {
 }
 
 @media (max-width: 768px) {
-  .pb { grid-template-columns: 1fr; }
+  .pb {
+    grid-template-columns: minmax(0, 1fr);
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
 
   /* PromptBuilder wires `data-view="detail"` on the root in JSX so we can hide
      either the rail or the detail without unmounting either subtree. */
   .pb[data-view="list"]   .pb-right  { display: none; }
   .pb[data-view="detail"] .pb-left   { display: none; }
 
-  /* ── pb-left: floating centered card on phones. ──────────────────
-     The desktop's full-bleed dark `#0c0f0c` rail becomes a centered
-     floating column with `var(--background)` (light card on dark page).
-     `width: 85%` lets the dark page background frame the sidebar
-     rather than the sidebar spanning edge-to-edge, so it reads as a
-     proper mobile card stack. The wrapper, padding, and radius below
-     keep the card visually contained. */
+  /* The Studio list owns the full phone viewport. A percentage-width,
+     centered rail wastes scarce space and can push nested controls beyond
+     the viewport once their intrinsic widths are considered. */
   .pb-left {
     border-right: 0;
     background: var(--background);
-    margin: auto;
-    width: 85%;
-    border-radius: 12px;
-    border: 1px solid var(--border);
-    margin-top: 16px;
-    margin-bottom: 16px;
+    margin: 0;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    border: 0;
+    border-radius: 0;
     min-height: 0;
+    overflow: hidden;
   }
   .pb-inner {
     width: 100%;
     max-width: 100%;
+    min-width: 0;
     margin: 0;
     display: flex;
     flex-direction: column;
     min-height: 0;
+    overflow: hidden;
   }
 
-  .pb-left-h { padding: 12px 16px 10px; gap: 8px; align-items: stretch; }
+  .pb-left-h { padding: 8px 10px 7px; gap: 6px; align-items: stretch; }
   .pb-tabs,
   .pb-search,
   .pb-cats,
@@ -1046,76 +1083,110 @@ body.light .pb-card:hover {
   }
 
   .pb-title-row {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 8px;
+    gap: 6px;
+    min-width: 0;
   }
   .pb-tabs {
-    width: 100%;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 0;
+    overflow: hidden;
+  }
+  .pb-tab {
     justify-content: center;
+    min-width: 0;
+    padding: 5px 7px;
+    font-size: 11.5px;
+  }
+  .pb-tab-c {
+    padding-inline: 4px;
   }
   .pb-new {
     margin-left: 0;
-    align-self: center;
+    flex: 0 0 auto;
     min-height: 36px;
-    padding: 8px 18px;
+    padding: 6px 10px;
   }
 
-  /* Category chips: scrollable on their own line; the trailing icon
-     buttons form a separate toolbar underneath. */
+  /* Category chips are intentionally omitted from the phone render. Keep
+     the remaining management, favorite, and layout actions compact. */
   .pb-cats {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 6px;
-    padding: 6px 16px 8px;
-  }
-  .pb-cats-scroll {
-    display: flex;
+    flex-direction: row;
     flex-wrap: nowrap;
+    align-items: center;
     gap: 4px;
-    overflow-x: auto;
-    scrollbar-width: none;
-    -webkit-overflow-scrolling: touch;
+    padding: 4px 10px 6px;
+    overflow: hidden;
+    justify-content: flex-end;
   }
-  .pb-cats-scroll::-webkit-scrollbar { display: none; }
-  .pb-cat { white-space: nowrap; }
   .pb-cats-tools {
     display: flex;
+    flex: 0 0 auto;
+    margin-left: auto;
     gap: 4px;
-    justify-content: flex-end;
     align-items: center;
-    border-top: 1px dashed var(--border);
-    padding-top: 6px;
   }
   .pb-cats-spacer { display: none; }
 
-  .pb-list { padding: 6px 12px 12px; gap: 6px; }
+  .pb-list {
+    width: 100%;
+    min-width: 0;
+    padding: 5px 8px 10px;
+    gap: 5px;
+    box-sizing: border-box;
+  }
 
   /* Card is too tall on phones — tighten padding, type, and gap so a
      typical phone shows 4–5 cards without scrolling past the metadata. */
   .pb-card {
-    padding: 9px 12px 9px 16px;
+    flex: 0 0 auto;
+    min-width: 0;
+    max-width: 100%;
+    box-sizing: border-box;
+    height: auto;
+    overflow: hidden;
+    padding: 8px 10px 8px 13px;
     gap: 2px;
-    border-radius: 9px;
+    border-radius: 8px;
     text-align: left;
     align-items: flex-start;
   }
   .pb-card-bar { top: 8px; bottom: 8px; width: 3px; }
-  .pb-card-h    { gap: 6px; font-size: 10.5px; letter-spacing: 0.06em; }
+  .pb-card-h    { min-width: 0; max-width: 100%; gap: 5px; font-size: 9.5px; letter-spacing: 0.05em; }
   .pb-card-title {
-    font-size: 14px;
+    min-width: 0;
+    max-width: 100%;
+    font-size: 13px;
     text-align: left;
     width: 100%;
-    line-height: 1.3;
+    line-height: 1.4;
+    white-space: normal;
+    overflow: hidden;
+    text-overflow: clip;
+    overflow-wrap: anywhere;
+    flex: 0 0 auto;
+    box-sizing: border-box;
   }
   .pb-card-desc  {
-    font-size: 12px;
-    line-height: 1.4;
-    -webkit-line-clamp: 1;
+    min-width: 0;
+    max-width: 100%;
+    font-size: 11px;
+    line-height: 1.45;
+    display: block;
+    overflow: hidden;
+    -webkit-line-clamp: unset;
+    -webkit-box-orient: initial;
+    white-space: normal;
+    overflow-wrap: anywhere;
     width: 100%;
+    height: auto;
+    flex: 0 0 auto;
+    box-sizing: border-box;
   }
-  .pb-card-foot  { gap: 6px; font-size: 10.5px; margin-top: 2px; width: 100%; }
-  .pb-card-on    { font-size: 9.5px; }
+  .pb-card-foot  { min-width: 0; max-width: 100%; gap: 5px; font-size: 9.5px; margin-top: 1px; width: 100%; }
+  .pb-card-on    { font-size: 9px; }
 
   /* Row layout — tighten the row card too so a row with the active dot +
      metadata reads as a single list line. */
@@ -1123,17 +1194,17 @@ body.light .pb-card:hover {
   .pb-row-title { font-size: 12px; }
   .pb-row-desc  { font-size: 10.5px; }
 
-  .pb-search   { padding: 4px 12px; }
+  .pb-search   { padding: 3px 9px; }
   .pb-search input { font-size: 13px; }
 
   .pb-icobtn { width: 36px; height: 36px; }
   .pb-icobtn:active { background: var(--accent); color: var(--foreground); }
-  .pb-left-foot { padding: 8px 16px; justify-content: space-between; }
+  .pb-left-foot { padding: 6px 10px; justify-content: space-between; }
   .pb-card:active { background: var(--popover); }
   .pb-row:active { background: var(--card); border-color: var(--border); }
   .pb-cat:active { background: var(--accent); color: var(--foreground); }
   .pb-tab:active { color: var(--foreground); }
-  .pb-new { padding: 8px 12px; min-height: 36px; }
+  .pb-new { padding: 6px 10px; min-height: 36px; }
 
   /* Keyboard hints are noise on a phone. */
   .pb-search .kbd,
@@ -1171,14 +1242,15 @@ body.light .pb-card:hover {
   .pd-toggle-knob { width: 18px; height: 18px; }
   .pd-toggle.on .pd-toggle-knob { transform: translateX(20px); }
 
-  /* On phones, the 50/50 split is unreadable. Always stack source over preview
-     regardless of the `mdMode` prop. The user can still choose to hide either
-     side via the segmented control. */
-  .pd-body.md-mode-split { grid-template-columns: 1fr; }
-  .pd-body.md-mode-split .pd-source { min-height: 180px; max-height: 45vh; }
-  .pd-body.md-mode-split .pd-preview { border-left: 0; border-top: 1px solid var(--border); }
-
-  .pd-source { padding: 14px 16px; }
+  /* PromptDetail removes split mode on phones. Source owns the full remaining
+     body height instead of sharing or capping the editor viewport. */
+  .pd-source {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    box-sizing: border-box;
+    padding: 14px 16px;
+  }
   .pd-preview { padding: 16px 18px; }
 
   .pd-vars { padding: 10px 14px; }
@@ -1207,6 +1279,9 @@ body.light .pb-card:hover {
     border-radius: 16px 16px 0 0;
   }
   .ppicker-body { flex-direction: column; }
+  .ppicker-tabs { gap: 14px; padding-inline: 12px; }
+  .ppicker-tab { min-height: 44px; }
+  .ppicker-item { min-height: 48px; }
   .ppicker-fill {
     width: 100%;
     border-left: 0;
@@ -1226,13 +1301,5 @@ body.light .pb-card:hover {
 @media (max-width: 768px) and (prefers-reduced-motion: reduce) {
   .pb-card, .pb-row, .pb-cat, .pb-tab, .pb-icobtn, .pd-icobtn, .pd-mdt-btn, .pd-back-btn {
     transition: none;
-  }
-}
-
-@media (max-width: 414px) {
-.pb-left {
-    background: var(--background);
-    margin: auto;
-    width: 85%;
   }
 }

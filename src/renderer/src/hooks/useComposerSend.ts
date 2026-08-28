@@ -7,6 +7,7 @@ import type { McpServerConfig } from './useSettings'
 import { DEFAULT_MODE_PROMPTS, sendChatSessionPrompt, type ModePromptConfig } from './chat-session-send'
 import { buildReportsBlock } from './delegation-report'
 import { delegationInbox } from '../stores/delegation-inbox-store'
+import type { CrewCoderMode } from '../../../shared/crewcoder-types'
 
 interface BridgesLike {
   ensureBridge: (
@@ -22,6 +23,7 @@ interface BridgesLike {
     mcpServers?: McpServerConfig[],
     freshSession?: boolean,
     externalDirectories?: string[],
+    crewcoderMode?: CrewCoderMode,
   ) => Promise<{ bridgeId: string } | { error: string }>
   prompt: (bridgeId: string, text: string, options?: ChatPromptOptions) => Promise<{ ok: boolean; error?: string }>
   compact?: (bridgeId: string) => Promise<{ ok: boolean; error?: string; unsupported?: boolean }>
@@ -46,6 +48,7 @@ export interface UseComposerSendOpts {
   model: string
   effort: EffortLevel
   mode: ModeLevel
+  crewcoderMode?: CrewCoderMode
   effectivePath: string
   bridges: BridgesLike
   pty: PtyLike
@@ -85,7 +88,7 @@ export interface UseComposerSendOpts {
 export function useComposerSend(opts: UseComposerSendOpts) {
   const {
     activeWs, activeTabId, sessActive, composer, setComposer, setMessages,
-    agents, activeAgentId, model, effort, mode, effectivePath, bridges, pty, activeAgentPane,
+    agents, activeAgentId, model, effort, mode, crewcoderMode: rawCrewCoderMode, effectivePath, bridges, pty, activeAgentPane,
     enabledSkills, skillsDeliveredTo, markSkillsDelivered, lastDeliveredMode, markModeDelivered,
     modePromptsEnabled = true, modePrompts = DEFAULT_MODE_PROMPTS,
     sessionHasExistingMessages = false,
@@ -95,6 +98,7 @@ export function useComposerSend(opts: UseComposerSendOpts) {
     getAttachments, getMcpServers,
     workspaceName, workspaceBranch, externalDirectories,
   } = opts
+  const crewcoderMode = rawCrewCoderMode
 
   const pendingHandoffRef = useRef<Record<string, { fromProvider: string; toProvider: string }>>({})
 
@@ -157,6 +161,19 @@ export function useComposerSend(opts: UseComposerSendOpts) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effort, sessActive, activeAgentId])
 
+  // CrewCoder mode is a process launch flag (`crewcoder acp --mode`), so a
+  // changed profile restarts only that provider bridge and keeps its session.
+  const prevCrewCoderModeRef = useRef({ sessActive, activeAgentId, crewcoderMode })
+  useEffect(() => {
+    const prev = prevCrewCoderModeRef.current
+    const sameRuntime = prev.sessActive === sessActive && prev.activeAgentId === activeAgentId
+    prevCrewCoderModeRef.current = { sessActive, activeAgentId, crewcoderMode }
+    if (activeAgentId === 'crewcoder' && sessActive && sameRuntime && prev.crewcoderMode !== crewcoderMode) {
+      bridges.dropBridge(sessActive, activeAgentId)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [crewcoderMode, sessActive, activeAgentId])
+
   const sendText = useCallback(async (
     text: string,
     attachments: ChatAttachment[],
@@ -186,6 +203,7 @@ export function useComposerSend(opts: UseComposerSendOpts) {
       activeAgentId,
       model,
       effort,
+      crewcoderMode,
       mode,
       effectivePath,
       bridges,
@@ -208,7 +226,7 @@ export function useComposerSend(opts: UseComposerSendOpts) {
     if (handoff) delete pendingHandoffRef.current[sessActive]
   }, [
     activeWs, activeTabId, sessActive, setMessages, agents, activeAgentId,
-    model, effort, mode, effectivePath, bridges, pty, activeAgentPane,
+    model, effort, mode, crewcoderMode, effectivePath, bridges, pty, activeAgentPane,
     enabledSkills, skillsDeliveredTo, markSkillsDelivered, lastDeliveredMode, markModeDelivered,
     modePromptsEnabled, modePrompts, sessionHasExistingMessages,
     delegationPreamble, delegationDeliveredTo, markDelegationDelivered,

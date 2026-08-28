@@ -446,7 +446,7 @@ function GeneralSection({ state, set, workspace }: { state: SettingsState; set: 
         <div className="ss-row" data-q="yuheard terminal agent alert knock">
           <div>
             <div className="label">YuHeard alerts</div>
-            <div className="help">Play a knock sound (and optional OS notification) when an agent in a CrewCode terminal pane finishes. Works for built-in bridge agents and for any pty-transport agent that reports via the YuHeard socket. See <code>docs/yuheard.md</code>.</div>
+            <div className="help">Play a knock sound (and optional OS notification) when an agent in a CrewCode terminal pane finishes a turn. Does not replace chat notifications — those still use Desktop notifications / Notification sound above. See <code>docs/yuheard.md</code>.</div>
           </div>
           <Toggle value={state.yuheardEnabled} onChange={v => set('yuheardEnabled', v)} />
         </div>

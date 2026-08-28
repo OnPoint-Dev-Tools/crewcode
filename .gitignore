@@ -50,3 +50,4 @@ packaging/arch/*.pkg.tar.*
 tester/
 test-workspace/
 .commandcode/
+examples/VPS_SETUP.md

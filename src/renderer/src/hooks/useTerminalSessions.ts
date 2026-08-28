@@ -10,6 +10,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import type { PtyPane } from '../types'
 import { getCurrentSettings } from './useSettings'
+import { yuheardPtySpawnFlags } from '../../../shared/yuheard-types'
 
 let counter = 0
 function nextPaneId(prefix: string): string {
@@ -96,9 +97,14 @@ function loadPersisted(): Record<string, PersistedTabSession> {
 
 // ── Hook ───────────────────────────────────────────────────────────────────
 
-export function useTerminalSessions() {
+export function useTerminalSessions(opts?: {
+  /** Window-tab kind for a pane's tabId. Chat/crew sidecars stay off YuHeard. */
+  tabKind?: (tabId: string) => string | undefined
+}) {
   const persistedRef = useRef(loadPersisted())
   const restoredTabsRef = useRef(new Set<string>())
+  const tabKindRef = useRef(opts?.tabKind)
+  tabKindRef.current = opts?.tabKind
 
   const [panes,       setPanes]       = useState<PtyPane[]>([])
   const [layouts,     setLayouts]     = useState<Record<string, Layout>>({})
@@ -129,17 +135,18 @@ export function useTerminalSessions() {
     // without a re-mount. The main process decides what to inject based on
     // these flags.
     const settings = getCurrentSettings()
-    const wrapAgentIds = settings.yuheardAutoWrap
-      ? Object.entries(settings.connections).filter(([, on]) => on).map(([id]) => id)
-      : []
+    const flags = yuheardPtySpawnFlags({
+      tabKind: tabKindRef.current?.(pane.tabId),
+      shell: pane.shell,
+      agentId: pane.agentId,
+      autoWrapEnabled: settings.yuheardAutoWrap,
+    })
     void window.electronAPI?.ptyCreate?.({
       paneId: pane.paneId,
       cwd: pane.cwd,
       shell: pane.shell,
       argv: pane.argv,
-      agentId: pane.agentId ?? null,
-      autoWrap: settings.yuheardAutoWrap && !pane.agentId && pane.shell !== 'ssh',
-      wrapAgentIds,
+      ...flags,
     })
   }, [])
 

@@ -11,6 +11,7 @@ export type MdMode = 'source' | 'split' | 'preview'
 interface PromptDetailProps {
   p:            Prompt | Skill
   kind:         'prompts' | 'skills'
+  isMobile:     boolean
   mdMode:       MdMode
   setMdMode:    (m: MdMode) => void
   customCategories?: CustomCategoryDef[]
@@ -35,7 +36,7 @@ interface PromptDetailProps {
 }
 
 export function PromptDetail({
-  p, kind, mdMode, setMdMode, customCategories = [], onCommit, onUseInChat, onApplySkill, onDuplicate, onDelete,
+  p, kind, isMobile, mdMode, setMdMode, customCategories = [], onCommit, onUseInChat, onApplySkill, onDuplicate, onDelete,
   onToggleEnabled, onBack,
 }: PromptDetailProps) {
   const [draft, setDraft] = useState<Prompt | Skill>(p)
@@ -61,6 +62,9 @@ export function PromptDetail({
   const accent = getCategoryColor(draft.category)
   const isSkill = kind === 'skills'
   const skillEnabled = isSkill && (draft as Skill).enabled
+  // Split remains the desktop default, but a phone treats it as source mode
+  // so opening a detail never spends editor height on an implicit preview.
+  const visibleMdMode: MdMode = isMobile && mdMode === 'split' ? 'source' : mdMode
 
   const patch = (k: string, v: unknown): void => {
     setDraft(d => ({ ...d, [k]: v }) as Prompt | Skill)
@@ -235,19 +239,21 @@ export function PromptDetail({
         </>)}
         <span className="pd-mdt-spacer" />
         <div className="pd-view-seg">
-          <button className={mdMode === 'source'  ? 'on' : ''} onClick={() => setMdMode('source')}>source</button>
-          <button className={mdMode === 'split'   ? 'on' : ''} onClick={() => setMdMode('split')}>split</button>
-          <button className={mdMode === 'preview' ? 'on' : ''} onClick={() => setMdMode('preview')}>preview</button>
+          <button className={visibleMdMode === 'source' ? 'on' : ''} onClick={() => setMdMode('source')}>source</button>
+          {!isMobile && (
+            <button className={visibleMdMode === 'split' ? 'on' : ''} onClick={() => setMdMode('split')}>split</button>
+          )}
+          <button className={visibleMdMode === 'preview' ? 'on' : ''} onClick={() => setMdMode('preview')}>preview</button>
         </div>
       </div>
 
-      <div className={`pd-body md-mode-${mdMode}`}>
-        {mdMode !== 'preview' && (
+      <div className={`pd-body md-mode-${visibleMdMode}`}>
+        {visibleMdMode !== 'preview' && (
           <textarea className="pd-source" spellCheck={false}
             value={draft.body}
             onChange={e => patch('body', e.target.value)} />
         )}
-        {mdMode !== 'source' && (
+        {visibleMdMode !== 'source' && (
           <div className="pd-preview">{preview}</div>
         )}
       </div>

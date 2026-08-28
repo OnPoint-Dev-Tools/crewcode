@@ -1,10 +1,18 @@
 import { useEffect, useRef, useCallback } from 'react'
 import type { AgentProviderId, BridgeEvent, ChatPromptOptions, CustodyHaltPayload, Message, TurnFileChange, ModeLevel } from '../types'
 import type { McpServerConfig } from './useSettings'
+import type { CrewCoderMode } from '../../../shared/crewcoder-types'
 import { extractFilePathsFromToolArgs, buildUnifiedDiff, extractProviderPatchChanges, isFileEditTool, resultHasPatchSignal, collectTouchedPaths } from './turn-file-edit-detect'
 import { appendStreamChunk } from '../streaming/stream-chunks'
 import { useNotifications } from './useNotifications'
 import { clearLatestContextUsage } from './compaction-context'
+import {
+  activityFormForTool,
+  settleActiveTurnActivities,
+  settleCurrentTurnActivity,
+  startNextTurnActivity,
+  updateTurnActivity,
+} from '../components/thread/turn-activity'
 
 type BridgeToolPolicy = 'default' | 'read-only'
 
@@ -37,6 +45,7 @@ interface BridgeState {
   thinkingSeqByTurn:    Record<string, number>
   toolByCallId:         Record<string, number>
   turnStartTimes:       Record<string, number>
+  requestTurnById:      Record<string, string>
   pendingPromptStartedAt?: number
   // tool_start → "before" snapshot for the per-turn change tracker. The read
   // is fired off as a promise on tool_start; tool_end awaits it before
@@ -138,11 +147,13 @@ export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, br
   onCustodyHaltRef.current = onCustodyHalt
   const onCustodyClearedRef = useRef(onCustodyCleared)
   onCustodyClearedRef.current = onCustodyCleared
+  const onRunningChangeRef = useRef(onRunningChange)
+  onRunningChangeRef.current = onRunningChange
 
   function getState(bridgeId: string): BridgeState {
     let s = stateRef.current[bridgeId]
     if (!s) {
-      s = { agentBubbleByTurn: {}, agentSeqByTurn: {}, activeThinkingByTurn: {}, thinkingSeqByTurn: {}, toolByCallId: {}, turnStartTimes: {}, pendingFileEdits: {} }
+      s = { agentBubbleByTurn: {}, agentSeqByTurn: {}, activeThinkingByTurn: {}, thinkingSeqByTurn: {}, toolByCallId: {}, turnStartTimes: {}, requestTurnById: {}, pendingFileEdits: {} }
       stateRef.current[bridgeId] = s
     }
     return s
@@ -393,7 +404,8 @@ export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, br
           st.turnStartTimes[ev.turnId] = st.pendingPromptStartedAt ?? Date.now()
           delete st.pendingPromptStartedAt
           onStatusRef.current?.(ev.bridgeId, null)
-          onRunningChange?.(ev.bridgeId, true)
+          onRunningChangeRef.current?.(ev.bridgeId, true)
+          setMessagesForTab(tabId, messages => startNextTurnActivity(messages, ev.turnId))
           // Lazily allocate bubbles when the first delta arrives.
           return
 
@@ -459,11 +471,19 @@ export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, br
         }
 
         case 'text_delta': {
+          setMessagesForTab(tabId, messages => updateTurnActivity(messages, ev.turnId, {
+            status: 'in_progress',
+            activeForm: 'Preparing response',
+          }))
           enqueueStreamDelta(ev.bridgeId, tabId, ev.turnId, 'agent', ev.delta)
           return
         }
 
         case 'thinking_delta': {
+          setMessagesForTab(tabId, messages => updateTurnActivity(messages, ev.turnId, {
+            status: 'in_progress',
+            activeForm: 'Analyzing request',
+          }))
           enqueueStreamDelta(ev.bridgeId, tabId, ev.turnId, 'thinking', ev.delta)
           return
         }
@@ -471,6 +491,10 @@ export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, br
         case 'tool_start': {
           closeThinkingSegment(ev.turnId)
           closeAgentSegment(ev.turnId)
+          setMessagesForTab(tabId, messages => updateTurnActivity(messages, ev.turnId, {
+            status: 'in_progress',
+            activeForm: activityFormForTool(ev.toolName),
+          }))
           setMessagesForTab(tabId, m => {
             const inserted = appendToolForTurn(m, {
               kind:       'toolcall',
@@ -558,6 +582,10 @@ export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, br
             }
             return next
           })
+          setMessagesForTab(tabId, messages => updateTurnActivity(messages, ev.turnId, {
+            status: 'in_progress',
+            activeForm: ev.isError ? 'Recovering from tool error' : 'Working on request',
+          }))
           // For file-editing tool calls: resolve the diff from (1) before/after
           // snapshots, (2) provider-embedded unified diffs, then (3) a scoped
           // git-diff fallback. Skipped entirely if the tool errored — nothing
@@ -693,11 +721,24 @@ export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, br
         }
 
         case 'user_request': {
+          if (ev.request.turnId) st.requestTurnById[ev.request.requestId] = ev.request.turnId
+          setMessagesForTab(tabId, messages => updateTurnActivity(messages, ev.request.turnId, {
+            status: 'in_progress',
+            activeForm: 'Waiting for your response',
+          }))
           onUserRequestRef.current?.(tabId, ev.request)
           return
         }
 
         case 'user_request_resolved': {
+          const requestTurnId = st.requestTurnById[ev.requestId]
+          delete st.requestTurnById[ev.requestId]
+          if (requestTurnId) {
+            setMessagesForTab(tabId, messages => updateTurnActivity(messages, requestTurnId, {
+              status: 'in_progress',
+              activeForm: 'Working on request',
+            }))
+          }
           onUserRequestResolvedRef.current?.(tabId, ev.requestId)
           return
         }
@@ -716,8 +757,9 @@ export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, br
           const startTime = st.turnStartTimes[ev.turnId]
           const durationMs = startTime ? Date.now() - startTime : undefined
           onStatusRef.current?.(ev.bridgeId, null)
-          onRunningChange?.(ev.bridgeId, false)
+          onRunningChangeRef.current?.(ev.bridgeId, false)
           closeThinkingSegment(ev.turnId)
+          setMessagesForTab(tabId, messages => settleCurrentTurnActivity(messages, 'completed', ev.turnId))
           setMessagesForTab(tabId, m => {
             let changed = false
             let lastAgentIdx = -1
@@ -758,8 +800,9 @@ export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, br
           st.turnStartTimes = {}
           delete st.pendingPromptStartedAt
           onStatusRef.current?.(ev.bridgeId, null)
-          onRunningChange?.(ev.bridgeId, false)
+          onRunningChangeRef.current?.(ev.bridgeId, false)
           settleStreamingMessages()
+          setMessagesForTab(tabId, messages => settleActiveTurnActivities(messages, 'interrupted'))
           setMessagesForTab(tabId, m => [...m, { kind: 'system', tone: 'error', text: ev.message, time: nowTime() }])
           onTurnEndRef.current?.(ev.bridgeId, tabId)
           return
@@ -769,8 +812,9 @@ export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, br
           st.turnStartTimes = {}
           delete st.pendingPromptStartedAt
           onStatusRef.current?.(ev.bridgeId, null)
-          onRunningChange?.(ev.bridgeId, false)
+          onRunningChangeRef.current?.(ev.bridgeId, false)
           settleStreamingMessages()
+          setMessagesForTab(tabId, messages => settleActiveTurnActivities(messages, 'interrupted'))
           setMessagesForTab(tabId, m => [...m, { kind: 'system', tone: 'info', text: `agent exited (${ev.code ?? 'unknown'})`, time: nowTime() }])
           onTurnEndRef.current?.(ev.bridgeId, tabId)
           return
@@ -784,8 +828,9 @@ export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, br
           st.turnStartTimes = {}
           delete st.pendingPromptStartedAt
           onStatusRef.current?.(ev.bridgeId, null)
-          onRunningChange?.(ev.bridgeId, false)
+          onRunningChangeRef.current?.(ev.bridgeId, false)
           settleStreamingMessages()
+          setMessagesForTab(tabId, messages => settleActiveTurnActivities(messages, 'interrupted'))
           onCustodyHaltRef.current?.(tabId, ev.bridgeId, ev.halt)
           onTurnEndRef.current?.(ev.bridgeId, tabId)
           // Main tore the process down as containment; drop the dead bridge id
@@ -809,7 +854,8 @@ export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, br
           // Idle sweep freed the process. Drop local state and let the registry
           // forget the bridge — no thread message; the next prompt resumes it.
           onStatusRef.current?.(ev.bridgeId, null)
-          onRunningChange?.(ev.bridgeId, false)
+          onRunningChangeRef.current?.(ev.bridgeId, false)
+          setMessagesForTab(tabId, messages => settleActiveTurnActivities(messages, 'interrupted'))
           onReleasedRef.current?.(ev.bridgeId)
           delete stateRef.current[ev.bridgeId]
           return
@@ -844,12 +890,13 @@ export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, br
     mcpServers?: McpServerConfig[],
     freshSession?: boolean,
     externalDirectories?: string[],
+    crewcoderMode?: CrewCoderMode,
   ) => {
     stoppedBridgesRef.current.delete(bridgeId)
     const api = window.electronAPI
     if (!api) return { ok: false, error: 'electronAPI unavailable' }
     try {
-      return await api.bridgeStart({ bridgeId, provider, cwd, externalDirectories, model, mode, toolPolicy, thinking, sessionKey, conversationScopeKey, freshSession, mcpServers })
+      return await api.bridgeStart({ bridgeId, provider, cwd, externalDirectories, model, mode, crewcoderMode, toolPolicy, thinking, sessionKey, conversationScopeKey, freshSession, mcpServers })
     } catch (error) {
       return { ok: false, error: (error as Error).message }
     }
@@ -860,38 +907,38 @@ export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, br
     // User-visible elapsed time should cover the whole request, not only the
     // provider's final text stream; some bridges emit turn_start after setup.
     st.pendingPromptStartedAt = Date.now()
-    onRunningChange?.(bridgeId, true)
+    onRunningChangeRef.current?.(bridgeId, true)
     try {
       const result = await (window.electronAPI?.bridgePrompt(bridgeId, text, options) ?? { ok: false, error: 'electronAPI unavailable' })
       // Browser RPC and some provider bridges acknowledge an accepted prompt
       // before the turn finishes. Keep Stop available until an authoritative
       // turn_end/error/closed event arrives; an RPC acknowledgement is not proof
       // that execution settled. Rejections have no terminal turn to clear them.
-      if (!result.ok) onRunningChange?.(bridgeId, false)
+      if (!result.ok) onRunningChangeRef.current?.(bridgeId, false)
       return result
     } catch (error) {
-      onRunningChange?.(bridgeId, false)
+      onRunningChangeRef.current?.(bridgeId, false)
       return { ok: false, error: (error as Error).message }
     }
-  }, [onRunningChange])
+  }, [])
 
   const compact = useCallback(async (bridgeId: string) => {
-    onRunningChange?.(bridgeId, true)
+    onRunningChangeRef.current?.(bridgeId, true)
     try {
       return await (window.electronAPI?.bridgeCompact(bridgeId) ?? { ok: false, error: 'electronAPI unavailable' })
     } finally {
-      onRunningChange?.(bridgeId, false)
+      onRunningChangeRef.current?.(bridgeId, false)
     }
-  }, [onRunningChange])
+  }, [])
 
   const handoff = useCallback(async (bridgeId: string, sourceConversationKey: string, options: NonNullable<ChatPromptOptions['handoff']>) => {
-    onRunningChange?.(bridgeId, true)
+    onRunningChangeRef.current?.(bridgeId, true)
     try {
       return await (window.electronAPI?.bridgeHandoff(bridgeId, sourceConversationKey, options) ?? { ok: false, error: 'handoff unavailable' })
     } finally {
-      onRunningChange?.(bridgeId, false)
+      onRunningChangeRef.current?.(bridgeId, false)
     }
-  }, [onRunningChange])
+  }, [])
 
   const setMode = useCallback((bridgeId: string, mode: ModeLevel) => {
     // Mode switches are per-turn behavior, not a reason to respawn and lose the
@@ -901,22 +948,26 @@ export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, br
   }, [])
 
   const abort = useCallback((bridgeId: string) => {
+    const tabId = bridgeToTabRef.current[bridgeId]
+    if (tabId) setMessagesForTab(tabId, messages => settleActiveTurnActivities(messages, 'cancelled'))
     window.electronAPI?.bridgeAbort(bridgeId)
-  }, [])
+  }, [setMessagesForTab])
 
   const removeFollowUp = useCallback(async (bridgeId: string, followUpId: string) => {
     return await (window.electronAPI?.bridgeRemoveFollowUp(bridgeId, followUpId)
       ?? { ok: false, error: 'electronAPI unavailable' })
   }, [])
 
-  const stop = useCallback((bridgeId: string) => {
+  const stop = useCallback((bridgeId: string, preserveActivity = false) => {
     stoppedBridgesRef.current.add(bridgeId)
-    onRunningChange?.(bridgeId, false)
+    onRunningChangeRef.current?.(bridgeId, false)
     flushBridgeBuffers(bridgeId)
     flushBridgeToolOutputBuffers(bridgeId)
+    const tabId = bridgeToTabRef.current[bridgeId]
+    if (!preserveActivity && tabId) setMessagesForTab(tabId, messages => settleActiveTurnActivities(messages, 'interrupted'))
     window.electronAPI?.bridgeStop(bridgeId)
     delete stateRef.current[bridgeId]
-  }, [onRunningChange])
+  }, [setMessagesForTab])
 
   return { start, prompt, compact, handoff, setMode, abort, stop, removeFollowUp, registerRoute }
 }

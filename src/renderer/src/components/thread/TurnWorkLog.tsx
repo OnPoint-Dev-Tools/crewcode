@@ -21,11 +21,50 @@ export interface TodoItem {
   status:      'pending' | 'in_progress' | 'completed' | 'cancelled'
   text:        string
   activeForm?: string
+  /** Stable CrewCoder task identity. Display numbers are session-local. */
+  id?:          string
+  displayNumber?: number
+  subject?:     string
+  description?: string
+  owner?:       string
+  sessionId?:   string
+  projectPath?: string
+  metadata?:    Record<string, unknown>
+  blocks?:      string[]
+  blockedBy?:   string[]
+  createdAt?:   number
+  updatedAt?:   number
 }
 
 export interface TaskSummaryItem {
   tool: string
   text: string
+  /** Present when a delegated summary entry is a CrewCoder task record. */
+  task?: TodoItem
+}
+
+export function isBlockedTodo(todo: TodoItem): boolean {
+  return todo.status === 'pending' && Boolean(todo.blockedBy?.length)
+}
+
+export function todoDisplayLabel(todo: TodoItem): string {
+  return todo.status === 'in_progress' ? (todo.activeForm?.trim() || todo.subject || todo.text) : (todo.subject || todo.text)
+}
+
+function TodoTaskRow({ todo }: { todo: TodoItem }) {
+  const blocked = isBlockedTodo(todo)
+  const marker = todo.status === 'completed' ? '✓' : todo.status === 'in_progress' ? '◉' : blocked ? '!' : '○'
+  const number = todo.displayNumber !== undefined ? `#${todo.displayNumber}` : undefined
+  const statusClass = todo.status === 'completed' ? 'done' : todo.status === 'in_progress' ? 'active' : todo.status
+  return (
+    <div className={`wl-todo ${statusClass}${blocked ? ' blocked' : ''}`}>
+      <span className="wl-todo-marker" aria-hidden="true">{marker}</span>
+      {number && <span className="wl-todo-number">{number}</span>}
+      <span className="wl-todo-text">{todoDisplayLabel(todo)}</span>
+      {todo.owner && <span className="wl-todo-hint">owner={todo.owner}</span>}
+      {blocked && <span className="wl-todo-hint">blockedBy={todo.blockedBy!.join(',')}</span>}
+    </div>
+  )
 }
 
 export type DiagnosticSeverity = 'error' | 'warning' | 'info' | 'hint'
@@ -162,7 +201,7 @@ function RowBody({ row }: { row: WorkLogRow }) {
   if (row.kind === 'todowrite' && row.todos && row.todos.length > 0) {
     return (
       <div className="wl-todos">
-        {row.todos.map((t, i) => <div key={i} className={`wl-todo ${t.status === 'completed' ? 'done' : t.status === 'cancelled' ? 'cancelled' : t.status === 'in_progress' ? 'active' : ''}`}>- [{t.status === 'completed' ? 'x' : ' '}] {t.text}</div>)}
+        {row.todos.map((todo, i) => <TodoTaskRow key={todo.id ? `${todo.sessionId ?? ''}:${todo.id}` : i} todo={todo} />)}
       </div>
     )
   }
@@ -170,11 +209,13 @@ function RowBody({ row }: { row: WorkLogRow }) {
     return (
       <div className="wl-task-summary">
         {row.taskSummary.map((t, i) => (
-          <div key={i} className="wl-task-row">
-            <Icon name={iconForToolName(t.tool)} size={12} />
-            <span className="chip-mono">{t.tool}</span>
-            <span className="wl-task-text">{t.text}</span>
-          </div>
+          t.task
+            ? <TodoTaskRow key={t.task.id ? `${t.task.sessionId ?? ''}:${t.task.id}` : i} todo={t.task} />
+            : <div key={i} className="wl-task-row">
+                <Icon name={iconForToolName(t.tool)} size={12} />
+                <span className="chip-mono">{t.tool}</span>
+                <span className="wl-task-text">{t.text}</span>
+              </div>
         ))}
       </div>
     )

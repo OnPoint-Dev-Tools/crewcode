@@ -1386,12 +1386,23 @@ body.dark .gs-pr-detail .check-row .ico.f { color: #f87171; }
   .git-page-panel { min-height: 420px; }
   .git-page-panel .gs { height: 420px; }
 }
-@media (max-width: 760px) {
+@media (max-width: 768px) {
+  .git-page { overscroll-behavior-y: contain; }
   .git-page-hero {
     align-items: flex-start;
     flex-direction: column;
     gap: 8px;
+    padding: 8px 10px;
   }
+  .git-page-title-row { width: 100%; }
+  .git-page-title-block,
+  .git-page-hero p { max-width: 100%; }
+  .git-page-branch-inline {
+    min-height: 36px;
+    max-width: min(55vw, 300px);
+    padding: 6px 9px;
+  }
+  .git-page-more { width: 36px; height: 36px; }
   .git-page-header-tools {
     width: 100%;
     justify-content: space-between;
@@ -1404,16 +1415,69 @@ body.dark .gs-pr-detail .check-row .ico.f { color: #f87171; }
     align-items: flex-start;
     flex-direction: column;
   }
+  .git-page-commit { padding: 10px; }
+  .git-page-commit textarea { font-size: 16px; }
+  .git-page-amend { min-height: 36px; }
   .git-page-commit-actions { margin-left: 0; }
-  .git-page-overview { grid-template-columns: 1fr; }
+  .git-page-body { gap: 8px; padding: 8px; }
+  .git-page-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .git-page-overview > .git-page-card-row { display: contents; }
+  .git-page-card { padding: 10px; }
+  .git-page-card-v { margin-top: 6px; font-size: 28px; }
+  .git-page-main { height: min(620px, 78dvh); min-height: min(620px, 78dvh); }
+  .git-page-panel { height: min(420px, 56dvh); min-height: min(420px, 56dvh); }
+  .git-page-panel .gs { height: min(420px, 56dvh); }
   .git-page-changes {
     grid-template-columns: 1fr;
   }
   .git-page-changes-list {
     border-right: 0;
     border-bottom: 1px solid var(--border);
-    max-height: 320px;
+    max-height: min(260px, 34dvh);
   }
+  .git-page-change {
+    min-height: 44px;
+    grid-template-columns: 18px minmax(0, 1fr) auto 36px;
+  }
+  .git-page-branch-pop {
+    position: fixed;
+    top: 48px;
+    right: 8px;
+    left: 8px;
+    z-index: var(--z-sheet);
+    width: auto;
+  }
+  .git-page-hero > .gs-pop-backdrop {
+    position: fixed;
+    inset: 40px 0 calc(44px + env(safe-area-inset-bottom));
+    z-index: var(--z-sheet-backdrop);
+    background: rgba(0, 0, 0, 0.42);
+    backdrop-filter: blur(2px);
+  }
+  .git-page-branch-pop .gs-pop-list { max-height: min(52dvh, 320px); }
+  .gs-top { padding: 8px 10px; }
+  .gs-top-actions .gs-ibtn { width: 36px; height: 36px; }
+  .gs-branch { min-height: 40px; font-size: 12px; }
+  .gs-sync .gs-arrow,
+  .gs-sync .gs-fetch { min-height: 36px; }
+  .gs-card-h { min-height: 44px; padding: 8px 10px; }
+  .gs-file {
+    min-height: 40px;
+    grid-template-columns: 18px minmax(0, 1fr) auto 36px;
+    padding: 7px 10px;
+  }
+  .gs-file-action { width: 36px; height: 36px; }
+  .gs-section-head .stage-toggle { min-height: 36px; }
+  .gs-commit textarea { font-size: 16px; }
+  .gs-btn { min-height: 40px; }
+  .gs-menu-backdrop { z-index: var(--z-sheet-backdrop); }
+  .gs-menu { z-index: var(--z-sheet); }
+  .gs-menu-item,
+  .gs-pop-item { min-height: 40px; }
+  .gs-pop-search { min-height: 44px; }
+  .gs-pop-search input,
+  .gb-input-wrap input { font-size: 16px; }
+  .gs-body { padding: 8px; padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
 }
 
 /* Git credential prompt --------------------------------------------------- */

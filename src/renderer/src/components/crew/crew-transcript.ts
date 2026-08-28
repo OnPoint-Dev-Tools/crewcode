@@ -35,6 +35,7 @@ function messageToMarkdown(msg: Message): string | null {
     case 'handoff_summary':
       return `### ${msg.reason === 'compact' ? 'Compact' : 'Handoff'} summary\n\n${msg.summary}`
     case 'worklog':
+    case 'activity':
     case 'compaction':
     case 'handoff':
       return null

@@ -2,20 +2,25 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '../ui/Icon'
 import {
   CATEGORIES, getCategoryColor, extractVars, fillVars,
-  type Prompt,
+  type Prompt, type Skill,
 } from '../../types/prompts'
+
+type PickerTab = 'prompts' | 'skills'
 
 interface PromptPickerProps {
   open:     boolean
   onClose:  () => void
   prompts:  Prompt[]
+  skills:   Skill[]
   onInsert: (body: string, p: Prompt) => void
+  onToggleSkill: (skill: Skill) => void
   /** Seed values to pre-fill common context vars (`repo`, `branch`). */
   seed?:    Record<string, string>
   anchor?:  { left: number; bottom: number } | null
 }
 
-export function PromptPicker({ open, onClose, prompts, onInsert, seed, anchor }: PromptPickerProps) {
+export function PromptPicker({ open, onClose, prompts, skills, onInsert, onToggleSkill, seed, anchor }: PromptPickerProps) {
+  const [tab,        setTab]        = useState<PickerTab>('prompts')
   const [q,          setQ]          = useState('')
   const [cat,        setCat]        = useState<string>('all')
   const [highlight,  setHighlight]  = useState<number>(0)
@@ -25,23 +30,24 @@ export function PromptPicker({ open, onClose, prompts, onInsert, seed, anchor }:
 
   useEffect(() => {
     if (!open) return
-    setQ(''); setCat('all'); setHighlight(0); setSelectedId(null); setVars({})
+    setTab('prompts'); setQ(''); setCat('all'); setHighlight(0); setSelectedId(null); setVars({})
     setTimeout(() => searchRef.current?.focus(), 20)
   }, [open])
 
-  const filtered = useMemo(() => prompts.filter(p => {
-    if (cat !== 'all' && p.category !== cat) return false
+  const items = tab === 'prompts' ? prompts : skills
+  const filtered = useMemo(() => items.filter(item => {
+    if (cat !== 'all' && item.category !== cat) return false
     if (q) {
-      const h = (p.title + ' ' + p.description).toLowerCase()
+      const h = (item.title + ' ' + item.description).toLowerCase()
       if (!h.includes(q.toLowerCase())) return false
     }
     return true
-  }), [prompts, q, cat])
+  }), [items, q, cat])
 
-  const selected = prompts.find(p => p.id === selectedId) ?? null
+  const selected = tab === 'prompts' ? prompts.find(p => p.id === selectedId) ?? null : null
   const selVars  = selected ? extractVars(selected.body) : []
 
-  const pick = (p: Prompt): void => {
+  const pickPrompt = (p: Prompt): void => {
     const v = extractVars(p.body)
     if (v.length === 0) {
       onInsert(p.body, p)
@@ -67,20 +73,22 @@ export function PromptPicker({ open, onClose, prompts, onInsert, seed, anchor }:
       if (selected) return  // arrow nav only applies to the list view
       if (e.key === 'ArrowDown') {
         e.preventDefault()
-        setHighlight(h => Math.min(h + 1, filtered.length - 1))
+        setHighlight(h => Math.min(h + 1, Math.max(0, filtered.length - 1)))
       } else if (e.key === 'ArrowUp') {
         e.preventDefault()
         setHighlight(h => Math.max(h - 1, 0))
       } else if (e.key === 'Enter') {
         e.preventDefault()
-        const p = filtered[highlight]
-        if (p) pick(p)
+        const item = filtered[highlight]
+        if (!item) return
+        if (tab === 'prompts') pickPrompt(item as Prompt)
+        else onToggleSkill(item as Skill)
       }
     }
     document.addEventListener('keydown', fn)
     return () => document.removeEventListener('keydown', fn)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, filtered, highlight, selected, onClose])
+  }, [open, filtered, highlight, selected, tab, onClose, onToggleSkill])
 
   if (!open) return null
 
@@ -91,6 +99,16 @@ export function PromptPicker({ open, onClose, prompts, onInsert, seed, anchor }:
   return (
     <div className="ppicker-backdrop" onClick={onClose}>
       <div className="ppicker" onClick={e => e.stopPropagation()} style={positionStyle}>
+        <div className="ppicker-tabs" role="tablist" aria-label="Composer library">
+          <button type="button" role="tab" aria-selected={tab === 'prompts'} className={`ppicker-tab ${tab === 'prompts' ? 'on' : ''}`}
+            onClick={() => { setTab('prompts'); setHighlight(0); setSelectedId(null) }}>
+            Prompts <span>{prompts.length}</span>
+          </button>
+          <button type="button" role="tab" aria-selected={tab === 'skills'} className={`ppicker-tab ${tab === 'skills' ? 'on' : ''}`}
+            onClick={() => { setTab('skills'); setHighlight(0); setSelectedId(null) }}>
+            Skills <span>{skills.length}</span>
+          </button>
+        </div>
         <div className="ppicker-search">
           <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor"
             strokeWidth={1.75} strokeLinecap="round">
@@ -99,7 +117,7 @@ export function PromptPicker({ open, onClose, prompts, onInsert, seed, anchor }:
           </svg>
           <input ref={searchRef}
             value={q} onChange={e => { setQ(e.target.value); setHighlight(0) }}
-            placeholder="search prompts… (esc to close)" />
+            placeholder={tab === 'prompts' ? 'search prompts…' : 'search skills…'} />
           <span className="ppicker-kbd">esc</span>
         </div>
 
@@ -121,25 +139,29 @@ export function PromptPicker({ open, onClose, prompts, onInsert, seed, anchor }:
             </div>
             <div className="ppicker-items">
               {filtered.length === 0 && (
-                <div className="ppicker-empty">no prompts match "{q}"</div>
+                <div className="ppicker-empty">no {tab} match "{q}"</div>
               )}
-              {filtered.map((p, idx) => {
-                const v = extractVars(p.body)
-                const accent = getCategoryColor(p.category)
-                const on = idx === highlight || selectedId === p.id
+              {filtered.map((item, idx) => {
+                const prompt = tab === 'prompts' ? item as Prompt : null
+                const skill = tab === 'skills' ? item as Skill : null
+                const v = prompt ? extractVars(prompt.body) : []
+                const accent = getCategoryColor(item.category)
+                const on = idx === highlight || selectedId === item.id
                 return (
-                  <button key={p.id} type="button"
-                    className={`ppicker-item ${on ? 'on' : ''}`}
+                  <button key={item.id} type="button"
+                    className={`ppicker-item ${on ? 'on' : ''} ${skill?.enabled ? 'enabled' : ''}`}
+                    aria-pressed={skill ? skill.enabled : undefined}
                     onMouseEnter={() => setHighlight(idx)}
-                    onClick={() => pick(p)}>
+                    onClick={() => prompt ? pickPrompt(prompt) : skill && onToggleSkill(skill)}>
                     <span className="ppicker-bar" style={{ background: accent }} />
                     <span className="ppicker-main">
-                      <span className="ppicker-t">{p.title}</span>
-                      <span className="ppicker-d">{p.description}</span>
+                      <span className="ppicker-t">{item.title}</span>
+                      <span className="ppicker-d">{item.description}</span>
                     </span>
                     <span className="ppicker-meta">
                       {v.length > 0 && <span className="ppicker-vars">{v.length} {'{}'}</span>}
-                      <span className="ppicker-cat-pill" style={{ color: accent }}>{p.category}</span>
+                      {skill && <span className={`ppicker-skill-state ${skill.enabled ? 'enabled' : ''}`}><span className="dot" />{skill.enabled ? 'enabled' : 'enable'}</span>}
+                      <span className="ppicker-cat-pill" style={{ color: accent }}>{item.category}</span>
                     </span>
                   </button>
                 )
@@ -147,9 +169,9 @@ export function PromptPicker({ open, onClose, prompts, onInsert, seed, anchor }:
             </div>
             <div className="ppicker-foot">
               <span><span className="ppicker-kbd">↑↓</span> nav</span>
-              <span><span className="ppicker-kbd">⏎</span> insert</span>
+              <span><span className="ppicker-kbd">⏎</span> {tab === 'prompts' ? 'insert' : 'toggle'}</span>
               <span className="ppicker-spacer" />
-              <span>{filtered.length} prompts</span>
+              <span>{filtered.length} {tab}</span>
             </div>
           </div>
 

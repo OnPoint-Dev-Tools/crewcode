@@ -16,6 +16,7 @@ import { ComposerBranchPicker } from '../git/BranchPicker'
 import type { GitBranchRef } from '../git/git-state'
 import { VoiceOrb } from '../voice/VoiceOrb'
 import type { VoiceControlSurface } from '../../../../shared/voice-types'
+import { crewCoderProfileLocksExecutionMode, type CrewCoderMode } from '../../../../shared/crewcoder-types'
 import { ComposerDictationButton } from './ComposerDictationButton'
 import { insertDictationText } from './composer-dictation-text'
 import { MobileComposerActionMenu, MobileComposerModelMenu } from './MobileComposerMenus'
@@ -66,6 +67,8 @@ interface ComposerProps {
 
   effort:         EffortLevel
   onSelectEffort: (e: EffortLevel) => void
+  crewcoderMode?: CrewCoderMode
+  onSelectCrewCoderMode: (mode: CrewCoderMode | undefined) => void
 
   mcpEnabled?:     boolean
   mcpServers?:     McpServerConfig[]
@@ -157,7 +160,7 @@ export function Composer({
   sentMessageHistory = [],
   isRunning, onStop, voiceControl, dictationScopeId,
   agents, activeAgentId, onSelectAgent,
-  model, onSelectModel, effort, onSelectEffort,
+  model, onSelectModel, effort, onSelectEffort, crewcoderMode, onSelectCrewCoderMode,
   mcpEnabled, mcpServers, selectedMcpIds, onToggleMcp,
   shortcutOverrides,
   attachments: attachmentsProp, onAttachmentsChange,
@@ -169,6 +172,7 @@ export function Composer({
   onToggleSkillEnabled,
   branchPicker,
 }: ComposerProps) {
+  const executionModeDisabled = crewCoderProfileLocksExecutionMode(activeAgentId, crewcoderMode)
   const taRef        = useRef<HTMLTextAreaElement>(null)
   const valueRef     = useRef(value)
   valueRef.current = value
@@ -369,6 +373,9 @@ export function Composer({
     const builtInCommands = [
       { id: 'builtin:compact', kind: 'command' as const, title: '/compact', description: 'compact the current provider session', body: '/compact' },
       { id: 'builtin:handoff', kind: 'command' as const, title: '/handoff', description: 'hand off context to a new or used chat', body: '/handoff' },
+      ...(activeAgentId === 'crewcoder'
+        ? [{ id: 'builtin:approve-plan', kind: 'command' as const, title: '/approve-plan', description: 'approve the current CrewCoder-mode plan', body: '/approve-plan' }]
+        : []),
       { id: 'builtin:add-dir', kind: 'command' as const, title: '/add-dir', description: 'attach an external directory to this session', body: '/add-dir' },
       { id: 'builtin:remove-dir', kind: 'command' as const, title: '/remove-dir', description: 'remove an external directory from this session', body: '/remove-dir' },
     ].filter(c => slashCategory && slashCategory !== 'command' ? false : (!search || c.title.toLowerCase().includes(search) || c.description.toLowerCase().includes(search)))
@@ -376,7 +383,7 @@ export function Composer({
       .filter(c => slashCategory && slashCategory !== 'command' ? false : (!search || c.name.toLowerCase().includes(search) || c.description.toLowerCase().includes(search)))
       .map(c => ({ id: `command:${c.id}`, kind: 'command' as const, title: c.name, description: c.description, body: c.body, command: c }))
     return [...builtInCommands, ...commandItems, ...promptItems, ...skillItems].slice(0, 50)
-  }, [prompts, skills, commands, slash?.query, slashCategory])
+  }, [prompts, skills, commands, slash?.query, slashCategory, activeAgentId])
 
   const pickSlash = (itemId: string) => {
     const ta = taRef.current
@@ -391,7 +398,7 @@ export function Composer({
     // draft untouched, and dispatch the body straight to the agent. Built-in
     // commands like /compact have no `command` and fall through to be inserted,
     // since they need send()'s special-case handling on Enter.
-    if (item.kind === 'command' && onRunCommand && (item.command || item.id === 'builtin:handoff' || item.id === 'builtin:add-dir' || item.id === 'builtin:remove-dir')) {
+    if (item.kind === 'command' && onRunCommand && (item.command || item.id === 'builtin:handoff' || item.id === 'builtin:approve-plan' || item.id === 'builtin:add-dir' || item.id === 'builtin:remove-dir')) {
       const next = (before + after).trimStart()
       onChange(next)
       setSlash(null)
@@ -686,6 +693,7 @@ export function Composer({
                   onSelectEffort={onSelectEffort}
                   mode={mode}
                   setMode={setMode}
+                  executionModeDisabled={executionModeDisabled}
                   mcpEnabled={mcpEnabled}
                   mcpServers={mcpServers}
                   selectedMcpIds={selectedMcpIds}
@@ -732,6 +740,10 @@ export function Composer({
               model={model}
               onSelectModel={onSelectModel}
               effort={effort}
+              crewcoderMode={crewcoderMode}
+              onSelectCrewCoderMode={onSelectCrewCoderMode}
+              crewcoderModeDisabled={isRunning}
+              executionModeDisabled={executionModeDisabled}
               mode={mode}
               setMode={setMode}
               onSelectEffort={onSelectEffort}

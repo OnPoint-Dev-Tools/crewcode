@@ -35,6 +35,7 @@ import { useCrewcodePromptFiles } from './hooks/useCrewcodePromptFiles'
 import { useAppliedSkillsBySession } from './hooks/useAppliedSkillsBySession'
 import { useAppliedModesBySession } from './hooks/useAppliedModesBySession'
 import { chatSessionOwnerWorkspaceId } from './hooks/chat-session-tab-owner'
+import { isSessionViewTab, type SessionDragPayload } from './components/thread/session-drag'
 import type { Prompt as PromptDef, Skill as SkillDef } from './types/prompts'
 import { Icon }             from './components/ui/Icon'
 import { LoadingScreen }    from './components/ui/LoadingScreen'
@@ -55,7 +56,7 @@ import {
 } from './components/TweaksPanel'
 
 import { useTweaks }      from './hooks/useTweaks'
-import { useSettings, effectiveShell } from './hooks/useSettings'
+import { useSettings, getCurrentSettings, effectiveShell } from './hooks/useSettings'
 import { useMcpFileServers } from './hooks/useMcpFileServers'
 import { mergeMcpServers } from './hooks/session-mcp-selection'
 import { useNotifications } from './hooks/useNotifications'
@@ -82,7 +83,8 @@ import { useMobileWindowTabsAutoHide } from './hooks/useMobileWindowTabsAutoHide
 import { LOCAL_SHORTCUTS, effectiveChord, matchesChord, type ActionId } from './shortcuts'
 import { useTerminalSessions } from './hooks/useTerminalSessions'
 import { useTerminalUnreadSync, useClearPane } from './stores/terminal-unread-store'
-import { useYuHeardSync, useYuHeardStore } from './stores/yuheard-store'
+import { isYuHeardPaneFocused, useYuHeardSync } from './stores/yuheard-store'
+import { tabKindAllowsYuHeard } from '../../shared/yuheard-types'
 import { composerDraftActions } from './stores/composer-draft-store'
 import { useUserRequestsByTab } from './stores/bridge-activity-store'
 import { useCompletedChats } from './hooks/useCompletedChats'
@@ -341,7 +343,7 @@ export default function App() {
   // ── Tabs per workspace ───────────────────────────────────────────────────
   const {
     tabs, activeTab, activeTabId, setActiveTabId, setActiveTabInWorkspace, getActiveTabIdForWorkspace, selectWorkspace, openTab: handleNewTab, openTabInWorkspace, openPluginTab, restoreChatTabInWorkspace, closeTab, closeTabInWorkspace,
-    splitGroups, splitTabIds, splitPrimaryTabId, setSplitTab, closeSplitGroup, pinTab, unpinTab, renameTab, setTabColor, setTabUrl,
+    splitGroups, splitTabIds, splitPrimaryTabId, setSplitTab, splitAnchorWithSession, pinTab, unpinTab, renameTab, setTabColor, setTabUrl,
     setBrowserSessionMode, reorderTab, allTabIds, tabInfoById,
   } = useWorkspaceTabs({ activeWs, workspaceName: activeWorkspace.name })
   const activeTabGitOpen = activeTabId ? (gitOpenByTab[activeTabId] ?? false) : false
@@ -509,11 +511,14 @@ export default function App() {
     initialBranch: settings.defaultBranchByWorkspace[activeWs] ?? '',
   })
   useEffect(() => {
-    if (activeTab?.kind === 'chat') chatSessions.ensureTab(activeTabId, activeWorkspace.name)
-  }, [activeTab?.kind, activeTabId, activeWorkspace.name, chatSessions.ensureTab])
-  const sessions          = chatSessions.getSessions(activeTabId)
-  const sessActive        = chatSessions.getActiveId(activeTabId)
-  const activeSession     = chatSessions.getActiveSession(activeTabId)
+    if (activeTab?.kind === 'chat' && !isSessionViewTab(activeTab)) chatSessions.ensureTab(activeTabId, activeWorkspace.name)
+  }, [activeTab, activeTabId, activeWorkspace.name, chatSessions.ensureTab])
+  const chatOwnerTabId    = activeTab?.sessionOwnerTabId ?? activeTabId
+  const sessions          = chatSessions.getSessions(chatOwnerTabId)
+  const sessActive        = activeTab?.pinnedSessionId ?? chatSessions.getActiveId(chatOwnerTabId)
+  const activeSession     = (activeTab?.pinnedSessionId
+    ? sessions.find(session => session.id === activeTab.pinnedSessionId)
+    : null) ?? chatSessions.getActiveSession(chatOwnerTabId)
   const worktreeSurfaceId = worktreeSelectionKey(activeTabId, activeTab?.kind, sessActive)
   const requestedWorktreeId = worktreeSurfaceId ? surfaceWorktreeIds[worktreeSurfaceId] : null
   const activeWorktree = resolveSelectedWorktree(requestedWorktreeId, activeWorkspace.worktrees ?? [])
@@ -525,9 +530,9 @@ export default function App() {
     if (!worktreeSurfaceId) return
     setSurfaceWorktreeIds(prev => ({ ...prev, [worktreeSurfaceId]: id }))
   }, [setSurfaceWorktreeIds, worktreeSurfaceId])
-  const worktreeForChatSurface = useCallback((surfaceTabId: string) => {
-    const sessionId = chatSessions.getActiveId(surfaceTabId)
-    const key = worktreeSelectionKey(surfaceTabId, 'chat', sessionId)
+  const worktreeForChatSurface = useCallback((surfaceTabId: string, sessionId?: string) => {
+    const resolvedSessionId = sessionId ?? chatSessions.getActiveId(surfaceTabId)
+    const key = worktreeSelectionKey(surfaceTabId, 'chat', resolvedSessionId)
     const selected = resolveSelectedWorktree(surfaceWorktreeIds[key], activeWorkspace.worktrees ?? [])
     return {
       key,
@@ -923,7 +928,9 @@ export default function App() {
   }, [agents, activeSession?.id])
 
   // ── PTY panes (real terminals) ───────────────────────────────────────────
-  const pty = useTerminalSessions()
+  const pty = useTerminalSessions({
+    tabKind: tabId => tabInfoById[tabId]?.kind,
+  })
 
   // Drawer quick-jump data: unread badges for terminal CLIs + recency ranking
   // for chat sessions across every workspace.
@@ -933,8 +940,28 @@ export default function App() {
   // (useUnreadByPane) re-render on output.
   useTerminalUnreadSync(pty.panes, activeTabId)
   // Mount the YuHeard IPC listener once. The store dispatches the
-  // sound + OS notification on every `complete` transition.
+  // knock sound + optional OS notification on every `complete` transition.
   useYuHeardSync()
+  // In-app toast for terminal completes. Chat already has its own bar;
+  // YuHeard previously had no visible notice while the window was focused,
+  // so a Codex pane finishing in view looked like "no notification".
+  useEffect(() => {
+    return window.electronAPI?.onYuheardState?.((event) => {
+      if (event.state !== 'complete') return
+      if (!getCurrentSettings().yuheardEnabled) return
+      if (isYuHeardPaneFocused(event.paneId)) return
+      const pane = pty.panes.find(p => p.paneId === event.paneId)
+      if (pane && !tabKindAllowsYuHeard(tabInfoById[pane.tabId]?.kind)) return
+      const name = pane?.title?.trim() || pane?.agentId || 'Terminal'
+      const preview = event.message?.trim() || 'finished a turn'
+      show({
+        type: 'info',
+        message: `${name}: ${preview}`,
+        duration: 9000,
+        onClick: pane ? () => jumpToWorkspaceTab(pane.wsId, pane.tabId) : undefined,
+      })
+    })
+  }, [jumpToWorkspaceTab, pty.panes, show, tabInfoById])
   const clearPane = useClearPane()
   // Completion metadata (not message arrays) comes straight from the store, so
   // streamed tokens do not make App rebuild the drawer's Completed section.
@@ -1313,9 +1340,16 @@ export default function App() {
   // the chat that produced it.
   useEffect(() => {
     return window.electronAPI?.onNotificationClick(({ scopeId }) => {
-      if (scopeId) navigateToChatScope(scopeId)
+      if (!scopeId) return
+      if (scopeId.startsWith('pane:')) {
+        const paneId = scopeId.slice('pane:'.length)
+        const pane = pty.panes.find(p => p.paneId === paneId)
+        if (pane) jumpToWorkspaceTab(pane.wsId, pane.tabId)
+        return
+      }
+      navigateToChatScope(scopeId)
     })
-  }, [navigateToChatScope])
+  }, [jumpToWorkspaceTab, navigateToChatScope, pty.panes])
 
   useEffect(() => {
     return subscribeBridgeActivity((_bridgeId, scopeId, type) => {
@@ -1368,18 +1402,8 @@ export default function App() {
       if (nativeNotificationsRef.current) {
         queueNativeNotification({ chatName, preview, scopeId })
       }
-
-      // YuHeard: fire a `complete` for the matching PtyPane so the knock
-      // sound + optional OS notification fires for built-in bridge
-      // agents too. Falls back to the chat tab id if no PtyPane exists
-      // for this session (pure-bridge, no embedded terminal).
-      const yuheardPane = pty.panes.find(p =>
-        p.tabId === chatTabId && (session?.agentId ? p.agentId === session.agentId : true)
-      )
-      const yuheardKey = yuheardPane?.paneId ?? `chat:${chatTabId}`
-      useYuHeardStore.getState().applyComplete(yuheardKey, preview, 'bridge')
     })
-  }, [activeWs, completeChatRecency, navigateToChatScope, pty.panes, queueNativeNotification, sessionById, show, subscribeBridgeTurnEnd, tabInfoById, workspaceByChatTabId, ws.workspaces])
+  }, [activeWs, completeChatRecency, navigateToChatScope, queueNativeNotification, sessionById, show, subscribeBridgeTurnEnd, tabInfoById, workspaceByChatTabId, ws.workspaces])
 
   const workspaceAgentStatus = useMemo<Record<string, AgentActivityState | undefined>>(() => {
     const byWorkspace: Record<string, AgentActivityState | undefined> = {}
@@ -1484,6 +1508,16 @@ export default function App() {
     }
   }, [chatSessions, lastDeliveredMode])
   const [promptPickerOpen, setPromptPickerOpen] = useState(false)
+  const [promptPickerTarget, setPromptPickerTarget] = useState<{ sessionId: string; composerId: string } | null>(null)
+  const openPromptPicker = useCallback((sessionId: string | null | undefined, composerId: string) => {
+    if (!sessionId || !composerId) return
+    setPromptPickerTarget({ sessionId, composerId })
+    setPromptPickerOpen(true)
+  }, [])
+  const closePromptPicker = useCallback(() => {
+    setPromptPickerOpen(false)
+    setPromptPickerTarget(null)
+  }, [])
 
   // ── Solo send ───────────────────────────────────────────────────────────
   const displayTabs = useMemo(() => tabs.map(tab => {
@@ -1639,11 +1673,11 @@ export default function App() {
     })
   }
 
-  const toggleSkillForSession = useCallback((sessionId: string, id: string): boolean => {
+  const toggleSkillForSession = useCallback((sessionId: string, id: string): boolean | null => {
     const session = Object.values(sessionsByWorkspace)
       .flat()
       .find(candidate => candidate.id === sessionId)
-    if (!session) return false
+    if (!session) return null
     const ids = session.enabledSkillIds ?? []
     const enabled = !ids.includes(id)
     chatSessions.update(session.tabId, session.id, {
@@ -2201,7 +2235,13 @@ export default function App() {
       case 'next-tab':                navigateTabHistory(1); return
       case 'prev-tab':                navigateTabHistory(-1); return
       case 'settings-search':         handleNewTab('settings'); return
-      case 'prompt-picker':           setPromptPickerOpen(o => !o); return
+      case 'prompt-picker':
+        if (promptPickerOpen) closePromptPicker()
+        else {
+          const shortcutTab = activeTab?.kind === 'chat' ? activeTab : promptBuilderChatTab
+          openPromptPicker(promptBuilderSessionId, shortcutTab?.pinnedSessionId ?? shortcutTab?.id ?? '')
+        }
+        return
       case 'split-terminal-right':    openTerminalSplit('right'); return
       case 'split-terminal-down':     openTerminalSplit('down'); return
       case 'toggle-terminal-column':  setTweak('showTerminal', !tweaks.showTerminal); return
@@ -2253,8 +2293,9 @@ export default function App() {
         }
     }
   }, [
-    activeWorkspace.name, activeWorkspace.path, activeTabId, activeWs, sessActive,
+    activeWorkspace.name, activeWorkspace.path, activeTab, activeTabId, activeWs, sessActive,
     chatSessions, navigateTabHistory, navigateWorkspaceHistory, handleCloseTab, handleNewTab, openInEditor,
+    closePromptPicker, openPromptPicker, promptBuilderChatTab, promptBuilderSessionId, promptPickerOpen,
     openTerminalSplit, pty, setAddOpen, setDrawerOpen, setPaletteOpen, setSetting, setTweak, startCanvasFromAnywhere, startCrewFromAnywhere,
     settings.appTheme, settings.shortcutOverrides, settings, tweaks.density, tweaks.showTerminal, ws, effectivePath,
   ])
@@ -2394,9 +2435,39 @@ export default function App() {
     focusComposerSoon()
   }, [ws.workspaces, activeWs, setActiveTabId, setActiveTabInWorkspace, chatSessions, focusComposerSoon])
 
+  const handleSessionDrop = useCallback((payload: SessionDragPayload, anchorTabId: string) => {
+    if (mobile.isMobile) return
+    const session = chatSessions.getSessions(payload.tabId).find(item => item.id === payload.sessionId)
+    if (!session) return
+    const targetWsId = workspaceByChatTabId[session.tabId] ?? activeWs
+    if (!targetWsId || targetWsId !== activeWs) return
+    const result = splitAnchorWithSession(
+      anchorTabId,
+      { sessionId: session.id, ownerTabId: session.tabId, label: session.label },
+      chatSessions.getActiveId(session.tabId),
+    )
+    if (!result) return
+    if (result.activateOwner) chatSessions.activate(session.tabId, session.id)
+  }, [activeWs, chatSessions, mobile.isMobile, splitAnchorWithSession, workspaceByChatTabId])
+
+  const resolveHandoffSessionPath = useCallback((session: Session) =>
+    session.delegatedWorktreePath ?? worktreeForChatSurface(session.tabId, session.id).path,
+  [worktreeForChatSurface])
+
+  const activateHandoffDestination = useCallback((session: Session) => {
+    const targetWsId = workspaceByChatTabId[session.tabId]
+    const targetWs = ws.workspaces.find(workspace => workspace.id === targetWsId)
+    if (!targetWsId || !targetWs) return
+    restoreChatTabInWorkspace(targetWsId, targetWs.name, session.tabId)
+    jumpToWorkspaceTab(targetWsId, session.tabId)
+    chatSessions.activate(session.tabId, session.id)
+  }, [chatSessions, jumpToWorkspaceTab, restoreChatTabInWorkspace, workspaceByChatTabId, ws.workspaces])
+
   const renderTabContent = (tab: Tab | null) => {
     const tabKind = standaloneSettingsOpen && !activeWs ? 'settings' : (tab?.kind ?? 'chat')
     const tabId = tab?.id ?? activeTabId
+    const sessionOwnerTabId = tab?.sessionOwnerTabId ?? tabId
+    const pinnedSessionId = tab?.pinnedSessionId
     const tabGitOpen = gitOpenByTab[tabId] ?? false
     const tabGitWidth = gitWidthByTab[tabId] ?? 380
     const setTabGitOpen = (open: boolean) => setGitOpenForTab(tabId, open)
@@ -2404,8 +2475,11 @@ export default function App() {
 
     // Tab-specific session and worktree lookups. Split/workbench surfaces may
     // render alongside the active outer tab, so they must never inherit its cwd.
-    const tabActiveSession = chatSessions.getActiveSession(tabId)
-    const tabWorktree = worktreeForChatSurface(tabId)
+    const tabActiveSession = pinnedSessionId
+      ? chatSessions.getSessions(sessionOwnerTabId).find(session => session.id === pinnedSessionId)
+        ?? chatSessions.getActiveSession(sessionOwnerTabId)
+      : chatSessions.getActiveSession(sessionOwnerTabId)
+    const tabWorktree = worktreeForChatSurface(sessionOwnerTabId, pinnedSessionId ?? tabActiveSession?.id)
 
     // Tab-specific chat state
     const tabAgentId = tabActiveSession?.agentId ?? settings.defaultAgent ?? 'pi'
@@ -2499,6 +2573,9 @@ export default function App() {
                 worktreeBranch={paneWorktree.worktreeBranch}
                 agents={agents}
                 chatSessions={chatSessions}
+                workspaceSessions={sessionsByWorkspace[activeWs] ?? []}
+                resolveHandoffSessionPath={resolveHandoffSessionPath}
+                onHandoffDestinationActivate={activateHandoffDestination}
                 bridges={bridges}
                 pty={pty}
                 crewSession={null}
@@ -2514,7 +2591,7 @@ export default function App() {
                 onOpenFile={openFileInEditor}
                 onOpenBrowser={openBrowserUrl}
                 onOpenCanvas={startCanvasFromAnywhere}
-                onOpenPrompts={() => setPromptPickerOpen(true)}
+                onOpenPrompts={() => openPromptPicker(chatSessions.getActiveSession(pane.id)?.id, pane.id)}
                 prompts={promptLib.prompts}
                 skills={promptLib.skills}
                 commands={promptFiles.commands}
@@ -2571,6 +2648,7 @@ export default function App() {
                 <TermColumn
                   panes={pty.panes.filter(p => p.tabId === pane.id)}
                   agents={agents}
+                  tabKind="canvas"
                   onClose={pty.close}
                   onAddShell={() => pty.addShell(activeWs, pane.id, effectivePath, effectiveShell(settings))}
                   onAddAgent={(agentId) => {
@@ -2599,7 +2677,10 @@ export default function App() {
       return (
         <ChatPane
           key={tabId}
-          tabId={tabId}
+          tabId={sessionOwnerTabId}
+          surfaceTabId={tabId}
+          pinnedSessionId={pinnedSessionId}
+          onSessionDrop={payload => handleSessionDrop(payload, tabId)}
           activeWs={activeWs}
           workspace={activeWorkspace}
           effectivePath={tabWorktree.path}
@@ -2607,6 +2688,9 @@ export default function App() {
           worktreeBranch={tabWorktree.worktreeBranch}
           agents={agents}
           chatSessions={chatSessions}
+          workspaceSessions={sessionsByWorkspace[activeWs] ?? []}
+          resolveHandoffSessionPath={resolveHandoffSessionPath}
+          onHandoffDestinationActivate={activateHandoffDestination}
           bridges={bridges}
           pty={pty}
           crewSession={tabCrewSession}
@@ -2621,13 +2705,15 @@ export default function App() {
           onOpenFile={openFileInEditor}
           onOpenBrowser={openBrowserUrl}
           onOpenCanvas={startCanvasFromAnywhere}
-          onOpenPrompts={() => setPromptPickerOpen(true)}
+          onOpenPrompts={() => openPromptPicker(tabActiveSession?.id, pinnedSessionId ?? tabId)}
           prompts={promptLib.prompts}
           skills={promptLib.skills}
           commands={promptFiles.commands}
           onToggleSkillEnabled={(id) => {
             const target = promptLib.skills.find(s => s.id === id)
-            const current = chatSessions.getActiveSession(tabId)
+            const current = pinnedSessionId
+              ? chatSessions.getSessions(sessionOwnerTabId).find(session => session.id === pinnedSessionId)
+              : chatSessions.getActiveSession(sessionOwnerTabId)
             if (target && current) {
               handleApplySkill({
                 ...target,
@@ -2761,10 +2847,13 @@ export default function App() {
         />
         {tabGitOpen && (
           <>
-            <Splitter
-              orientation="vertical"
-              onDrag={delta => setGitWidthForTab(tabId, w => Math.max(280, Math.min(720, w - delta)))}
-            />
+            {mobile.isMobile && <button type="button" className="mobile-git-backdrop" aria-label="Close Git sidebar" onClick={() => setGitOpenForTab(tabId, false)} />}
+            {!mobile.isMobile && (
+              <Splitter
+                orientation="vertical"
+                onDrag={delta => setGitWidthForTab(tabId, w => Math.max(280, Math.min(720, w - delta)))}
+              />
+            )}
             <GitSidebar
               workspace={{
                 name:   activeWorkspace.name,
@@ -2783,6 +2872,7 @@ export default function App() {
               }}
               pluginGitLenses={pluginGitLenses}
               onPluginGitLens={(target) => runPluginActionTarget(target, { source: 'git-lens' })}
+              onClose={mobile.isMobile ? () => setGitOpenForTab(tabId, false) : undefined}
             />
           </>
         )}
@@ -2793,6 +2883,7 @@ export default function App() {
       return (
         <WriterWorkspace
           tabId={tabId}
+          onSessionDrop={payload => handleSessionDrop(payload, tabId)}
           activeWs={activeWs}
           workspace={activeWorkspace}
           effectivePath={tabWorktree.path}
@@ -2800,6 +2891,9 @@ export default function App() {
           worktreeBranch={tabWorktree.worktreeBranch}
           agents={agents}
           chatSessions={chatSessions}
+          workspaceSessions={sessionsByWorkspace[activeWs] ?? []}
+          resolveHandoffSessionPath={resolveHandoffSessionPath}
+          onHandoffDestinationActivate={activateHandoffDestination}
           bridges={bridges}
           pty={pty}
           density={tweaks.density}
@@ -2811,7 +2905,7 @@ export default function App() {
           shortcutOverrides={settings.shortcutOverrides}
           onOpenFile={openFileInEditor}
           onOpenBrowser={openBrowserUrl}
-          onOpenPrompts={() => setPromptPickerOpen(true)}
+          onOpenPrompts={() => openPromptPicker(chatSessions.getActiveSession(tabId)?.id, tabId)}
           prompts={promptLib.prompts}
           skills={promptLib.skills}
           commands={promptFiles.commands}
@@ -2863,6 +2957,8 @@ export default function App() {
           <TermColumn
             panes={tabPanes}
             agents={agents}
+            tabKind="terminal"
+            onSessionDrop={payload => handleSessionDrop(payload, tabId)}
             onClose={pty.close}
             onAddShell={() => pty.addShell(activeWs, tabId, effectivePath, effectiveShell(settings))}
             onAddAgent={(agentId) => {
@@ -3255,6 +3351,7 @@ export default function App() {
           <TermColumn
             panes={wsPanes}
             agents={agents}
+            tabKind={tabInfoById[activeTabId]?.kind}
             onClose={pty.close}
             onAddShell={() => pty.addShell(activeWs, activeTabId, effectivePath, effectiveShell(settings))}
             onAddAgent={(agentId) => {
@@ -3442,7 +3539,6 @@ export default function App() {
             splitTabIds={splitTabIds}
             splitPrimaryTabId={splitPrimaryTabId}
             onSplit={setSplitTab}
-            onCloseSplitGroup={closeSplitGroup}
             onPin={pinTab}
             onUnpin={unpinTab}
             onRename={handleRenameWindowTab}
@@ -3658,12 +3754,25 @@ export default function App() {
 
       <PromptPicker
         open={promptPickerOpen}
-        onClose={() => setPromptPickerOpen(false)}
+        onClose={closePromptPicker}
         prompts={promptLib.prompts}
+        skills={promptBuilderLib.skills}
         seed={{ repo: activeWorkspace?.name ?? '', branch: effectiveBranch }}
         onInsert={(body, p) => {
           promptLib.incUsage('prompts', p.id)
-          insertPromptIntoComposer(body, p)
+          if (promptPickerTarget) {
+            composerDraftActions().set(promptPickerTarget.composerId, current => current ? `${current}\n\n${body}` : body)
+          } else {
+            insertPromptIntoComposer(body, p)
+          }
+        }}
+        onToggleSkill={(skill) => {
+          const sessionId = promptPickerTarget?.sessionId ?? promptBuilderSessionId
+          if (!sessionId) return
+          const enabled = toggleSkillForSession(sessionId, skill.id)
+          if (enabled === null) return
+          promptLib.incUsage('skills', skill.id)
+          handleApplySkill({ ...skill, enabled })
         }}
       />
 

@@ -37,6 +37,7 @@ import { parsePorcelainWorktrees } from './worktree-list-parse'
 import { addWorktree, removeWorktree } from './worktree-ops'
 import { GitService } from './git-service'
 import type { BridgeEvent, BridgeStartOpts, HandoffPromptOptions, PromptOptions } from './agents/bridge-types'
+import { isCrewCoderMode } from '../shared/crewcoder-types'
 import { WebSocketServer, WebSocket } from 'ws'
 
 const MAX_REQUEST_BYTES = 2 * 1024 * 1024
@@ -449,6 +450,12 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
       rows: typeof params.rows === 'number' ? params.rows : undefined,
       shell: typeof params.shell === 'string' ? params.shell : undefined,
       argv: Array.isArray(params.argv) ? params.argv.map(String) : undefined,
+      agentId: typeof params.agentId === 'string' ? params.agentId : null,
+      autoWrap: params.autoWrap === true,
+      wrapAgentIds: Array.isArray(params.wrapAgentIds)
+        ? params.wrapAgentIds.map(String).slice(0, 24)
+        : [],
+      yuheard: params.yuheard !== false,
     })],
     ['pty.write', params => { ptyService.write(String(params.paneId ?? ''), String(params.data ?? '')); return { ok: true } }],
     ['pty.resize', params => { ptyService.resize(String(params.paneId ?? ''), Number(params.cols), Number(params.rows)); return { ok: true } }],
@@ -463,6 +470,7 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
         cwd,
         model: typeof params.model === 'string' ? params.model : undefined,
         mode: params.mode === 'ask' || params.mode === 'plan' || params.mode === 'build' || params.mode === 'full' ? params.mode : 'build',
+        crewcoderMode: isCrewCoderMode(params.crewcoderMode) ? params.crewcoderMode : undefined,
         toolPolicy: params.toolPolicy === 'read-only' ? 'read-only' : 'default',
         thinking: typeof params.thinking === 'string' ? params.thinking as BridgeStartOpts['thinking'] : undefined,
         conversationKey: typeof params.conversationScopeKey === 'string' ? `web:${params.conversationScopeKey}` : undefined,

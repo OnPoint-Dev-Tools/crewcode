@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { NotificationsProvider } from './useNotifications'
 import { useAgentBridge } from './useAgentBridge'
 import type { Message } from '../types'
+import { createTurnActivity } from '../components/thread/turn-activity'
 
 // Repro harness for "claude thinking streams render as agent messages / vanish":
 // drives the exact event sequence observed in the jank trace (thinking bursts →
@@ -94,6 +95,33 @@ describe('useAgentBridge thinking stream routing', () => {
       if (m.kind === 'thinking' || m.kind === 'agent') expect(m.streaming).toBe(false)
     }
 
+    bridge.unmount()
+  })
+
+  it('drives CrewCode-owned activity from observed bridge events', () => {
+    messagesByTab.tab1 = [createTurnActivity('Fix the overlay', 'now')]
+    const bridge = renderBridge()
+
+    emit({ type: 'turn_start', bridgeId: 'b1', turnId: 't1' })
+    expect(messagesByTab.tab1[0]).toEqual(expect.objectContaining({ status: 'in_progress', turnId: 't1' }))
+
+    emit({ type: 'tool_start', bridgeId: 'b1', turnId: 't1', toolCallId: 'c1', toolName: 'Read', args: {} })
+    expect(messagesByTab.tab1[0]).toEqual(expect.objectContaining({ activeForm: 'Reading workspace' }))
+
+    emit({ type: 'turn_end', bridgeId: 'b1', turnId: 't1' })
+    expect(messagesByTab.tab1[0]).toEqual(expect.objectContaining({ status: 'completed' }))
+
+    bridge.unmount()
+  })
+
+  it('marks active work interrupted when the bridge errors', () => {
+    messagesByTab.tab1 = [createTurnActivity('Fix the overlay', 'now')]
+    const bridge = renderBridge()
+
+    emit({ type: 'turn_start', bridgeId: 'b1', turnId: 't1' })
+    emit({ type: 'error', bridgeId: 'b1', message: 'provider failed' })
+
+    expect(messagesByTab.tab1[0]).toEqual(expect.objectContaining({ status: 'interrupted' }))
     bridge.unmount()
   })
 })

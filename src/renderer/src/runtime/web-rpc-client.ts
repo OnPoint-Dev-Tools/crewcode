@@ -366,7 +366,7 @@ export function createWebCrewCodeClient(sessionOrTransport: string | WebClientTr
     },
     bridgeStart: opts => rpc('bridge.start', {
       bridgeId: opts.bridgeId, provider: opts.provider, cwd: opts.cwd, model: opts.model,
-      mode: opts.mode, toolPolicy: opts.toolPolicy, thinking: opts.thinking,
+      mode: opts.mode, crewcoderMode: opts.crewcoderMode, toolPolicy: opts.toolPolicy, thinking: opts.thinking,
       conversationScopeKey: opts.conversationScopeKey, freshSession: opts.freshSession,
       suppressProviderHistoryReplay: opts.suppressProviderHistoryReplay,
       // Send references only. The Brain resolves these against its own registry

@@ -100,14 +100,14 @@ describe('claude bridge mode options', () => {
     expect(queryMock.mock.calls[0][0].options.settings).toBeUndefined()
   })
 
-  it('loads project guidance while disabling passive SDK skills', async () => {
+  it('leaves Claude CLI skill and settings defaults in place', async () => {
     const opts: BridgeStartOpts = { bridgeId: 'b1', provider: 'claude', cwd: '/repo', mode: 'build' }
     const bridge = await createClaudeBridge('/bin/claude', opts, vi.fn())
 
     await bridge.prompt('hello')
 
-    expect(queryMock.mock.calls[0][0].options.settingSources).toEqual(['project'])
-    expect(queryMock.mock.calls[0][0].options.skills).toEqual([])
+    expect(queryMock.mock.calls[0][0].options.settingSources).toBeUndefined()
+    expect(queryMock.mock.calls[0][0].options.skills).toBeUndefined()
   })
 
   it('rejects the Codex-only ultra effort', async () => {

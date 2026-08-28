@@ -89,6 +89,7 @@ interface TopBarProps {
   onOpenTerminal?:   (path: string) => void
   onCheckoutBranch?: (ref: string) => void
   onCreateBranch?:   (name: string) => void
+  onClose?:          () => void
 }
 
 /** git/ssh remote → browsable https URL (git@host:org/repo.git → https://host/org/repo). */
@@ -103,7 +104,7 @@ function remoteWebUrl(remote: string): string | null {
 }
 
 function TopBar({ workspace, branches, ahead, behind, lastFetch, fetching, remoteUrl,
-                  onPush, onPull, onFetch, onSync, onCreatePR, onOpenTerminal, onCheckoutBranch, onCreateBranch }: TopBarProps) {
+                  onPush, onPull, onFetch, onSync, onCreatePR, onOpenTerminal, onCheckoutBranch, onCreateBranch, onClose }: TopBarProps) {
   const [picker, setPicker] = useState(false)
   const [q, setQ] = useState('')
   const [createBranchOpen, setCreateBranchOpen] = useState(false)
@@ -137,6 +138,7 @@ function TopBar({ workspace, branches, ahead, behind, lastFetch, fetching, remot
           <button className="gs-ibtn" title="Open in terminal" disabled={!onOpenTerminal} onClick={() => onOpenTerminal?.(workspace.path)}><Icon name="terminal" /></button>
           <button ref={moreRef} className="gs-ibtn" title="More git actions"
                   onClick={() => (menu ? setMenu(null) : openMenu())}><Icon name="more" /></button>
+          {onClose && <button className="gs-ibtn gs-mobile-close" title="Close Git sidebar" aria-label="Close Git sidebar" onClick={onClose}><Icon name="x" /></button>}
         </div>
       </div>
 
@@ -752,6 +754,8 @@ export interface GitSidebarProps extends GitSidebarHandlers {
   onOpenTerminal?: (path: string) => void
   pluginGitLenses?: RegisteredPluginGitLens[]
   onPluginGitLens?: (target: { pluginId: string; sidebarPanel?: string; tab?: string; command?: string }) => void
+  /** Mobile overlay close action. Omitted for the persistent desktop/sidebar page variants. */
+  onClose?: () => void
 }
 
 export function GitSidebar({
@@ -770,6 +774,7 @@ export function GitSidebar({
   onOpenTerminal,
   pluginGitLenses = [],
   onPluginGitLens,
+  onClose,
 }: GitSidebarProps) {
   const hasConflicts = (state.conflicts || []).length > 0
   // A remote can exist after a partial publish while the branch was never pushed.
@@ -813,7 +818,13 @@ export function GitSidebar({
   }, [state.banner])
 
   return (
-    <aside className="gs" style={{ ['--gs-width' as string]: `${width}px` } as React.CSSProperties}>
+    <aside
+      className="gs"
+      style={{ ['--gs-width' as string]: `${width}px` } as React.CSSProperties}
+      role={onClose ? 'dialog' : undefined}
+      aria-modal={onClose ? true : undefined}
+      aria-label={onClose ? 'Git sidebar' : undefined}
+    >
       {!hideTop && (
         <TopBar
           workspace={workspace}
@@ -831,6 +842,7 @@ export function GitSidebar({
           onOpenTerminal={onOpenTerminal}
           onCheckoutBranch={onCheckoutBranch}
           onCreateBranch={onCreateBranch}
+          onClose={onClose}
         />
       )}
 

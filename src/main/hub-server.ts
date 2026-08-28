@@ -50,6 +50,13 @@ export interface RunningHubServer {
   publicOrigin: string
   bootstrapToken?: string
   bootstrapUrl?: string
+  ownerConfigured: () => boolean
+  enrollLocalMachine: (input: {
+    publicKey: string
+    name: string
+    platform: string | null
+    version: string | null
+  }) => { machineId: string; token: string }
   close: () => Promise<void>
 }
 
@@ -652,13 +659,32 @@ export async function startHubServer(options: HubServerOptions): Promise<Running
   publicOrigin ||= url
   auth = new HubAuth(store, publicOrigin, now)
   const bootstrap = auth.issueBootstrap()
+  let closed = false
   return {
     host,
     port: address.port,
     url,
     publicOrigin,
     ...(bootstrap ? { bootstrapToken: bootstrap.token, bootstrapUrl: `${publicOrigin}/#bootstrap=${encodeURIComponent(bootstrap.token)}` } : {}),
+    ownerConfigured: () => !closed && store.owner() !== null,
+    enrollLocalMachine: input => {
+      if (closed) throw new Error('Hub is shutting down')
+      const owner = store.owner()
+      if (!owner) throw new Error('Hub owner must be configured before enrolling the local Brain')
+      const name = boundedString(input.name, 'name', 80) as string
+      const created = store.createMachine({
+        userId: owner.id,
+        publicKey: machinePublicKey(input.publicKey),
+        name,
+        platform: boundedString(input.platform, 'platform', 80, true),
+        version: boundedString(input.version, 'version', 80, true),
+        now: now(),
+      })
+      store.audit('hub.local-brain.enrolled', owner.id, created.machine.id, { name }, now())
+      return { machineId: created.machine.id, token: created.token }
+    },
     close: () => new Promise<void>((resolve, reject) => {
+      closed = true
       clearInterval(relayExpirySweep)
       for (const socket of relaySockets) socket.close(1001, 'Hub shutting down')
       websocketServer.close()

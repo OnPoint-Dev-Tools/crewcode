@@ -72,6 +72,10 @@ export interface Tab {
   url?:       string    // initial URL for browser tabs
   browserSessionMode?: BrowserSessionMode
   splitCloneOf?: string // split-pane clones stay grouped with their source tab
+  /** Owner chat/writer tab for a session viewport used in window splits. */
+  sessionOwnerTabId?: string
+  /** Session shown by a viewport tab; does not steal the owner's active session. */
+  pinnedSessionId?: string
   pluginId?: string
   pluginTabId?: string
   pluginRegistrationId?: string
@@ -213,6 +217,23 @@ export interface ToolCallMessage {
   fileChanges?: TurnFileChange[]
 }
 
+export type CrewCodeActivityStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled' | 'interrupted'
+
+/**
+ * CrewCode-owned execution lifecycle for one user turn. This is distinct from
+ * provider tool telemetry: it records only states CrewCode directly observed.
+ */
+export interface CrewCodeActivityMessage {
+  kind:          'activity'
+  time:          string
+  activityRunId: string
+  runtimeId:     string
+  text:          string
+  status:        CrewCodeActivityStatus
+  activeForm?:   string
+  turnId?:       string
+}
+
 export interface WorkLogMessage {
   kind: 'worklog'
   count: number
@@ -282,6 +303,7 @@ export type Message =
   | AgentMessage
   | ThinkingMessage
   | ToolCallMessage
+  | CrewCodeActivityMessage
   | WorkLogMessage
   | SystemMessage
   | CompactionMessage
@@ -364,6 +386,8 @@ export interface Session {
   agentId: string
   model:   string
   mode:    ModeLevel
+  /** CrewCoder agent profile; independent from CrewCode execution permissions. */
+  crewcoderMode?: import('../../../shared/crewcoder-types').CrewCoderMode
   effort:  'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
   // Ids of MCP servers (from Settings → MCP) this session opts into. Empty by
   // default — MCP is never auto-attached. May be absent on sessions persisted
@@ -605,6 +629,8 @@ export interface PtyCreateOpts {
   agentId?: string | null
   autoWrap?: boolean
   wrapAgentIds?: string[]
+  /** When false, this pane is a chat/crew sidecar and must not join YuHeard. */
+  yuheard?: boolean
 }
 
 export interface PtyDataEvent { paneId: string; data: string }
@@ -703,6 +729,7 @@ declare global {
         externalDirectories?: string[]
         model?:      string
         mode?:       'ask' | 'plan' | 'build' | 'full'
+        crewcoderMode?: import('../../../shared/crewcoder-types').CrewCoderMode
         toolPolicy?: 'default' | 'read-only'
         thinking?:   'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
         apiKey?:     string

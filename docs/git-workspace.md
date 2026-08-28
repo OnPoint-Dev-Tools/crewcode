@@ -9,6 +9,16 @@ Both stay behaviorally consistent by design: they share the `useGitSidebar`
 hook, so staging, committing, branch operations, and refresh behave the same in
 either surface. Page-specific differences are layout only.
 
+On mobile web (`≤768px`), opening Git Sidebar from chat or Code Editor presents
+the same sidebar as a right-side overlay with a backdrop and explicit close
+control. It never compresses the chat/editor or disappears behind the desktop
+splitter rule. The standalone Git Workspace continues to use its responsive
+single-column page layout. Its summary remains a compact two-column grid, the
+changed-file catalogue stacks above a bounded diff viewport, and the remaining
+Git tools follow below in a bounded scroll panel. Git Workspace branch, menu,
+stage, and commit controls retain touch-sized targets; commit and branch inputs
+use the iOS-safe 16px size.
+
 ## Opening it
 
 - CrewCode app menu → **Git Workspace**

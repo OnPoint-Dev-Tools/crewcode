@@ -49,6 +49,21 @@ interface YuHeardStoreShape {
 
 const NOTIFY_DEBOUNCE_MS = 500
 
+const YUHEARD_PANE_SELECTOR = '[data-yuheard-pane-id]'
+
+/**
+ * True only while this renderer window owns keyboard focus and the focused DOM
+ * node belongs to the exact terminal pane that completed. An xterm textarea can
+ * remain document.activeElement after the Electron window loses focus, so
+ * document.hasFocus() is part of the invariant.
+ */
+export function isYuHeardPaneFocused(paneId: string): boolean {
+  if (typeof document === 'undefined' || !document.hasFocus()) return false
+  const active = document.activeElement
+  if (!(active instanceof Element)) return false
+  return active.closest(YUHEARD_PANE_SELECTOR)?.getAttribute('data-yuheard-pane-id') === paneId
+}
+
 let wired = false
 function ensureWired(): void {
   if (wired) return
@@ -92,16 +107,27 @@ export const useYuHeardStore = create<YuHeardStoreShape>((set, get) => ({
     // Read settings live so the toggle works without a re-mount.
     const settings = getCurrentSettings()
     if (!settings.yuheardEnabled) return
+    // Chat/crew completions have their own notificationSound path. A leftover
+    // `bridge` source (old wiring) must not steal or double that ping.
+    if (event.source === 'bridge') return
+
+    // The user is already looking at and typing in this exact pane. Consume
+    // the completion for dedupe purposes, but suppress every YuHeard surface.
+    if (isYuHeardPaneFocused(event.paneId)) {
+      set((s) => ({
+        lastNotifiedAt: { ...s.lastNotifiedAt, [event.paneId]: Date.now() },
+      }))
+      return
+    }
 
     playNotificationSound('knock')
 
     if (typeof document !== 'undefined' && !document.hasFocus() && settings.nativeNotifications) {
       const entry = get().stateByPane[event.paneId]
-      const title = entry?.message ? 'Agent finished' : 'CrewCode'
-      const body = entry?.message ?? ''
+      const body = entry?.message?.trim() || 'A terminal agent finished a turn.'
       const api = (window as { electronAPI?: { notify?: (payload: { title: string; body: string; scopeId?: string; silent?: boolean }) => void } }).electronAPI
       api?.notify?.({
-        title,
+        title: 'Terminal agent finished',
         body,
         scopeId: `pane:${event.paneId}`,
         silent: true, // we already played knock; OS stays quiet
@@ -112,7 +138,7 @@ export const useYuHeardStore = create<YuHeardStoreShape>((set, get) => ({
     }))
   },
 
-  applyComplete: (paneId, message = null, source = 'bridge') => {
+  applyComplete: (paneId, message = null, source = 'pty') => {
     get().applyReport({
       paneId,
       state: 'complete',

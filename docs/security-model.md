@@ -98,7 +98,10 @@ handshake transcript with its enrolled Ed25519 key, and ordered application fram
 use direction-separated HKDF/AES-256-GCM keys. The Hub sees routing metadata and
 handshake public values, but not RPC, source, terminal, prompt, or response plaintext.
 
-Hub identity still does not grant execution. The first `crewcode brain` start grants
+Hub identity still does not grant execution. `crewcode hub --local-brain` enrolls
+the Hub host only after the owner passkey exists, then spawns a sibling Brain;
+it does not skip Brain-local scope checks or write workspace roots into Hub SQLite.
+The first `crewcode brain` start grants
 no RPC scope by default and seeds an owner-only persisted policy from explicit local
 `--workspace-root` and repeatable `--allow-scope` settings. Thereafter Settings →
 Brain Access manages it only through E2EE owner RPC. Reductions apply immediately,
@@ -107,8 +110,10 @@ require a fresh ticket and handshake. Each decrypted method must be included in 
 the ticket request and current local grant. The backend revalidates live workspace
 roots for filesystem, Git, PTY, attachments, and agent calls.
 
-**Tests:** `hub-server.test.ts` covers CSRF, issue/enroll, replay rejection, stale
-presence, heartbeat, and revocation. `hub-machine-enrollment.test.ts` covers URL
+**Tests:** `hub-server.test.ts` covers CSRF, issue/enroll, local-brain owner gating,
+replay rejection, stale
+presence, heartbeat, and revocation. `hub-local-brain.test.ts` covers sibling spawn
+plans, loopback origin matching, credential reuse, and supervisor stop. `hub-machine-enrollment.test.ts` covers URL
 policy, argument-secret avoidance, credential validation, owner-only file mode, and
 Brain CLI grants. `hub-relay.test.ts` covers ticket expiry/one-shot behavior,
 authenticated relay routing, Ed25519-authenticated E2EE, scoped read success, local

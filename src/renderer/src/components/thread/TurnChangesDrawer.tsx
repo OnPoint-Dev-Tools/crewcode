@@ -134,6 +134,9 @@ export function TurnChangesDrawer({ open, messages, onClose, target = null }: Tu
   }, [])
   useEffect(() => {
     if (!open) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+    }
     const onMove = (e: MouseEvent) => {
       if (draggingRef.current) {
         const right = drawerRef.current?.getBoundingClientRect().right ?? window.innerWidth
@@ -166,13 +169,15 @@ export function TurnChangesDrawer({ open, messages, onClose, target = null }: Tu
     }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup',   onUp)
+    window.addEventListener('keydown',   onKeyDown)
     return () => {
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup',   onUp)
+      window.removeEventListener('keydown',   onKeyDown)
       document.body.style.cursor     = ''
       document.body.style.userSelect = ''
     }
-  }, [open])
+  }, [open, onClose])
 
   if (!open) return null
 
@@ -181,7 +186,7 @@ export function TurnChangesDrawer({ open, messages, onClose, target = null }: Tu
   const change = turn?.changes.find(c => c.path === activeFile) ?? turn?.changes[0] ?? null
 
   return (
-    <div className="turn-drawer" style={{ width }} ref={drawerRef}>
+    <div className="turn-drawer" style={{ width }} ref={drawerRef} role="dialog" aria-label="Changes by turn">
       <div
         className="turn-drawer-resize"
         onMouseDown={onHandleDown}

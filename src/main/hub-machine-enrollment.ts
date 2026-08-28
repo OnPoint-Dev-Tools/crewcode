@@ -205,6 +205,11 @@ export function writeMachineCredential(path: string, credential: MachineCredenti
   }
 }
 
+export function loadMachineCredentialIfPresent(path: string): MachineCredentialFile | null {
+  if (!existsSync(path)) return null
+  return readMachineCredential(path)
+}
+
 export function readMachineCredential(path: string): MachineCredentialFile {
   let value: unknown
   try { value = JSON.parse(readFileSync(path, 'utf8')) } catch (error) {
@@ -286,7 +291,7 @@ async function hubRequest(origin: string, path: string, init: RequestInit): Prom
   return body
 }
 
-function newMachineIdentity(): { publicKey: string; privateKey: string } {
+export function createMachineIdentity(): { publicKey: string; privateKey: string } {
   const keyPair = generateKeyPairSync('ed25519')
   return {
     publicKey: keyPair.publicKey.export({ type: 'spki', format: 'der' }).toString('base64url'),
@@ -309,7 +314,7 @@ function ensureEnrollmentDestination(options: BrainCliOptions): void {
 export async function enrollMachine(options: BrainCliOptions, now = Date.now): Promise<MachineCredentialFile> {
   if (!options.hubOrigin || !options.token) throw new Error('Hub origin and enrollment token are required')
   ensureEnrollmentDestination(options)
-  const identity = newMachineIdentity()
+  const identity = createMachineIdentity()
   const result = await hubRequest(options.hubOrigin, '/api/v1/hub/machines/enroll', {
     method: 'POST',
     body: JSON.stringify({ enrollmentToken: options.token, publicKey: identity.publicKey, name: options.name, platform: platform(), version: process.env.npm_package_version ?? null }),
@@ -324,7 +329,7 @@ export async function enrollMachineByApproval(options: BrainCliOptions, controls
 } = {}): Promise<MachineCredentialFile> {
   if (!options.hubOrigin) throw new Error('Hub origin is required')
   ensureEnrollmentDestination(options)
-  const identity = newMachineIdentity()
+  const identity = createMachineIdentity()
   const now = controls.now ?? Date.now
   const sleep = controls.sleep ?? (ms => new Promise(resolve => setTimeout(resolve, ms)))
   const requested = await hubRequest(options.hubOrigin, '/api/v1/hub/device-enrollments/request', {
@@ -463,4 +468,13 @@ export async function runBrainCommand(command: 'enroll' | 'brain', argv: string[
     })
     wake = undefined
   }
+}
+
+if (require.main === module) {
+  const argv = process.argv.slice(2)
+  const command = argv[0] === 'enroll' || argv[0] === 'brain' ? argv.shift() as 'enroll' | 'brain' : 'brain'
+  void runBrainCommand(command, argv).catch(error => {
+    console.error((error as Error).message)
+    process.exitCode = 1
+  })
 }

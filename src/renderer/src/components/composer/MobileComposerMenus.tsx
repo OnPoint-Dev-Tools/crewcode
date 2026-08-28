@@ -47,6 +47,7 @@ interface MobileModelMenuProps {
   onSelectEffort: (effort: EffortLevel) => void
   mode: Mode
   setMode: (mode: Mode) => void
+  executionModeDisabled?: boolean
   mcpEnabled?: boolean
   mcpServers?: McpServerConfig[]
   selectedMcpIds?: string[]
@@ -55,7 +56,7 @@ interface MobileModelMenuProps {
 
 export function MobileComposerModelMenu({
   agents, activeAgentId, onSelectAgent,
-  model, onSelectModel, effort, onSelectEffort, mode, setMode,
+  model, onSelectModel, effort, onSelectEffort, mode, setMode, executionModeDisabled = false,
   mcpEnabled = false, mcpServers = [], selectedMcpIds = [], onToggleMcp,
 }: MobileModelMenuProps) {
   const anchorRef = useRef<HTMLButtonElement>(null)
@@ -77,7 +78,7 @@ export function MobileComposerModelMenu({
     {
       id: 'model', label: 'Model',
       sub: selectedModel?.label ?? shortModel(model),
-      icon: <Icon name="brain" size={13} />,
+      icon: <Icon name="crew" size={13} />,
     },
     {
       id: 'effort', label: 'Effort',
@@ -87,15 +88,16 @@ export function MobileComposerModelMenu({
     },
     {
       id: 'mode', label: 'Mode',
-      sub: mode === 'Full' ? 'Full Access' : mode,
+      sub: executionModeDisabled ? 'Build · locked by CrewCoder profile' : (mode === 'Full' ? 'Full Access' : mode),
       icon: <Icon name="wrench" size={13} />,
+      disabled: executionModeDisabled,
     },
     ...(mcpEnabled ? [{
       id: 'mcp', label: 'MCP servers',
       sub: mcpCount > 0 ? `${mcpCount} selected` : 'none selected',
       icon: <Icon name="box" size={13} />,
     }] : []),
-  ], [activeAgentId, activeProvider?.name, effort, mcpCount, mcpEnabled, mode, model, selectedModel?.label])
+  ], [activeAgentId, activeProvider?.name, effort, executionModeDisabled, mcpCount, mcpEnabled, mode, model, selectedModel?.label])
 
   const pageItems = useMemo<PickerItem[]>(() => {
     const back: PickerItem = { id: '__back', label: 'Back', sub: 'Model settings', icon: <Icon name="chevLeft" size={13} /> }
@@ -136,7 +138,7 @@ export function MobileComposerModelMenu({
     }
     if (page === 'model') { onSelectModel(id === '__default_model' ? '' : id); setPage('root'); return }
     if (page === 'effort') { onSelectEffort(id as EffortLevel); setPage('root'); return }
-    if (page === 'mode') { setMode(id as Mode); setPage('root'); return }
+    if (page === 'mode' && !executionModeDisabled) { setMode(id as Mode); setPage('root'); return }
     if (page === 'mcp') onToggleMcp?.(id)
   }
 

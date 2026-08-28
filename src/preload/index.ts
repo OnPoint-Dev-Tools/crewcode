@@ -102,6 +102,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     shell?: string
     argv?:  string[]
     env?:   Record<string, string>
+    agentId?: string | null
+    autoWrap?: boolean
+    wrapAgentIds?: string[]
+    yuheard?: boolean
   }) => ipcRenderer.invoke('pty:create', opts),
 
   ptyWrite: (paneId: string, data: string): void =>
@@ -144,6 +148,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     externalDirectories?: string[]
     model?:      string
     mode?:       'ask' | 'plan' | 'build' | 'full'
+    crewcoderMode?: import('../shared/crewcoder-types').CrewCoderMode
     toolPolicy?: 'default' | 'read-only'
     thinking?:   'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
     apiKey?:     string

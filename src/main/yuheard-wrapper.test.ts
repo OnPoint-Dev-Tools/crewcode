@@ -3,14 +3,21 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, readFileSync, existsSync, statSync, rmSync, utimesSync } from 'fs'
+import { mkdtempSync, readFileSync, existsSync, statSync, rmSync, utimesSync, readdirSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import {
   installYuHeardWrapper,
+  installYuHeardHook,
   uninstallYuHeardWrapper,
   pruneYuHeardWrappers,
   prependWrapperToPath,
+  tomlNotifyOverride,
+  codexNotifyArgv,
+  fishKeepWrapArgv,
+  fishKeepWrapCommand,
+  bashKeepWrapPrompt,
+  quoteSh,
 } from './yuheard-wrapper'
 
 let baseDir: string
@@ -30,18 +37,40 @@ describe('installYuHeardWrapper', () => {
     expect(existsSync(join(dir, 'claude'))).toBe(true)
     expect(existsSync(join(dir, 'codex'))).toBe(true)
     const st = statSync(join(dir, 'claude'))
-    // owner-exec bit must be set; we don't assert 0o700 because umask varies
     expect((st.mode & 0o100) !== 0).toBe(true)
   })
 
-  it('embeds the pane id and socket path in the shim body', () => {
+  it('embeds the socket path in the hook and does not call yuheard on PATH', () => {
     const dir = installYuHeardWrapper('pn-abc', ['claude'], { baseDir, socketPath: '/tmp/yuheard.sock' })
     const body = readFileSync(join(dir, 'claude'), 'utf8')
-    expect(body).toContain('YUHEARD_PANE_ID')
-    expect(body).toContain('/tmp/yuheard.sock')
-    // The shim should exec the real binary from PATH, not hardcode it.
+    expect(body).toContain('self_dir=')
     expect(body).toMatch(/command -v claude/)
     expect(body).toMatch(/exec "\$real" "\$@"/)
+    expect(body).not.toMatch(/yuheard running/)
+    expect(body).toContain('yuheard-hook.')
+    const files = readdirSync(dir)
+    const hook = files.find(name => name.startsWith('yuheard-hook.'))
+    expect(hook).toBeTruthy()
+    const hookBody = readFileSync(join(dir, hook!), 'utf8')
+    expect(hookBody).toContain('pn-abc')
+    expect(hookBody).toContain('/tmp/yuheard.sock')
+  })
+
+  it('injects Codex notify -c flags into the codex shim', () => {
+    const dir = installYuHeardWrapper('pn-cx', ['codex'], { baseDir, socketPath: '/tmp/yuheard.sock' })
+    const shim = readFileSync(join(dir, 'codex'), 'utf8')
+    expect(shim).toContain('-c')
+    expect(shim).toContain('notify=[')
+    expect(shim).toContain('tui.notifications=true')
+    expect(shim).toContain('tui.notification_condition="always"')
+    expect(shim).toContain('tui.notification_method="bel"')
+    expect(shim).not.toContain('#!/usr/bin/env node\n// CrewCode YuHeard — Codex notify')
+  })
+
+  it('does not inject Codex flags into a claude shim', () => {
+    const dir = installYuHeardWrapper('pn-1', ['claude'], { baseDir, socketPath: '/tmp/yuheard.sock' })
+    const body = readFileSync(join(dir, 'claude'), 'utf8')
+    expect(body).not.toContain('tui.notifications')
   })
 
   it('overwrites stale shims from a previous install of the same pane', () => {
@@ -51,13 +80,72 @@ describe('installYuHeardWrapper', () => {
     expect(existsSync(join(dir, 'claude'))).toBe(true)
     expect(existsSync(join(dir, 'codex'))).toBe(true)
     const body = readFileSync(join(dir, 'claude'), 'utf8')
-    expect(body).toContain('/tmp/new.sock')
-    expect(body).not.toContain('/tmp/old.sock')
+    expect(body).toContain('yuheard-hook.')
+    const hook = readdirSync(dir).find(name => name.startsWith('yuheard-hook.'))!
+    expect(readFileSync(join(dir, hook), 'utf8')).toContain('/tmp/new.sock')
+    expect(readFileSync(join(dir, hook), 'utf8')).not.toContain('/tmp/old.sock')
   })
 
   it('does nothing for an empty agent list', () => {
     const dir = installYuHeardWrapper('pn-1', [], { baseDir })
     expect(existsSync(join(dir, 'claude'))).toBe(false)
+  })
+})
+
+describe('installYuHeardHook', () => {
+  it('writes a hook that bakes pane id and socket', () => {
+    const { hookPath } = installYuHeardHook('pn-x', { baseDir, socketPath: '/tmp/sock' })
+    const body = readFileSync(hookPath, 'utf8')
+    expect(body).toContain('pn-x')
+    expect(body).toContain('/tmp/sock')
+  })
+
+  it('accepts only genuine Codex approval and completed-turn events', () => {
+    const { hookPath } = installYuHeardHook('pn-x', { baseDir, socketPath: '/tmp/sock' })
+    const body = readFileSync(hookPath, 'utf8')
+    expect(body).toContain('agent-turn-complete')
+    expect(body).toContain('approval-requested')
+    expect(body).toMatch(/not in \(\"agent-turn-complete\", \"approval-requested\"\)/)
+  })
+})
+
+describe('codexNotifyArgv', () => {
+  it('builds -c overrides Codex will parse as TOML', () => {
+    expect(tomlNotifyOverride('/usr/bin/python3', '/tmp/hook.py')).toBe(
+      'notify=["/usr/bin/python3", "/tmp/hook.py"]',
+    )
+    expect(codexNotifyArgv('/usr/bin/python3', '/tmp/hook.py')).toEqual([
+      '-c', 'notify=["/usr/bin/python3", "/tmp/hook.py"]',
+      '-c', 'tui.notifications=true',
+      '-c', 'tui.notification_method="bel"',
+      '-c', 'tui.notification_condition="always"',
+    ])
+  })
+})
+
+describe('shell PATH keepers', () => {
+  it('prepends a fish -C that puts the wrapper dir first after rc', () => {
+    expect(fishKeepWrapArgv('/wrap/pn-1', [])).toEqual([
+      '-C', `set -gx PATH ${quoteSh('/wrap/pn-1')} $PATH`,
+    ])
+  })
+
+  it('redefines agent functions after fish rc so PATH shims win', () => {
+    const cmd = fishKeepWrapCommand('/wrap/pn-1', ['codex', 'claude'])
+    expect(cmd).toContain('set -gx PATH')
+    expect(cmd).toContain('function codex;')
+    expect(cmd).toContain('function claude;')
+    expect(cmd).toContain(`${quoteSh('/wrap/pn-1')}/codex $argv`)
+  })
+
+  it('builds a bash PROMPT_COMMAND that re-prepends the wrapper', () => {
+    expect(bashKeepWrapPrompt('/wrap/pn-1')).toContain("/wrap/pn-1")
+  })
+
+  it('drops bash aliases and functions that would shadow shims', () => {
+    const prompt = bashKeepWrapPrompt('/wrap/pn-1', undefined, ['codex', 'claude'])
+    expect(prompt).toContain('unset -f codex claude')
+    expect(prompt).toContain('unalias codex claude')
   })
 })
 
@@ -77,7 +165,6 @@ describe('uninstallYuHeardWrapper', () => {
 describe('pruneYuHeardWrappers', () => {
   it('removes directories older than maxAgeMs', () => {
     installYuHeardWrapper('pn-stale', ['claude'], { baseDir })
-    // Backdate mtime by 2 days
     const twoDaysAgo = (Date.now() - 2 * 24 * 60 * 60 * 1000) / 1000
     utimesSync(join(baseDir, 'pn-stale'), twoDaysAgo, twoDaysAgo)
     installYuHeardWrapper('pn-fresh', ['claude'], { baseDir })

@@ -504,13 +504,13 @@ The system caps at 5 stored notifications and displays only the top 3. Older not
 
 ## YuHeard — terminal-pane agent alerts
 
-YuHeard is a **separate channel** from the in-app notification bar
-above and the native OS notifications triggered by bridge turn-end.
-It plays a short **knock sound** (and optional OS notification) when
-any agent running in a CrewCode terminal pane finishes a turn.
+YuHeard is a **separate channel** from the native OS notifications
+triggered by **chat** bridge turn-end. A terminal-agent `complete`
+plays knock, shows an in-app toast, and (when the window is unfocused)
+an OS notification titled "Terminal agent finished". Chat completions
+must not play the YuHeard knock — they keep Desktop notifications +
+Notification sound.
 
-YuHeard is the universal companion to the in-app notifications: it
-works for every built-in agent (bridge transport) and for any
-pty-transport agent whose binary talks to the YuHeard socket. See
-[`docs/yuheard.md`](./yuheard.md) for the protocol, the
-`bin/yuheard` CLI, the auto-wrap behavior, and the privacy model.
+See [`docs/yuheard.md`](./yuheard.md) for the protocol, the
+`bin/yuheard` CLI, the auto-wrap behavior, PTY idle/BEL fallback, and
+the privacy model.

@@ -14,6 +14,7 @@ import type { CodeFile } from '../../hooks/useEditorSessions'
 import type { RegisteredPluginEditorAction } from '../../../../shared/plugin-types'
 import type { CompletionProviderId } from '../../../../shared/agent-completion-types'
 import type { EditorThemeId } from '../../../../shared/editor-theme-types'
+import { useMobileLayout } from '../../hooks/useMobileLayout'
 
 export type { CodeFile }
 
@@ -252,12 +253,15 @@ export function CodeEditor({
   completion,
   theme = 'crewcode',
 }: CodeEditorProps) {
+  const { isMobile } = useMobileLayout()
   const [err,       setErr]       = useState<string | null>(null)
   const [busy,      setBusy]      = useState(false)
   const [saving,    setSaving]    = useState(false)
   const [diffView,   setDiffView]   = useState<{ title: string; diff: string } | null>(null)
   const [ftWidth,    setFtWidth]    = useState(220)
-  const [ftOpen,     setFtOpen]     = useState(true)
+  // Phones start with the code canvas unobstructed. The file tree remains one
+  // tap away as an off-canvas panel; desktop retains its persistent default.
+  const [ftOpen,     setFtOpen]     = useState(() => !isMobile)
   const [formatting, setFormatting] = useState(false)
   const [fmtNotice,  setFmtNotice]  = useState<string | null>(null)
   const [editorCtx,  setEditorCtx]  = useState<{ x: number; y: number; start: number; end: number } | null>(null)
@@ -1172,13 +1176,14 @@ export function CodeEditor({
 
         {ftOpen && !problemsOpen && !referenceOpen && (
           <>
-            <Splitter orientation="vertical" onDrag={onFtDrag} />
+            {isMobile && <button type="button" className="ed-mobile-tree-backdrop" aria-label="Close file tree" onClick={() => setFtOpen(false)} />}
+            {!isMobile && <Splitter orientation="vertical" onDrag={onFtDrag} />}
             <FileTree
               root={root}
               activeRel={active?.rel}
               width={ftWidth}
               onDiff={handleDiff}
-              onSelect={open}
+              onSelect={(rel) => { void open(rel); if (isMobile) setFtOpen(false) }}
               onSelectLine={handleSelectLine}
               openTabs={tabs.map(t => t.rel)}
               outlineSymbols={outlineSymbols}

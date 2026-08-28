@@ -1,8 +1,11 @@
-import { homedir } from 'os'
+import { homedir, hostname } from 'os'
 import { existsSync } from 'fs'
 import { join, resolve } from 'path'
 import { startHubServer } from './hub-server'
 import { configureTailscaleServe } from './hub-mobile-access'
+import { defaultBrainDataDir } from './hub-machine-enrollment'
+import { superviseLocalBrain } from './hub-local-brain'
+import type { BrainAccessScope } from '../shared/hub-relay-types'
 import QRCode from 'qrcode'
 
 export interface HubCliOptions {
@@ -13,6 +16,11 @@ export interface HubCliOptions {
   mobile: boolean
   tailscale: boolean
   tailscaleReplace: boolean
+  localBrain: boolean
+  brainDataDir: string
+  brainName: string
+  allowedWorkspaceRoots: string[]
+  allowedScopes: BrainAccessScope[]
 }
 
 function usage(): string {
@@ -21,6 +29,7 @@ function usage(): string {
 Usage:
   crewcode hub [options]
   crewcode hub mobile [--tailscale] [options]
+  crewcode hub --local-brain [options]
 
 Options:
   --host <address>       Bind address (default: 127.0.0.1)
@@ -29,15 +38,25 @@ Options:
   --public-origin <url>  Final HTTPS browser origin (generic reverse proxy/domain)
   --tailscale            Configure Tailscale Serve HTTPS for the fixed Hub port
   --tailscale-replace    Explicitly replace an existing Tailscale Serve config
+  --local-brain          Spawn a sibling Brain on this Hub host after owner setup
+  --brain-data-dir <path> Brain state directory (default: ~/.crewcode/brain)
+  --brain-name <name>    Display name for this Hub host's machine
+  --workspace-root <path> Brain-local workspace root (repeatable; requires --local-brain)
+  --allow-scope <scope>  Brain-local scope (repeatable; requires --local-brain)
   --help                 Show this help
 
 Examples:
   crewcode hub
+  crewcode hub --local-brain --workspace-root ~/developing --allow-scope agent
   crewcode hub mobile --tailscale
   crewcode hub mobile --public-origin https://crewcode.example
 
 The public origin is cryptographically bound to passkeys. Choose the final LAN,
-Tailscale, or user-controlled HTTPS name before creating the owner passkey.`
+Tailscale, or user-controlled HTTPS name before creating the owner passkey.
+
+--local-brain keeps Hub identity and Brain execution in separate processes. It
+enrolls only this Hub host. Other machines still run crewcode enroll and
+crewcode brain against the Hub origin. Omit --local-brain on a relay-only VPS.`
 }
 
 function valueAfter(argv: string[], index: number, flag: string): string {
@@ -67,6 +86,13 @@ export function parseHubOptions(argv: string[], cwd = process.cwd()): HubCliOpti
   let publicOrigin: string | undefined
   let tailscale = false
   let tailscaleReplace = false
+  let localBrain = false
+  let brainDataDir = defaultBrainDataDir()
+  let brainName = hostname()
+  let brainDataDirSet = false
+  let brainNameSet = false
+  const allowedWorkspaceRoots: string[] = []
+  const allowedScopes: BrainAccessScope[] = []
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]
     if (arg === '--host') host = valueAfter(args, index++, arg)
@@ -78,12 +104,36 @@ export function parseHubOptions(argv: string[], cwd = process.cwd()): HubCliOpti
     else if (arg === '--public-origin') publicOrigin = normalizeHubOrigin(valueAfter(args, index++, arg))
     else if (arg === '--tailscale') tailscale = true
     else if (arg === '--tailscale-replace') { tailscale = true; tailscaleReplace = true }
-    else throw new Error(`unknown option: ${arg}`)
+    else if (arg === '--local-brain') localBrain = true
+    else if (arg === '--brain-data-dir') {
+      brainDataDir = resolve(cwd, valueAfter(args, index++, arg))
+      brainDataDirSet = true
+    } else if (arg === '--brain-name') {
+      brainName = valueAfter(args, index++, arg).trim()
+      brainNameSet = true
+    } else if (arg === '--workspace-root') allowedWorkspaceRoots.push(resolve(cwd, valueAfter(args, index++, arg)))
+    else if (arg === '--allow-scope') {
+      const scope = valueAfter(args, index++, arg) as BrainAccessScope
+      if (scope !== 'workspace:read' && scope !== 'workspace:write' && scope !== 'terminal' && scope !== 'agent') {
+        throw new Error(`invalid Brain scope: ${scope}`)
+      }
+      if (!allowedScopes.includes(scope)) allowedScopes.push(scope)
+    } else throw new Error(`unknown option: ${arg}`)
   }
   if (tailscale && publicOrigin) throw new Error('choose either --tailscale or --public-origin, not both')
   if (mobile && !tailscale && !publicOrigin) tailscale = true
   if ((host === '0.0.0.0' || host === '::') && !publicOrigin) throw new Error('--public-origin is required for network Hub binds')
-  return { host, port, dataDir, publicOrigin, mobile, tailscale, tailscaleReplace }
+  if (!localBrain && (brainDataDirSet || brainNameSet || allowedWorkspaceRoots.length > 0 || allowedScopes.length > 0)) {
+    throw new Error('--brain-data-dir, --brain-name, --workspace-root, and --allow-scope require --local-brain')
+  }
+  if (localBrain && (!brainName || brainName.length > 80)) throw new Error('machine name must contain 1 to 80 characters')
+  if (localBrain && allowedScopes.length > 0 && allowedWorkspaceRoots.length === 0) {
+    throw new Error('remote scopes require at least one explicit --workspace-root')
+  }
+  return {
+    host, port, dataDir, publicOrigin, mobile, tailscale, tailscaleReplace,
+    localBrain, brainDataDir, brainName, allowedWorkspaceRoots, allowedScopes,
+  }
 }
 
 export function terminalLink(label: string, url: string, isTerminal = Boolean(process.stdout.isTTY)): string {
@@ -125,7 +175,30 @@ export async function runHub(argv = process.argv.slice(2)): Promise<void> {
     }
   }
   if (parsed.host === '0.0.0.0' || parsed.host === '::') console.warn('Network access is enabled. Terminate TLS at the configured public origin.')
-  const shutdown = (): void => { void hub.close().finally(() => process.exit(0)) }
+  const localBrain = parsed.localBrain
+    ? superviseLocalBrain({
+      hub,
+      options: {
+        dataDir: parsed.brainDataDir,
+        name: parsed.brainName,
+        allowedWorkspaceRoots: parsed.allowedWorkspaceRoots,
+        allowedScopes: parsed.allowedScopes,
+      },
+    })
+    : null
+  if (localBrain) {
+    console.log('Local Brain supervisor enabled. This Hub host will appear as a machine after owner passkey setup.')
+    if (parsed.host === '0.0.0.0' || parsed.host === '::') {
+      console.warn('This Brain executes on the Hub host. Omit --local-brain if this VPS should only route, not run agents.')
+    }
+    console.log('Other machines: crewcode enroll --hub ' + hub.publicOrigin + ' then crewcode brain.')
+  }
+  const shutdown = (): void => {
+    void (async () => {
+      await localBrain?.stop()
+      await hub.close()
+    })().finally(() => process.exit(0))
+  }
   process.once('SIGINT', shutdown)
   process.once('SIGTERM', shutdown)
 }

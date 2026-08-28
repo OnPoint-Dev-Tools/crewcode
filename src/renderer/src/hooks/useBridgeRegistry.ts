@@ -9,12 +9,13 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 
 import { useAgentBridge } from './useAgentBridge'
-import { bridgeActivity, useRunningByBridge } from '../stores/bridge-activity-store'
+import { bridgeActivity, useRunningByBridge, useRunningByScope } from '../stores/bridge-activity-store'
 import { getCrewCodeRuntime } from '../runtime/crewcode-client'
 import { claimedWebBridgeRoutes, forgetWebBridgeRoute, rememberWebBridgeRoutes, webBridgeRoutes } from '../runtime/web-bridge-routes'
 import type { AgentProviderId, AgentUserResponse, BridgeEvent, ChatPromptOptions, Message, ModeLevel } from '../types'
 import type { EffortLevel } from '../components/composer/EffortPicker'
 import type { McpServerConfig } from './useSettings'
+import type { CrewCoderMode } from '../../../shared/crewcoder-types'
 
 type BridgeToolPolicy = 'default' | 'read-only'
 
@@ -54,7 +55,13 @@ export function useBridgeRegistry({ setMessagesForTab }: UseBridgeRegistryOpts) 
   // because `isBridgeRunning` feeds the workspaces drawer and Mission Control;
   // status and follow-up churn deliberately does NOT re-render App.
   const runningByBridge = useRunningByBridge()
+  const runningByScope = useRunningByScope()
   const startingBridgeIdsRef = useRef(new Set<string>())
+  const bridgesByKeyRef = useRef(bridgesByKey)
+  bridgesByKeyRef.current = bridgesByKey
+  useEffect(() => {
+    for (const route of recoveredRoutes) bridgeActivity.bindScope(route.bridgeId, route.tabId)
+  }, [recoveredRoutes])
 
   // Turn-end fan-out — the crew Supervisor subscribes here to relay worker
   // replies. A plain Set of listeners keeps this independent of React state.
@@ -99,6 +106,8 @@ export function useBridgeRegistry({ setMessagesForTab }: UseBridgeRegistryOpts) 
       bridgeActivity.removeFollowUp(bridgeId, followUpId)
     },
     onRunningChange: (bridgeId, running) => {
+      const scopeId = bridgeToTab[bridgeId]
+      if (scopeId) bridgeActivity.bindScope(bridgeId, scopeId)
       if (!running) {
         // A settled turn can't still be blocked on a prompt, and its transient
         // startup/resume status is stale.
@@ -175,18 +184,20 @@ export function useBridgeRegistry({ setMessagesForTab }: UseBridgeRegistryOpts) 
     // Provider handoff starts a fresh native session and seeds summary context.
     freshSession = false,
     externalDirectories?: string[],
+    crewcoderMode?: CrewCoderMode,
   ): Promise<{ bridgeId: string } | { error: string }> => {
     const key      = `${tabId}:${agentId}`
     const existing = bridgesByKey[key]
     const forceFresh = force || freshSession
     if (existing && !forceFresh) {
+      bridgeActivity.bindScope(existing, tabId)
       if (webRuntime) {
         // Reassert the stable bridge before each explicit web prompt. Brain
         // treats this as an idempotent attach while the execution exists; if
         // Brain restarted and lost its process-local owner map, it creates the
         // replacement bridge instead. The interrupted prompt is never replayed.
         bridge.registerRoute(existing, tabId, cwd, mode)
-        const attached = await bridge.start(existing, provider, cwd, model, mode, effort, toolPolicy, key, tabId, mcpServers, false, externalDirectories)
+        const attached = await bridge.start(existing, provider, cwd, model, mode, effort, toolPolicy, key, tabId, mcpServers, false, externalDirectories, crewcoderMode)
         if (attached.custodyHalt) bridgeActivity.setCustodyHalt(tabId, attached.custodyHalt)
         if (attached.error) return { error: attached.error }
       }
@@ -196,7 +207,9 @@ export function useBridgeRegistry({ setMessagesForTab }: UseBridgeRegistryOpts) 
       }
       return { bridgeId: existing }
     }
-    if (existing && forceFresh) bridge.stop(existing)
+    // A stale-id self-heal carries the accepted user request into the replacement
+    // runtime. Preserve its pending activity instead of recording an interruption.
+    if (existing && forceFresh) bridge.stop(existing, true)
 
     // A stable remote id lets a newly authenticated browser runtime explicitly
     // reclaim the same Brain-side execution without replaying its start/prompt.
@@ -210,6 +223,11 @@ export function useBridgeRegistry({ setMessagesForTab }: UseBridgeRegistryOpts) 
     setBridgeToCwd(prev => ({ ...prev, [bridgeId]: cwd }))
     if (mode) setBridgeToMode(prev => ({ ...prev, [bridgeId]: mode }))
     setBridgesByKey(prev => ({ ...prev, [key]: bridgeId }))
+    bridgesByKeyRef.current = { ...bridgesByKeyRef.current, [key]: bridgeId }
+    // Bind the conversation scope before flipping Running so the workspace
+    // drawer can list this chat immediately — including ACP providers that
+    // acknowledge prompt() before the turn finishes.
+    bridgeActivity.bindScope(bridgeId, tabId)
     // Navigation can unmount the chat surface while bridge:start is still in
     // flight. Treat startup as protected so cleanup/pruning cannot abort it.
     startingBridgeIdsRef.current.add(bridgeId)
@@ -217,7 +235,7 @@ export function useBridgeRegistry({ setMessagesForTab }: UseBridgeRegistryOpts) 
 
     // Native resume ids stay provider-specific via `key`; local replay history
     // is session-scoped so switching providers can continue the same thread.
-    const r = await bridge.start(bridgeId, provider, cwd, model, mode, effort, toolPolicy, key, tabId, mcpServers, freshSession, externalDirectories)
+    const r = await bridge.start(bridgeId, provider, cwd, model, mode, effort, toolPolicy, key, tabId, mcpServers, freshSession, externalDirectories, crewcoderMode)
     startingBridgeIdsRef.current.delete(bridgeId)
     // A halt in force refuses the start outright, so no process was spawned.
     // Record it here, where the tab is known synchronously.
@@ -333,9 +351,10 @@ export function useBridgeRegistry({ setMessagesForTab }: UseBridgeRegistryOpts) 
   // Status and queued follow-ups are read only by ChatPane, which subscribes to
   // bridge-activity-store directly — they intentionally have no accessor here.
   const isBridgeRunning = useCallback((tabId: string, agentId: string) => {
-    const bridgeId = bridgesByKey[`${tabId}:${agentId}`]
+    if (runningByScope[tabId]) return true
+    const bridgeId = bridgesByKeyRef.current[`${tabId}:${agentId}`] ?? bridgesByKey[`${tabId}:${agentId}`]
     return bridgeId ? !!runningByBridge[bridgeId] : false
-  }, [bridgesByKey, runningByBridge])
+  }, [bridgesByKey, runningByBridge, runningByScope])
 
   const removeQueuedFollowUp = useCallback(async (tabId: string, agentId: string, followUpId: string) => {
     const bridgeId = bridgesByKey[`${tabId}:${agentId}`]

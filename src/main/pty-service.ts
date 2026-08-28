@@ -3,6 +3,36 @@ import os from 'os'
 import { existsSync } from 'fs'
 import type { IPty } from 'node-pty'
 import { isRemoteRoot, parseRemoteTarget } from './remote/ssh-target'
+import {
+  YuHeardTurnDetector,
+  applyPtyKeystroke,
+  outputLooksLikeBell,
+  submittedAgentCommand,
+} from './yuheard-turn-detect'
+import { YUHEARD_WRAP_COMMANDS } from '../shared/yuheard-types'
+import {
+  bashKeepWrapPrompt,
+  codexNotifyArgv,
+  executableBaseName,
+  fishKeepWrapArgv,
+  installYuHeardHook,
+  installYuHeardWrapper,
+  uninstallYuHeardWrapper,
+} from './yuheard-wrapper'
+import type { YuHeardReport } from '../shared/yuheard-types'
+
+/** Bundle-safe slice of YuHeardServer used by PTYs. Keeping the concrete
+ * Electron-backed server behind an accessor also leaves PtyService reusable
+ * by the direct web transport and unit tests. */
+export interface PtyYuHeardServer {
+  getSocketPath(): string
+  notePaneSpawned(paneId: string, cwd: string): void
+  notePaneClosed(paneId: string): void
+  noteSessionRunning(paneId: string): void
+  isSessionActive(paneId: string): boolean
+  shouldAutoComplete(paneId: string): boolean
+  reportYuHeardFromProcess(report: YuHeardReport): 'applied' | 'duplicate' | 'unknown-pane'
+}
 
 // Build `ssh` argv that opens an interactive login shell in the workspace dir on
 // the remote host. The local ssh binary honors ~/.ssh/config (so aliases resolve
@@ -27,6 +57,8 @@ interface Pane {
   agentId: string | null
   /** Created-at timestamp (ms since epoch). */
   createdAt: number
+  /** Chat/crew sidecar panes stay off the YuHeard channel. */
+  yuheardEligible: boolean
 }
 
 // Replayed when a React terminal surface remounts (workspace/tab switches).
@@ -92,6 +124,12 @@ export function detectShells(): {
   }
 }
 
+function looksLikeShell(shell?: string): boolean {
+  if (!shell || shell === 'auto') return true
+  const base = shell.replace(/\\/g, '/').split('/').pop() ?? shell
+  return base === 'bash' || base === 'zsh' || base === 'fish' || base === 'sh' || base === 'ssh'
+}
+
 function defaultShell(): string {
   if (process.platform === 'win32') return process.env.COMSPEC || 'powershell.exe'
   // Prefer the user's login shell, but fall back to fish/zsh/bash in order of
@@ -120,12 +158,23 @@ export interface PtyCreateOpts {
   autoWrap?: boolean
   /** Agent ids that should be wrapped when `autoWrap` is true. */
   wrapAgentIds?: string[]
+  /** When false, skip YuHeard env/wrap/idle detect. Chat sidecars pass false. */
+  yuheard?: boolean
 }
 
 export class PtyService {
   private readonly panes = new Map<string, Pane>()
   private readonly pendingWrites = new Map<string, string[]>()
+  private readonly typedLines = new Map<string, string>()
+  private readonly activeTerminalAgents = new Map<string, string>()
   private readonly listeners = new Set<(event: PtyServiceEvent) => void>()
+  private readonly turnDetector = new YuHeardTurnDetector((paneId, source) => {
+    this.reportYuHeardComplete(paneId, source)
+  })
+
+  constructor(
+    private readonly getYuHeardServer: () => PtyYuHeardServer | null = () => null,
+  ) {}
 
   private flushPendingWrites(paneId: string, pane: Pane): void {
     const writes = this.pendingWrites.get(paneId)
@@ -140,11 +189,15 @@ export class PtyService {
   }
 
   create(opts: PtyCreateOpts): { ok?: boolean; error?: string; attached?: boolean; pid?: number; buffer?: string; cwd?: string; shell?: string } {
-    const { paneId, cwd, cols = 80, rows = 24, shell, argv = [], env = {}, agentId = null, autoWrap = false, wrapAgentIds = [] } = opts
+    const { paneId, cwd, cols = 80, rows = 24, shell, argv = [], env = {}, agentId = null, autoWrap = false, wrapAgentIds = [], yuheard = true } = opts
     const existing = this.panes.get(paneId)
     if (existing) {
       if (cols >= 1 && rows >= 1) try { existing.proc.resize(cols, rows) } catch { /* exiting */ }
       this.flushPendingWrites(paneId, existing)
+      // Live shells already have the wrapper dir on PATH. Refreshing the
+      // shim files in place means the next `codex`/`claude` uses the current
+      // hook without killing the pane.
+      this.refreshYuHeardWrappers(paneId, { autoWrap, wrapAgentIds, agentId, shell, yuheard })
       return { ok: true, attached: true, pid: existing.proc.pid, buffer: existing.buffer }
     }
     const remoteArgs = cwd && isRemoteRoot(cwd) ? remoteShellArgv(cwd) : null
@@ -156,11 +209,9 @@ export class PtyService {
     // PtyService stays Electron-free for unit tests.
     let yuheardEnv: Record<string, string> = {}
     let wrapperDir: string | null = null
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const wrapper = require('./yuheard-wrapper') as typeof import('./yuheard-wrapper')
-      const serverModule = require('./yuheard-server') as typeof import('./yuheard-server')
-      const server = serverModule.getYuHeardServer()
+    let spawnArgv = remoteArgs ?? argv
+    if (yuheard) try {
+      const server = this.getYuHeardServer()
       const socketPath = server?.getSocketPath()
       if (socketPath) {
         yuheardEnv = {
@@ -168,10 +219,24 @@ export class PtyService {
           YUHEARD_SOCKET: socketPath,
           ...(agentId ? { YUHEARD_AGENT: agentId } : {}),
         }
-        serverModule.getYuHeardServer()?.notePaneSpawned(paneId, actualCwd)
+        server?.notePaneSpawned(paneId, actualCwd)
       }
       if (autoWrap && wrapAgentIds.length > 0) {
-        wrapperDir = wrapper.installYuHeardWrapper(paneId, wrapAgentIds)
+        wrapperDir = installYuHeardWrapper(paneId, wrapAgentIds, socketPath ? { socketPath } : {})
+      }
+      // Codex TUI never goes quiet enough for idle-detect. When this pane
+      // *is* the Codex binary, inject Codex's notify hook so a finished
+      // turn reports YuHeard complete. Shell panes rely on the `codex` shim
+      // for the same flags — do not pass -c through to bash.
+      if (!remoteArgs && agentId === 'codex' && !looksLikeShell(shell) && socketPath) {
+        const hook = installYuHeardHook(paneId, { socketPath })
+        spawnArgv = [...codexNotifyArgv(hook.runtime.cmd, hook.hookPath), ...argv]
+      }
+      if (wrapperDir && !remoteArgs) {
+        const base = executableBaseName(exe)
+        if (base === 'fish') {
+          spawnArgv = fishKeepWrapArgv(wrapperDir, spawnArgv, wrapAgentIds)
+        }
       }
     } catch {
       // YuHeard not available (tests, or uninitialized) — proceed without.
@@ -191,34 +256,37 @@ export class PtyService {
       ...(wrapperDir ? { PATH: `${wrapperDir}:${basePath ?? ''}` } : {}),
     }
     delete ptyEnv.NODE_OPTIONS
+    if (wrapperDir && !remoteArgs) {
+      const base = (exe.replace(/\\/g, '/').split('/').pop() ?? exe)
+      if (base === 'bash' || base === 'sh') {
+        ptyEnv.PROMPT_COMMAND = (() => {
+          return bashKeepWrapPrompt(wrapperDir, ptyEnv.PROMPT_COMMAND, wrapAgentIds)
+        })()
+      }
+    }
     let proc: IPty
-    try { proc = pty.spawn(exe, remoteArgs ?? argv, { name: 'xterm-256color', cols, rows, cwd: actualCwd, env: ptyEnv }) }
+    try { proc = pty.spawn(exe, spawnArgv, { name: 'xterm-256color', cols, rows, cwd: actualCwd, env: ptyEnv }) }
     catch (error) {
       if (wrapperDir) {
         try {
-          // eslint-disable-next-line @typescript-eslint/no-var-requires
-          require('./yuheard-wrapper').uninstallYuHeardWrapper(paneId)
+          uninstallYuHeardWrapper(paneId)
         } catch { /* ignore */ }
       }
       return { error: `pty spawn failed: ${error instanceof Error ? error.message : String(error)}` }
     }
-    const pane: Pane = { proc, buffer: '', cwd: actualCwd, agentId, createdAt: Date.now() }
+    const pane: Pane = { proc, buffer: '', cwd: actualCwd, agentId, createdAt: Date.now(), yuheardEligible: yuheard }
     proc.onData(data => {
       appendReplayBuffer(pane, data)
+      if (pane.yuheardEligible) this.noteYuHeardOutput(paneId, pane, data)
       this.emit({ type: 'data', paneId, data })
     })
     proc.onExit(({ exitCode, signal }) => {
-      this.emit({ type: 'exit', paneId, exitCode, signal })
-      this.panes.delete(paneId)
-      // YuHeard: synthesize complete if the pane was reported running
-      // recently. This is the OS-level path that catches the auto-wrap
-      // case where the wrapper fires 'running' and the real binary just
-      // exits — no client ever fires 'complete' because the binary is
-      // the user's `claude` etc. and has no YuHeard awareness.
+      this.turnDetector.clear(paneId)
+      // Report complete while the pane is still known to YuHeard. Deleting
+      // from `this.panes` first made every auto-wrap exit come back as
+      // unknown-pane, so terminal agents never notified.
       try {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const serverModule = require('./yuheard-server') as typeof import('./yuheard-server')
-        const server = serverModule.getYuHeardServer()
+        const server = this.getYuHeardServer()
         if (server?.shouldAutoComplete(paneId)) {
           server.reportYuHeardFromProcess({
             pane_id: paneId,
@@ -229,11 +297,14 @@ export class PtyService {
         }
         server?.notePaneClosed(paneId)
       } catch { /* ignore */ }
+      this.emit({ type: 'exit', paneId, exitCode, signal })
+      this.panes.delete(paneId)
+      this.typedLines.delete(paneId)
+      this.activeTerminalAgents.delete(paneId)
       // Clean up the auto-wrap shim directory if we installed one.
       if (wrapperDir) {
         try {
-          // eslint-disable-next-line @typescript-eslint/no-var-requires
-          require('./yuheard-wrapper').uninstallYuHeardWrapper(paneId)
+          uninstallYuHeardWrapper(paneId)
         } catch { /* ignore */ }
       }
     })
@@ -244,6 +315,7 @@ export class PtyService {
 
   write(paneId: string, data: string): void {
     const pane = this.panes.get(paneId)
+    if (pane?.yuheardEligible) this.noteYuHeardInput(paneId, data)
     if (pane) { pane.proc.write(data); return }
     this.pendingWrites.set(paneId, [...(this.pendingWrites.get(paneId) ?? []), data])
   }
@@ -257,8 +329,11 @@ export class PtyService {
   kill(paneId: string): void {
     const pane = this.panes.get(paneId)
     if (pane) try { pane.proc.kill() } catch { /* exited */ }
+    this.turnDetector.clear(paneId)
     this.panes.delete(paneId)
     this.pendingWrites.delete(paneId)
+    this.typedLines.delete(paneId)
+    this.activeTerminalAgents.delete(paneId)
   }
 
   killWhere(predicate: (cwd: string) => boolean): string[] {
@@ -271,9 +346,12 @@ export class PtyService {
   }
 
   killAll(): void {
+    for (const paneId of this.panes.keys()) this.turnDetector.clear(paneId)
     for (const pane of this.panes.values()) try { pane.proc.kill() } catch { /* exited */ }
     this.panes.clear()
     this.pendingWrites.clear()
+    this.typedLines.clear()
+    this.activeTerminalAgents.clear()
   }
 
   processCount(): number { return this.panes.size }
@@ -288,7 +366,73 @@ export class PtyService {
   getPaneCwd(paneId: string): string | undefined { return this.panes.get(paneId)?.cwd }
   getPaneAgentId(paneId: string): string | null | undefined { return this.panes.get(paneId)?.agentId }
   getPaneCreatedAt(paneId: string): number | undefined { return this.panes.get(paneId)?.createdAt }
+  isYuHeardEligible(paneId: string): boolean { return this.panes.get(paneId)?.yuheardEligible !== false }
   listPaneIds(): string[] { return [...this.panes.keys()] }
+
+  private refreshYuHeardWrappers(
+    paneId: string,
+    opts: { autoWrap: boolean; wrapAgentIds: string[]; agentId: string | null; shell?: string; yuheard: boolean },
+  ): void {
+    if (!opts.yuheard) return
+    try {
+      const socketPath = this.getYuHeardServer()?.getSocketPath()
+      if (opts.autoWrap && opts.wrapAgentIds.length > 0) {
+        installYuHeardWrapper(paneId, opts.wrapAgentIds, socketPath ? { socketPath } : {})
+      }
+      if (opts.agentId === 'codex' && !looksLikeShell(opts.shell) && socketPath) {
+        installYuHeardHook(paneId, { socketPath })
+      }
+    } catch { /* ignore */ }
+  }
+
+  /** BEL/OSC is an explicit "notify" from the CLI — honor it even if the
+   *  PATH shim never reported `running`. Idle-after-output still requires
+   *  an agent-tagged pane or an armed YuHeard session so `ls` does not knock. */
+  private noteYuHeardOutput(paneId: string, pane: Pane, data: string): void {
+    try {
+      // Codex provides exact per-pane hook events for approval requests and
+      // completed turns. Its prompt-submit redraw can look like a large idle
+      // output burst, so never run the heuristic detector for Codex.
+      const activeAgent = pane.agentId ?? this.activeTerminalAgents.get(paneId)
+      if (activeAgent === 'codex') return
+      if (outputLooksLikeBell(data)) {
+        this.turnDetector.onData(paneId, data)
+        return
+      }
+      const server = this.getYuHeardServer()
+      if (!pane.agentId && !server?.isSessionActive(paneId)) return
+      this.turnDetector.onData(paneId, data)
+    } catch { /* YuHeard unavailable */ }
+  }
+
+  private noteYuHeardInput(paneId: string, data: string): void {
+    if (/\r|\n/.test(data)) this.turnDetector.onSubmit(paneId)
+    const next = applyPtyKeystroke(this.typedLines.get(paneId) ?? '', data)
+    this.typedLines.set(paneId, next.buffer)
+    if (next.submitted.length === 0) return
+    try {
+      const server = this.getYuHeardServer()
+      if (!server) return
+      for (const line of next.submitted) {
+        const agentCommand = submittedAgentCommand(line, YUHEARD_WRAP_COMMANDS)
+        if (!agentCommand) continue
+        this.activeTerminalAgents.set(paneId, agentCommand)
+        this.turnDetector.onAgentLaunch(paneId)
+        server.noteSessionRunning(paneId)
+      }
+    } catch { /* YuHeard unavailable */ }
+  }
+
+  private reportYuHeardComplete(paneId: string, source: string): void {
+    try {
+      this.getYuHeardServer()?.reportYuHeardFromProcess({
+        pane_id: paneId,
+        state: 'complete',
+        source,
+        ts: Date.now(),
+      })
+    } catch { /* ignore */ }
+  }
 
   private emit(event: PtyServiceEvent): void {
     for (const listener of this.listeners) listener(event)

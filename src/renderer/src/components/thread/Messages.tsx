@@ -4,6 +4,7 @@ import { normalizePatchForPierre, pathField, extractProviderPatchChanges, diffSt
 import { TurnWorkLog } from './TurnWorkLog'
 import type { WorkLogRow, WorkLogChangedFile, TodoItem, TaskSummaryItem, Diagnostic } from './TurnWorkLog'
 import { ThinkingBlock } from './ThinkingBlock'
+import { isCrewCoderTaskActivityTool, todosFromToolCall, todoItemFromUnknown } from './todo-from-toolcall'
 import { changesForToolMessages } from './turn-changes-data'
 import type { TurnChangeTarget } from './turn-changes-data'
 import { LoadingBlock } from './LoadingBlock'
@@ -661,20 +662,7 @@ function extractDiagnostics(msg: ToolCallMessage): Diagnostic[] | undefined {
 
 // Extract a todo list from args/result for the `todowrite` tool.
 function extractTodos(msg: ToolCallMessage): TodoItem[] | undefined {
-  const candidates = [asRecord(msg.args), asRecord(msg.result)]
-  for (const obj of candidates) {
-    if (!obj) continue
-    const todos = obj.todos
-    if (!Array.isArray(todos)) continue
-    return todos.map(t => {
-      const r = asRecord(t) ?? {}
-      const status = String(r.status ?? 'pending') as TodoItem['status']
-      const text   = String(r.content ?? r.text ?? r.title ?? '')
-      const activeForm = asString(r.activeForm) ?? asString(r.active_form)
-      return { status, text, activeForm }
-    })
-  }
-  return undefined
+  return todosFromToolCall(msg) ?? undefined
 }
 
 // Extract a delegated tool-call summary for the `task` tool.
@@ -685,9 +673,11 @@ function extractTaskSummary(msg: ToolCallMessage): TaskSummaryItem[] | undefined
   if (!Array.isArray(summary)) return undefined
   return summary.map(s => {
     const o = asRecord(s) ?? {}
+    const task = todoItemFromUnknown(o.task ?? (o.status !== undefined && (o.subject !== undefined || o.content !== undefined) ? o : null)) ?? undefined
     return {
       tool: String(o.tool ?? o.name ?? 'tool'),
-      text: String(o.text ?? o.summary ?? o.command ?? o.path ?? ''),
+      text: task?.text ?? String(o.text ?? o.summary ?? o.command ?? o.path ?? ''),
+      task,
     }
   })
 }
@@ -992,8 +982,9 @@ function buildTurnGroups(messages: Message[]): Map<number, TurnGroup> {
       continue
     }
     const toolName = (msg.toolName || '').toLowerCase()
-    // TodoWrite has a dedicated live surface above the composer.
+    // TodoWrite / CrewCoder task mutations have a dedicated live surface above the composer.
     if (toolName === 'todowrite' || toolName === 'todo_write' || toolName === 'todoread' || toolName === 'todo_read') continue
+    if (isCrewCoderTaskActivityTool(msg)) continue
     const turnId = msg.turnId
     if (!turnId) {
       current = null
@@ -1153,6 +1144,10 @@ const MessageRow = React.memo(function MessageRow({
       if (!g) return null
       return <TurnWorkLog rows={g.rows} live={g.live} onOpenFile={onOpenFile} />
     }
+
+    // CrewCode-owned activity renders exclusively in AgentActivityOverlay.
+    case 'activity':
+      return null
 
     case 'system':
       return <SystemNotice text={msg.text} tone={msg.tone} />

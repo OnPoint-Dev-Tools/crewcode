@@ -69,8 +69,21 @@ function reportLine(state, message) {
   })
 }
 
-async function resolvePaneId() {
+async function resolvePaneId(firstArg) {
   if (process.env.YUHEARD_PANE_ID) return process.env.YUHEARD_PANE_ID
+  if (firstArg) {
+    try {
+      const lookedUp = await lookupPaneIdByCwd()
+      if (lookedUp) return lookedUp
+    } catch { /* fall through and treat firstArg as the pane id */ }
+    return firstArg
+  }
+  const lookedUp = await lookupPaneIdByCwd()
+  if (!lookedUp) throw new Error('lookup failed')
+  return lookedUp
+}
+
+async function lookupPaneIdByCwd() {
   const cwd = process.cwd()
   const lookupLine = JSON.stringify({ method: 'pane-id-lookup', cwd })
   const reply = await send(lookupLine)
@@ -113,8 +126,10 @@ async function main() {
       return
     case 'running':
     case 'complete': {
-      const message = args.slice(1).join(' ').trim() || undefined
-      const paneId = await resolvePaneId()
+      const extra = args.slice(1)
+      const paneId = await resolvePaneId(extra[0])
+      const messageParts = extra[0] === paneId ? extra.slice(1) : extra
+      const message = messageParts.join(' ').trim() || undefined
       const line = reportLine(sub, message).replace(
         '"pane_id":""',
         `"pane_id":"${paneId.replace(/"/g, '\\"')}"`,

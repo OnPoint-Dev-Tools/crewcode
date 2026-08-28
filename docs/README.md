@@ -32,7 +32,9 @@ internal references).
 | [security-model.md](./security-model.md) | Authority-boundary audit: untrusted content -> agent -> MCP/plugin -> exec -> Git/SSH, per-hop gates, tests, and residual risk |
 | [execution-custody.md](./execution-custody.md) | Withdrawing authority after it was granted: invariant tripwire, custody journal, halt/contain/preserve/report, explicit reauthorization |
 | [remote-ssh-workspaces.md](./remote-ssh-workspaces.md) | Opening projects over SSH: setup, auth, host pinning, what works remotely |
+| [web-remote-access.md](./web-remote-access.md) | Browser client, `crewcode serve`, self-hosted Hub relay, and `hub --local-brain` |
 | [canvas-mode.md](./canvas-mode.md) | Workbench: multiple chats and terminals side by side on one worktree _(nav label: "Workbench")_ |
+| [workspace-session-split.md](./workspace-session-split.md) | Drag a drawer thread onto Solo Chat or a terminal pane to split that view |
 | [chat-archiving.md](./chat-archiving.md) | Right-click a chat to archive it; the Archive page, restoring, and retention flagging |
 
 ### Git
@@ -77,6 +79,7 @@ internal references).
 | [agent-message-markdown.md](./agent-message-markdown.md) | Markdown/Shiki rendering rules for agent replies |
 | [tool-calling-breakdown.md](./tool-calling-breakdown.md) | Per-tool rendering spec for tool-call rows |
 | [notifications.md](./notifications.md) | Notification bar architecture and `useNotifications()` API reference |
+| [yuheard.md](./yuheard.md) | Terminal-agent completion protocol, shell wrappers, Codex hook, alert settings, and troubleshooting |
 | [crew-orchestrator.md](./crew-orchestrator.md) | Crew orchestrator design spec: state machine, layering, modes |
 | [plugins-v0.md](./plugins-v0.md) | Plugin platform v0 implementation snapshot and pre-v1 gates |
 

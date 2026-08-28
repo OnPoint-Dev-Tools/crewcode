@@ -123,6 +123,48 @@ describe('CrewCoder external directories', () => {
   })
 })
 
+describe('CrewCoder agent modes', () => {
+  it('preserves compatibility by omitting --mode until a mode is selected', async () => {
+    const harness = crewCoderAcpHarness()
+    spawnAgentProcess.mockResolvedValue({ proc: harness.proc, dir: '/repo', remote: false })
+
+    await createCrewCoderBridge('crewcoder', {
+      bridgeId: 'bridge', provider: 'crewcoder', cwd: '/repo', mode: 'build',
+    }, () => {})
+
+    expect(spawnAgentProcess).toHaveBeenCalledWith(expect.objectContaining({
+      args: ['acp', '--approval', 'review'],
+    }))
+  })
+
+  it('passes the selected CrewCoder mode to the ACP process', async () => {
+    const harness = crewCoderAcpHarness()
+    spawnAgentProcess.mockResolvedValue({ proc: harness.proc, dir: '/repo', remote: false })
+
+    await createCrewCoderBridge('crewcoder', {
+      bridgeId: 'bridge', provider: 'crewcoder', cwd: '/repo', mode: 'build', crewcoderMode: 'plugin',
+    }, () => {})
+
+    expect(spawnAgentProcess).toHaveBeenCalledWith(expect.objectContaining({
+      command: 'crewcoder',
+      args: ['acp', '--approval', 'review', '--mode', 'plugin'],
+    }))
+  })
+
+  it('defaults invalid persisted input to general at the process boundary', async () => {
+    const harness = crewCoderAcpHarness()
+    spawnAgentProcess.mockResolvedValue({ proc: harness.proc, dir: '/repo', remote: false })
+
+    await createCrewCoderBridge('crewcoder', {
+      bridgeId: 'bridge', provider: 'crewcoder', cwd: '/repo', mode: 'build', crewcoderMode: 'unknown' as never,
+    }, () => {})
+
+    expect(spawnAgentProcess).toHaveBeenCalledWith(expect.objectContaining({
+      args: ['acp', '--approval', 'review', '--mode', 'general'],
+    }))
+  })
+})
+
 describe('CrewCoder reasoning effort', () => {
   it('sets the selected effort on the ACP session', async () => {
     const harness = crewCoderAcpHarness()
@@ -284,6 +326,85 @@ describe('CrewCoder ACP update projection', () => {
       toolCallId: 'tc-1',
       args: { path: 'src/App.tsx' },
       title: 'edit src/App.tsx',
+    })])
+  })
+
+  it('uses an identifier ACP title over generic kind so TaskCreate stays TaskCreate', () => {
+    const events = crewCoderEventsFromUpdate({
+      sessionUpdate: 'tool_call',
+      toolCallId: 'tc-task',
+      title: 'TaskCreate',
+      kind: 'other',
+      rawInput: { subject: 'Write tests', description: 'cover the parser' },
+    }, 'bridge', 'turn', createCrewCoderToolProjectionState())
+
+    expect(events).toEqual([expect.objectContaining({
+      type: 'tool_start',
+      toolCallId: 'tc-task',
+      toolName: 'TaskCreate',
+      args: { subject: 'Write tests', description: 'cover the parser' },
+    })])
+  })
+
+  it('uses CrewCoder tool metadata as the authoritative tool name', () => {
+    const events = crewCoderEventsFromUpdate({
+      sessionUpdate: 'tool_call',
+      toolCallId: 'tc-task',
+      title: 'Create project task',
+      kind: 'think',
+      rawInput: { subject: 'Write tests', description: 'cover the parser' },
+      _meta: { 'crewcoder/tool': { name: 'TaskCreate' } },
+    }, 'bridge', 'turn', createCrewCoderToolProjectionState())
+
+    expect(events).toEqual([expect.objectContaining({
+      type: 'tool_start',
+      toolCallId: 'tc-task',
+      toolName: 'TaskCreate',
+    })])
+  })
+
+  it('prefers CrewCoder tool metadata over a generic ACP name/kind', () => {
+    const events = crewCoderEventsFromUpdate({
+      sessionUpdate: 'tool_call',
+      toolCallId: 'tc-task',
+      name: 'think',
+      title: 'Create project task',
+      kind: 'think',
+      rawInput: { subject: 'Write tests', description: 'cover the parser' },
+      _meta: { 'crewcoder/tool': { name: 'TaskCreate' } },
+    }, 'bridge', 'turn', createCrewCoderToolProjectionState())
+
+    expect(events).toEqual([expect.objectContaining({
+      type: 'tool_start',
+      toolCallId: 'tc-task',
+      toolName: 'TaskCreate',
+    })])
+  })
+
+  it('forwards CrewCoder todo snapshots from rawOutput unchanged', () => {
+    const state = createCrewCoderToolProjectionState()
+    crewCoderEventsFromUpdate({
+      sessionUpdate: 'tool_call',
+      toolCallId: 'tc-task',
+      title: 'TaskUpdate',
+      kind: 'think',
+      rawInput: { taskId: 'task-1', status: 'in_progress' },
+      _meta: { 'crewcoder/tool': { name: 'TaskUpdate' } },
+    }, 'bridge', 'turn', state)
+
+    const todos = [
+      { content: 'Write tests', status: 'in_progress', activeForm: 'Writing tests' },
+      { content: 'Run typecheck', status: 'pending' },
+    ]
+    expect(crewCoderEventsFromUpdate({
+      sessionUpdate: 'tool_call_update',
+      toolCallId: 'tc-task',
+      status: 'completed',
+      rawOutput: { output: 'Updated #1: Write tests (status)', isError: false, todos },
+    }, 'bridge', 'turn', state)).toEqual([expect.objectContaining({
+      type: 'tool_end',
+      result: { output: 'Updated #1: Write tests (status)', isError: false, todos },
+      args: { taskId: 'task-1', status: 'in_progress' },
     })])
   })
 

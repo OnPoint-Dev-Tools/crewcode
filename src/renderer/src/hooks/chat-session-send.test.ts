@@ -100,6 +100,24 @@ describe('sendChatSessionPrompt mode handling', () => {
     }))
   })
 
+  it('passes the CrewCoder profile separately from execution mode', async () => {
+    const messages = messageHarness()
+    const crewcoder = { ...bridgeAgent, id: 'crewcoder', name: 'CrewCoder' }
+    const opts = {
+      ...makeBaseOpts('plan', messages),
+      agents: [crewcoder],
+      activeAgentId: 'crewcoder',
+      crewcoderMode: 'plugin' as const,
+    }
+
+    await sendChatSessionPrompt(opts)
+
+    expect(opts.bridges.ensureBridge).toHaveBeenCalledWith(
+      'sess-1', 'crewcoder', 'crewcoder', '/repo', 'gpt-5.4', 'medium',
+      'plan', undefined, false, [], false, undefined, 'plugin',
+    )
+  })
+
   it('uses provider-native context when CrewCode mode prompts are disabled', async () => {
     const messages = messageHarness()
     const opts = {
@@ -113,6 +131,11 @@ describe('sendChatSessionPrompt mode handling', () => {
       'sess-1', 'codex', 'codex', '/repo', 'gpt-5.4', 'medium', 'build', undefined, false, [], false, undefined,
     )
     expect(opts.bridges.prompt).toHaveBeenCalledWith('bridge-1', 'please help', undefined)
+    expect(messages.messages).toContainEqual(expect.objectContaining({
+      kind: 'activity',
+      text: 'please help',
+      status: 'pending',
+    }))
     expect(opts.markModeDelivered).toHaveBeenCalledWith('sess-1', 'build')
   })
 
@@ -231,5 +254,24 @@ describe('sendChatSessionPrompt mode handling', () => {
       expect.stringContaining("operating in 'Plan Mode.'"),
     )
     expect(opts.bridges.ensureBridge).not.toHaveBeenCalled()
+    expect(messages.messages.some(message => message.kind === 'activity')).toBe(false)
+  })
+
+  it('marks CrewCode activity interrupted when bridge startup fails', async () => {
+    const messages = messageHarness()
+    const opts = {
+      ...makeBaseOpts('build', messages),
+      bridges: {
+        ensureBridge: vi.fn(async () => ({ error: 'failed to start' })),
+        prompt: vi.fn(async () => ({ ok: true })),
+      },
+    }
+
+    await sendChatSessionPrompt(opts)
+
+    expect(messages.messages).toContainEqual(expect.objectContaining({
+      kind: 'activity',
+      status: 'interrupted',
+    }))
   })
 })

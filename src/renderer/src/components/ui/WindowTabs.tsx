@@ -40,7 +40,6 @@ interface WindowTabsProps {
   splitTabIds?: string[]
   splitPrimaryTabId?: string | null
   onSplit?: (tabId: string | null) => void
-  onCloseSplitGroup?: (groupId: string) => void
   onPin?: (tabId: string) => void
   onUnpin?: (tabId: string) => void
   onRename?: (tabId: string, label: string) => void
@@ -85,12 +84,10 @@ interface WindowTabItemProps {
   active: boolean
   crewState?: CrewSessionState
   split: boolean
-  splitGroupId?: string
   colorValue?: string
   pinAccent?: string
   onActivate: (id: string) => void
   onClose: (id: string) => void
-  onCloseSplitGroup?: (groupId: string) => void
   dragging: boolean
   dropTarget: boolean
   draggable: boolean
@@ -102,9 +99,9 @@ interface WindowTabItemProps {
 }
 
 const WindowTabItem = memo(function WindowTabItem({
-  tab, displayLabel, active, crewState, split, splitGroupId, colorValue, pinAccent,
+  tab, displayLabel, active, crewState, split, colorValue, pinAccent,
   dragging, dropTarget, draggable, onDragStart, onDragOver, onDrop, onDragEnd,
-  onActivate, onClose, onCloseSplitGroup, onContextMenu,
+  onActivate, onClose, onContextMenu,
 }: WindowTabItemProps) {
   const isCrew = !!crewState
   const providerIcon = !isCrew && tab.displayIconProviderId ? PROVIDER_IMAGES[tab.displayIconProviderId] : undefined
@@ -142,11 +139,10 @@ const WindowTabItem = memo(function WindowTabItem({
       {!tab.pinned && (
         <span
           className="close"
-          title={split ? 'close split view' : 'close tab'}
+          title="close tab"
           onClick={(e) => {
             e.stopPropagation()
-            if (splitGroupId) onCloseSplitGroup?.(splitGroupId)
-            else onClose(tab.id)
+            onClose(tab.id)
           }}
         >✕</span>
       )}
@@ -157,7 +153,7 @@ const WindowTabItem = memo(function WindowTabItem({
 export const WindowTabs = memo(function WindowTabs({
   tabs, activeId, onActivate, onClose,
   onAppMenuAction, activeKind, appMenuFootStatus, crewTabs,
-  splitGroups = [], splitTabIds = [], splitPrimaryTabId, onSplit, onCloseSplitGroup, onPin, onUnpin, onRename, onColor, onReorder,
+  splitGroups = [], splitTabIds = [], splitPrimaryTabId, onSplit, onPin, onUnpin, onRename, onColor, onReorder,
   pluginMenuItems = [], onPluginMenuItem, onNewTabMenuOpenChange,
 }: WindowTabsProps) {
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; tab: Tab } | null>(null)
@@ -284,7 +280,7 @@ export const WindowTabs = memo(function WindowTabs({
     setDropTarget(null)
   }, [])
 
-  const renderTab = (tab: WindowTab, splitGroupId?: string) => {
+  const renderTab = (tab: WindowTab) => {
     const colorValue = tab.color ? COLOR_VALUES.get(tab.color) : undefined
     const canvasNumber = canvasNumberById.get(tab.id)
     // Canvas tabs render a canonical base label so pre-rename ('Canvas') persisted
@@ -299,7 +295,6 @@ export const WindowTabs = memo(function WindowTabs({
         active={activeId === tab.id}
         crewState={crewTabs[tab.id]}
         split={splitIds.has(tab.id)}
-        splitGroupId={splitGroupId}
         colorValue={colorValue}
         pinAccent={tab.pinned ? (colorValue ?? fallbackPinColor(tab.id)) : undefined}
         dragging={draggingTabId === tab.id}
@@ -311,7 +306,6 @@ export const WindowTabs = memo(function WindowTabs({
         onDragEnd={handleDragEnd}
         onActivate={onActivate}
         onClose={onClose}
-        onCloseSplitGroup={onCloseSplitGroup}
         onContextMenu={handleTabContextMenu}
       />
     )
@@ -419,7 +413,7 @@ export const WindowTabs = memo(function WindowTabs({
             <Fragment key={group.id}>
               {idx > 0 && <div className="wintab-divider split-group-divider" aria-hidden="true"><span /></div>}
               <div className="split-tab-group" aria-label="split tabs">
-                {group.tabs.map(tab => renderTab(tab, group.id))}
+                {group.tabs.map(tab => renderTab(tab))}
               </div>
             </Fragment>
           ))}

@@ -7,6 +7,7 @@ import type { ChatContextMenuItem } from '../chat/ChatContextMenu'
 import type { PtyPane, AgentInfo } from '../../types'
 import type { RegisteredPluginTerminalWatcher } from '../../../../shared/plugin-types'
 import { providerImageClass } from '../composer/provider-meta'
+import { isSessionDrag, readSessionDrag, type SessionDragPayload } from '../thread/session-drag'
 
 import claudeIcon   from '../../assets/claude-color.svg'
 import openaiIcon   from '../../assets/openai.svg'
@@ -27,6 +28,8 @@ const AGENT_ICONS: Record<string, string> = {
 export interface TermColumnProps {
   panes:      PtyPane[]
   agents:     AgentInfo[]
+  /** Window-tab kind so XTermPane's reattach `ptyCreate` keeps YuHeard flags. */
+  tabKind?:   string
   onClose:    (paneId: string) => void
   onAddShell: () => PtyPane
   onAddAgent: (agentId: string) => PtyPane | undefined
@@ -37,6 +40,7 @@ export interface TermColumnProps {
   onOpenUrl?: (url: string) => void
   pluginTerminalWatchers?: RegisteredPluginTerminalWatcher[]
   onPluginTerminalWatcher?: (target: { pluginId: string; sidebarPanel?: string; tab?: string; command?: string }, paneId: string) => void
+  onSessionDrop?: (payload: SessionDragPayload) => void
 }
 
 // Layout tracks which panes live in which column and row.
@@ -61,9 +65,9 @@ const PANE_MENU_BASE: ChatContextMenuItem[] = [
 ]
 
 export function TermColumn({
-  panes, agents, onClose, onAddShell, onAddAgent, onAddSsh, sshTargets = [],
+  panes, agents, tabKind, onClose, onAddShell, onAddAgent, onAddSsh, sshTargets = [],
   layout: externalLayout, onLayoutChange, onOpenUrl,
-  pluginTerminalWatchers = [], onPluginTerminalWatcher,
+  pluginTerminalWatchers = [], onPluginTerminalWatcher, onSessionDrop,
 }: TermColumnProps) {
   const available = agents.filter(a => a.available)
   const [internalLayout, setInternalLayout] = useState<Layout>(EMPTY_LAYOUT)
@@ -75,6 +79,7 @@ export function TermColumn({
   const [collapsedPanes, setCollapsedPanes] = useState<Set<string>>(() => new Set())
   const [draggedPaneId, setDraggedPaneId] = useState<string | null>(null)
   const [dropTargetPaneId, setDropTargetPaneId] = useState<string | null>(null)
+  const [sessionDropActive, setSessionDropActive] = useState(false)
   const clipboardActionsRef = React.useRef<Record<string, TerminalClipboardActions>>({})
 
   const paneIdsKey = panes.map(p => p.paneId).join('\u0000')
@@ -193,11 +198,20 @@ export function TermColumn({
   }, [setLayout])
 
   const handlePaneDrop = useCallback((event: React.DragEvent<HTMLDivElement>, targetPaneId: string) => {
+    const sessionPayload = readSessionDrag(event.dataTransfer)
+    if (sessionPayload && onSessionDrop) {
+      event.preventDefault()
+      event.stopPropagation()
+      setSessionDropActive(false)
+      setDropTargetPaneId(null)
+      onSessionDrop(sessionPayload)
+      return
+    }
     event.preventDefault()
     const sourcePaneId = event.dataTransfer.getData('application/x-crewcode-pane-id') || draggedPaneId
     if (sourcePaneId) swapPanes(sourcePaneId, targetPaneId)
     clearPaneDragState()
-  }, [clearPaneDragState, draggedPaneId, swapPanes])
+  }, [clearPaneDragState, draggedPaneId, onSessionDrop, swapPanes])
 
   const handleSplitRight = useCallback((fromPaneId: string) => {
     setLayout(prev => {
@@ -334,8 +348,33 @@ export function TermColumn({
     ]
   }, [ctxMenu, pluginTerminalWatchers])
 
+  const sessionDragOver = (event: React.DragEvent) => {
+    if (!onSessionDrop || !isSessionDrag(event.dataTransfer.types)) return false
+    event.preventDefault()
+    event.stopPropagation()
+    event.dataTransfer.dropEffect = 'copy'
+    setSessionDropActive(true)
+    return true
+  }
+
   return (
-    <div className="termcol-outer">
+    <div
+      className={`termcol-outer${sessionDropActive ? ' session-drop-target' : ''}`}
+      onDragEnter={event => { sessionDragOver(event) }}
+      onDragOver={event => { sessionDragOver(event) }}
+      onDragLeave={event => {
+        if (event.currentTarget.contains(event.relatedTarget as Node)) return
+        setSessionDropActive(false)
+      }}
+      onDrop={event => {
+        const payload = readSessionDrag(event.dataTransfer)
+        if (!payload || !onSessionDrop) return
+        event.preventDefault()
+        event.stopPropagation()
+        setSessionDropActive(false)
+        onSessionDrop(payload)
+      }}
+    >
       <div className="termcol-grid">
         {layout.columns.map((col, colIdx) => (
           <React.Fragment key={colIdx}>
@@ -347,9 +386,13 @@ export function TermColumn({
                 return (
                   <React.Fragment key={paneId}>
                     <div
-                      className={`termpane-slot ${paneCollapsed ? 'collapsed' : ''}${dropTargetPaneId === paneId && draggedPaneId !== paneId ? ' drop-target' : ''}`}
+                      className={`termpane-slot ${paneCollapsed ? 'collapsed' : ''}${dropTargetPaneId === paneId && draggedPaneId !== paneId ? ' drop-target' : ''}${sessionDropActive ? ' session-drop-target' : ''}`}
                       style={{ flex: paneCollapsed ? '0 0 39px' : (layout.rowWeights[colIdx]?.[rowIdx] ?? 1) }}
                       onDragOver={event => {
+                        if (sessionDragOver(event)) {
+                          setDropTargetPaneId(paneId)
+                          return
+                        }
                         if (!draggedPaneId || draggedPaneId === paneId) return
                         event.preventDefault()
                         event.dataTransfer.dropEffect = 'move'
@@ -364,6 +407,7 @@ export function TermColumn({
                     >
                       <XTermPane
                         pane={p}
+                        tabKind={tabKind}
                         shell={p.shell ?? (p.agentId ? (agents.find(a => a.id === p.agentId)?.path ?? undefined) : undefined)}
                         argv={p.argv}
                         collapsed={paneCollapsed}

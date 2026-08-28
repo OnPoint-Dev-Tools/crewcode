@@ -61,7 +61,8 @@ function loadRenderer(term: Terminal, gpu: Gpu): ITerminalAddon | null {
 }
 import { Icon } from '../ui/Icon'
 import type { PtyPane } from '../../types'
-import { useSettings } from '../../hooks/useSettings'
+import { getCurrentSettings, useSettings } from '../../hooks/useSettings'
+import { yuheardPtySpawnFlags } from '../../../../shared/yuheard-types'
 import { providerImageClass } from '../composer/provider-meta'
 
 import claudeIcon   from '../../assets/claude-color.svg'
@@ -104,6 +105,7 @@ export interface TerminalClipboardActions {
 
 interface XTermPaneProps {
   pane:    PtyPane
+  tabKind?: string
   shell?:  string
   argv?:   string[]
   env?:    Record<string, string>
@@ -118,7 +120,7 @@ interface XTermPaneProps {
 }
 
 
-export function XTermPane({ pane, shell, argv, env, collapsed = false, onCollapsedChange, onExit, onClose, onOpenUrl, onHeaderDragStart, onHeaderDragEnd, onClipboardActionsChange }: XTermPaneProps) {
+export function XTermPane({ pane, tabKind, shell, argv, env, collapsed = false, onCollapsedChange, onExit, onClose, onOpenUrl, onHeaderDragStart, onHeaderDragEnd, onClipboardActionsChange }: XTermPaneProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef  = useRef<FitAddon | null>(null)
@@ -223,6 +225,12 @@ export function XTermPane({ pane, shell, argv, env, collapsed = false, onCollaps
       shell,
       argv,
       env,
+      ...yuheardPtySpawnFlags({
+        tabKind,
+        shell: pane.shell ?? shell,
+        agentId: pane.agentId,
+        autoWrapEnabled: getCurrentSettings().yuheardAutoWrap,
+      }),
     }).then(result => {
       if (disposed) return
       if (result.error) {
@@ -384,7 +392,7 @@ export function XTermPane({ pane, shell, argv, env, collapsed = false, onCollaps
           <button className="ibtn" title="close" draggable={false} onClick={onClose}><Icon name="close" /></button>
         </div>
       </div>
-      {!collapsed && <div className="xterm-host" ref={hostRef} />}
+      {!collapsed && <div className="xterm-host" data-yuheard-pane-id={pane.paneId} ref={hostRef} />}
     </div>
   )
 }

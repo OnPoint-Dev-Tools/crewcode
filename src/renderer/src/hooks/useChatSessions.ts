@@ -13,6 +13,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import type { Session, ModeLevel } from '../types'
 import { normalizeModeLevel } from '../app-constants'
 import type { EffortLevel } from '../components/composer/EffortPicker'
+import { normalizeCrewCoderMode } from '../../../shared/crewcoder-types'
 
 type SessionsByTab = Record<string, Session[]>
 type ActiveByTab   = Record<string, string>
@@ -131,7 +132,10 @@ export function migratePersistedSessions(sessionsByTab: Record<string, Persisted
       // Sessions created before provider-native effort used Pi's "minimal" id.
       effort: effort === 'minimal' ? 'low' : effort,
       // Sessions saved before the rename carry mode 'yolo'.
-      mode: normalizeModeLevel(session.mode),
+      mode: session.agentId === 'crewcoder' && session.crewcoderMode !== undefined
+        ? 'build'
+        : normalizeModeLevel(session.mode),
+      ...(session.crewcoderMode === undefined ? {} : { crewcoderMode: normalizeCrewCoderMode(session.crewcoderMode) }),
       enabledSkillIds: session.enabledSkillIds ?? [],
       modePromptsEnabled: session.modePromptsEnabled ?? true,
     })),
@@ -276,6 +280,7 @@ export function useChatSessions(defaults: SessionDefaults) {
       model:   src.model,
       mode:    src.mode,
       effort:  src.effort,
+      ...(src.crewcoderMode ? { crewcoderMode: src.crewcoderMode } : {}),
       mcpServerIds: [...(src.mcpServerIds ?? [])],
       enabledSkillIds: [...(src.enabledSkillIds ?? [])],
       modePromptsEnabled: src.modePromptsEnabled ?? true,
@@ -328,7 +333,7 @@ export function useChatSessions(defaults: SessionDefaults) {
     setActiveByTab(prev => ({ ...prev, [tabId]: sessionId }))
   }, [])
 
-  const update = useCallback((tabId: string, sessionId: string, patch: Partial<Pick<Session, 'agentId' | 'model' | 'mode' | 'effort' | 'label' | 'mcpServerIds' | 'enabledSkillIds' | 'modePromptsEnabled' | 'delegationEnabled' | 'delegationClosedAt' | 'pinned' | 'externalDirectories' | 'initialBranch'>>) => {
+  const update = useCallback((tabId: string, sessionId: string, patch: Partial<Pick<Session, 'agentId' | 'model' | 'mode' | 'crewcoderMode' | 'effort' | 'label' | 'mcpServerIds' | 'enabledSkillIds' | 'modePromptsEnabled' | 'delegationEnabled' | 'delegationClosedAt' | 'pinned' | 'externalDirectories' | 'initialBranch'>>) => {
     if (!tabId) return
     setSessionsByTab(prev => {
       const list = prev[tabId] ?? []

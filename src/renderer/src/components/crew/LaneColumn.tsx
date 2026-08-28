@@ -6,6 +6,7 @@ import { useStickToBottom } from '../../hooks/useStickToBottom'
 import { XTermPane } from '../terminal/XTermPane'
 import { AgentActivityOverlay } from '../thread/AgentActivityOverlay'
 import { latestTodoActivity } from '../thread/todo-from-toolcall'
+import { CREWCODER_APPROVE_PLAN_PROMPT, latestCrewCoderPlanGate } from '../thread/crewcoder-plan-gate'
 import { LaneComposer } from './LaneComposer'
 import { LaneModelButton } from './LaneModelButton'
 import { LaneRunSwitch } from './LaneRunSwitch'
@@ -65,9 +66,10 @@ export function LaneColumn({
   const live    = !!(lane.bridgeId || lane.paneId)
   const usage   = lane.usage
   const todoActivity = latestTodoActivity(messages)
+  const planGate = latestCrewCoderPlanGate(messages)
   // pty lanes render a raw terminal — they have no bridge requests or todo
   // stream, so the dock stays composer-only there.
-  const showActivity = !isPty && !!(agentRequest || todoActivity)
+  const showActivity = !isPty && !!(agentRequest || todoActivity || planGate)
   // pty agents take the lane model as a CLI flag — bridges apply it at spawn,
   // so this is the only place a pty lane's picked model reaches the process.
   const ptyArgv = isPty && lane.model ? ['--model', lane.model] : undefined
@@ -234,6 +236,8 @@ export function LaneColumn({
                 isStreaming={todoActivity?.isStreaming ?? live}
                 request={agentRequest ?? undefined}
                 onRespond={onAgentRequestResponse}
+                planGate={planGate}
+                onApprovePlan={() => onSend(CREWCODER_APPROVE_PLAN_PROMPT)}
               />
             </div>
           )}

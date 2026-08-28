@@ -114,10 +114,9 @@ export interface SettingsState {
   // Native OS notifications can use the platform sound, a restrained CrewCode
   // tone, or remain silent. Custom tones are synthesized without bundled media.
   notificationSound: NotificationSoundId
-  // YuHeard: terminal agent-done alerts. Plays a knock sound (and optionally
-  // an OS notification) when an agent running in a CrewCode PtyPane reports
-  // completion. Disabled by toggling yuheardEnabled off; auto-wrap controls
-  // whether plain shell panes also intercept `claude`/`codex`/etc. commands.
+  // YuHeard: terminal-only agent-done alerts. Plays a knock sound (and
+  // optionally an OS notification) when an agent in a CrewCode PtyPane
+  // finishes a turn. Chat completions keep using notificationSound above.
   yuheardEnabled: boolean
   yuheardAutoWrap: boolean
   // Hide internal reasoning/tool/work-log rows in chat surfaces, leaving the

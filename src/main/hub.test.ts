@@ -1,6 +1,16 @@
+import { homedir, hostname } from 'os'
 import { resolve } from 'path'
 import { describe, expect, it } from 'vitest'
 import { mobileQrTarget, normalizeHubOrigin, parseHubOptions, terminalLink } from './hub'
+import { defaultBrainDataDir } from './hub-machine-enrollment'
+
+const hubDefaults = {
+  localBrain: false,
+  brainDataDir: defaultBrainDataDir(),
+  brainName: hostname(),
+  allowedWorkspaceRoots: [] as string[],
+  allowedScopes: [] as string[],
+}
 
 describe('Hub CLI options', () => {
   it('prints a clickable terminal link with a plain-text fallback', () => {
@@ -15,7 +25,7 @@ describe('Hub CLI options', () => {
   })
 
   it('uses safe loopback defaults', () => {
-    expect(parseHubOptions([], '/tmp')).toMatchObject({ host: '127.0.0.1', port: 3774 })
+    expect(parseHubOptions([], '/tmp')).toMatchObject({ host: '127.0.0.1', port: 3774, ...hubDefaults })
   })
 
   it('parses an explicit network deployment', () => {
@@ -27,7 +37,38 @@ describe('Hub CLI options', () => {
       mobile: false,
       tailscale: false,
       tailscaleReplace: false,
+      ...hubDefaults,
+      brainDataDir: defaultBrainDataDir(),
     })
+  })
+
+  it('parses a local Brain supervisor on the Hub host', () => {
+    expect(parseHubOptions([
+      '--local-brain',
+      '--brain-data-dir', 'brain-state',
+      '--brain-name', 'vps',
+      '--workspace-root', 'projects',
+      '--allow-scope', 'agent',
+      '--allow-scope', 'workspace:read',
+    ], '/tmp')).toEqual({
+      host: '127.0.0.1',
+      port: 3774,
+      dataDir: resolve(homedir(), '.crewcode/hub'),
+      publicOrigin: undefined,
+      mobile: false,
+      tailscale: false,
+      tailscaleReplace: false,
+      localBrain: true,
+      brainDataDir: resolve('/tmp', 'brain-state'),
+      brainName: 'vps',
+      allowedWorkspaceRoots: [resolve('/tmp', 'projects')],
+      allowedScopes: ['agent', 'workspace:read'],
+    })
+  })
+
+  it('refuses Brain flags without --local-brain and scopes without a workspace root', () => {
+    expect(() => parseHubOptions(['--workspace-root', '/tmp/projects'])).toThrow('--local-brain')
+    expect(() => parseHubOptions(['--local-brain', '--allow-scope', 'agent'])).toThrow('--workspace-root')
   })
 
   it('supports Tailscale and generic HTTPS mobile modes', () => {

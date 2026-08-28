@@ -21,4 +21,8 @@ describe('agent activity visibility', () => {
     expect(shouldShowAgentActivity(false, 0, true)).toBe(true)
     expect(shouldShowAgentActivity(false, 2, true)).toBe(true)
   })
+
+  it('always shows CrewCoder plan approval when todo activity is hidden', () => {
+    expect(shouldShowAgentActivity(false, 0, false, true)).toBe(true)
+  })
 })

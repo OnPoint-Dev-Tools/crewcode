@@ -30,6 +30,12 @@ const EMPTY_REQUESTS: AgentUserRequest[] = []
 
 interface BridgeActivityState {
   runningByBridge:   Record<string, boolean>
+  // bridgeId → conversation scope (session id). Lets the workspace drawer and
+  // Mission Control mark a chat Running without waiting for React to commit
+  // the registry's (session, agent) → bridge map. ACP providers that ack a
+  // prompt before the turn finishes (Grok, CrewCoder, Hermes) depend on this.
+  scopeByBridge:     Record<string, string>
+  runningByScope:    Record<string, boolean>
   statusByBridge:    Record<string, string>
   followUpsByBridge: Record<string, QueuedFollowUp[]>
   userRequestsByTab: Record<string, AgentUserRequest[]>
@@ -41,6 +47,8 @@ interface BridgeActivityState {
 
 export const useBridgeActivityStore = create<BridgeActivityState>(() => ({
   runningByBridge:   {},
+  scopeByBridge:     {},
+  runningByScope:    {},
   statusByBridge:    {},
   followUpsByBridge: {},
   userRequestsByTab: {},
@@ -64,6 +72,25 @@ function withoutKeys<T>(map: Record<string, T>, keys: Iterable<string>): Record<
   return changed ? next : null
 }
 
+function runningScopesFrom(
+  runningByBridge: Record<string, boolean>,
+  scopeByBridge: Record<string, string>,
+): Record<string, boolean> {
+  const next: Record<string, boolean> = {}
+  for (const [bridgeId, running] of Object.entries(runningByBridge)) {
+    if (!running) continue
+    const scopeId = scopeByBridge[bridgeId]
+    if (scopeId) next[scopeId] = true
+  }
+  return next
+}
+
+function sameFlagMap(left: Record<string, boolean>, right: Record<string, boolean>): boolean {
+  const leftKeys = Object.keys(left)
+  if (leftKeys.length !== Object.keys(right).length) return false
+  return leftKeys.every(key => left[key] === right[key])
+}
+
 /** Drop every pending request raised by one of `bridgeIds`. */
 function requestsWithoutBridges(
   byTab: Record<string, AgentUserRequest[]>,
@@ -84,14 +111,36 @@ function requestsWithoutBridges(
  * handlers, i.e. outside React's render phase.
  */
 export const bridgeActivity = {
+  /** Remember which chat/session owns this bridge so Running can be keyed by
+   *  scope even before React commits the registry map. */
+  bindScope(bridgeId: string, scopeId: string): void {
+    setState((s) => {
+      if (s.scopeByBridge[bridgeId] === scopeId) return s
+      const scopeByBridge = { ...s.scopeByBridge, [bridgeId]: scopeId }
+      const runningByScope = runningScopesFrom(s.runningByBridge, scopeByBridge)
+      return {
+        scopeByBridge,
+        runningByScope: sameFlagMap(s.runningByScope, runningByScope) ? s.runningByScope : runningByScope,
+      }
+    })
+  },
+
   setRunning(bridgeId: string, running: boolean): void {
     setState((s) => {
+      let runningByBridge = s.runningByBridge
       if (running) {
-        if (s.runningByBridge[bridgeId]) return s
-        return { runningByBridge: { ...s.runningByBridge, [bridgeId]: true } }
+        if (!runningByBridge[bridgeId]) runningByBridge = { ...runningByBridge, [bridgeId]: true }
+      } else {
+        const next = withoutKeys(runningByBridge, [bridgeId])
+        if (next) runningByBridge = next
       }
-      const next = withoutKeys(s.runningByBridge, [bridgeId])
-      return next ? { runningByBridge: next } : s
+      const runningByScope = runningScopesFrom(runningByBridge, s.scopeByBridge)
+      const scopeUnchanged = sameFlagMap(s.runningByScope, runningByScope)
+      if (runningByBridge === s.runningByBridge && scopeUnchanged) return s
+      return {
+        ...(runningByBridge === s.runningByBridge ? null : { runningByBridge }),
+        ...(scopeUnchanged ? null : { runningByScope }),
+      }
     })
   },
 
@@ -178,11 +227,18 @@ export const bridgeActivity = {
     if (ids.length === 0) return
     setState((s) => {
       const running   = withoutKeys(s.runningByBridge, ids)
+      const scopes    = withoutKeys(s.scopeByBridge, ids)
       const status    = withoutKeys(s.statusByBridge, ids)
       const followUps = withoutKeys(s.followUpsByBridge, ids)
-      if (!running && !status && !followUps) return s
+      const nextRunning = running ?? s.runningByBridge
+      const nextScopes = scopes ?? s.scopeByBridge
+      const runningByScope = runningScopesFrom(nextRunning, nextScopes)
+      const scopeUnchanged = sameFlagMap(s.runningByScope, runningByScope)
+      if (!running && !scopes && !status && !followUps && scopeUnchanged) return s
       return {
         ...(running   ? { runningByBridge:   running }   : null),
+        ...(scopes    ? { scopeByBridge:     scopes }    : null),
+        ...(scopeUnchanged ? null : { runningByScope }),
         ...(status    ? { statusByBridge:    status }    : null),
         ...(followUps ? { followUpsByBridge: followUps } : null),
       }
@@ -239,7 +295,15 @@ export const bridgeActivity = {
 
   /** Test-only. */
   reset(): void {
-    setState({ runningByBridge: {}, statusByBridge: {}, followUpsByBridge: {}, userRequestsByTab: {}, custodyHaltsByTab: {} })
+    setState({
+      runningByBridge: {},
+      scopeByBridge: {},
+      runningByScope: {},
+      statusByBridge: {},
+      followUpsByBridge: {},
+      userRequestsByTab: {},
+      custodyHaltsByTab: {},
+    })
   },
 }
 
@@ -271,6 +335,10 @@ export function useUserRequestsByTab(): Record<string, AgentUserRequest[]> {
 
 export function useRunningByBridge(): Record<string, boolean> {
   return useBridgeActivityStore((s) => s.runningByBridge)
+}
+
+export function useRunningByScope(): Record<string, boolean> {
+  return useBridgeActivityStore((s) => s.runningByScope)
 }
 
 export function useCustodyHalt(tabId: string): CustodyHaltPayload | null {

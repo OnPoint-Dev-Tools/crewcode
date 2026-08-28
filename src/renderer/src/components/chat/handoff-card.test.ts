@@ -16,10 +16,23 @@ describe('provider context handoff destination', () => {
     expect(card).toContain("useState<'new' | 'used'>('new')")
     expect(card).toContain('role="tablist"')
     expect(card).toContain('>New chat</button>')
-    expect(card).toContain('>Used chats <span>{targetSessions.length}</span></button>')
+    expect(card).toContain('>Chats <span>{targetSessions.length}</span></button>')
     expect(card).toContain("destinationTab === 'used'")
     expect(card).toContain('targetSessions.map(session =>')
     expect(styles).toContain('.handoff-card-tabs {')
+  })
+
+  it('uses the workspace Sessions catalogue and the destination owner tab', () => {
+    expect(pane).toContain('sessions={workspaceSessions}')
+    expect(pane).toContain('workspaceSessions.find(session => session.id === selection.targetSessionId)')
+    expect(pane).toContain('chatSessions.activate(target.tabId, target.id)')
+    expect(pane).toContain('const targetPath = resolveHandoffSessionPath(target)')
+  })
+
+  it('closes the card as soon as either destination transfer starts', () => {
+    expect(pane).toContain('setHandoffBusy(true)\n    setHandoffError(null)\n    setHandoffOpen(false)')
+    expect(pane).not.toContain('if (result.ok) setHandoffOpen(false)')
+    expect(pane).toContain("message: result.ok ? 'handoff complete' : (result.error ?? 'handoff failed')")
   })
 
   it('requires a selected used chat before enabling handoff', () => {

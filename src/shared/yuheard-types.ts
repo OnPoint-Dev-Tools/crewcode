@@ -73,3 +73,47 @@ export const YUHEARD_STATES: readonly YuHeardState[] = ['running', 'complete']
 export function isYuHeardState(value: unknown): value is YuHeardState {
   return value === 'running' || value === 'complete'
 }
+
+/** Agent binaries the auto-wrap shim should intercept. Ids and common
+ *  command names, independent of which providers are enabled as chat
+ *  connections — typing `codex` in a shell must wrap even when Codex
+ *  is not the default chat agent. */
+/** Solo/Crew chat tabs have their own notification path. YuHeard is only
+ *  for terminal tabs (and canvas terminal panes whose tab kind is unknown). */
+export function tabKindAllowsYuHeard(kind: string | undefined): boolean {
+  return kind !== 'chat' && kind !== 'crew'
+}
+
+export const YUHEARD_WRAP_COMMANDS = [
+  'claude',
+  'codex',
+  'opencode',
+  'opencode-cli',
+  'grok',
+  'hermes',
+  'pi',
+  'crewcoder',
+  'ollama',
+] as const
+
+/** Flags the renderer sends on `ptyCreate` so main can wrap/idle-detect. */
+export function yuheardPtySpawnFlags(opts: {
+  tabKind?: string
+  shell?: string
+  agentId?: string | null
+  autoWrapEnabled: boolean
+}): {
+  yuheard: boolean
+  autoWrap: boolean
+  wrapAgentIds: string[]
+  agentId: string | null
+} {
+  const yuheard = tabKindAllowsYuHeard(opts.tabKind)
+  const wrapAgentIds = opts.autoWrapEnabled && yuheard ? [...YUHEARD_WRAP_COMMANDS] : []
+  return {
+    yuheard,
+    autoWrap: opts.autoWrapEnabled && yuheard && opts.shell !== 'ssh',
+    wrapAgentIds,
+    agentId: opts.agentId ?? null,
+  }
+}

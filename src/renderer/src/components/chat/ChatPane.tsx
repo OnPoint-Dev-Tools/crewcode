@@ -16,6 +16,7 @@ import { useGitSidebar, type GitAuthCredentials, type GitAuthRequest, type GitSi
 import { MODE_FROM_SETTINGS, MODE_TO_LEVEL, normalizeModeLevel } from '../../app-constants'
 import { titleFromFirstMessage } from '../../hooks/useChatSessions'
 import { useComposerSend } from '../../hooks/useComposerSend'
+import { useMobileLayout } from '../../hooks/useMobileLayout'
 import { useSessionDelegation } from '../../hooks/useSessionDelegation'
 import { canSessionDelegate } from '../../hooks/delegation-eligibility'
 import { describeProviders } from '../../hooks/delegation-provider-selection'
@@ -26,7 +27,7 @@ import { bridgeActivity, useBridgeStatus, useCustodyHalt, useIsBridgeRunning, us
 import { useAppliedSkillsBySession } from '../../hooks/useAppliedSkillsBySession'
 import { useAppliedModesBySession } from '../../hooks/useAppliedModesBySession'
 import { orchestrationAgents } from '../../terminal-only-agents'
-import type { AgentInfo, ChatAttachment, GitHubStatus, Message, ModeLevel, Workspace } from '../../types'
+import type { AgentInfo, ChatAttachment, GitHubStatus, Message, ModeLevel, Session, Workspace } from '../../types'
 import type { RegisteredPluginChatHeaderItem, RegisteredPluginGitLens, RegisteredPluginTerminalWatcher } from '../../../../shared/plugin-types'
 import type { CustomCommand, Prompt, Skill } from '../../types/prompts'
 import type { Mode } from '../composer/ModeSegment'
@@ -36,6 +37,8 @@ import { resolveSessionMcpServers } from '../../hooks/session-mcp-selection'
 import { useVoiceSessionController } from '../../hooks/useVoiceSessionController'
 import { getCrewCodeClient } from '../../runtime/crewcode-client'
 import { isCrewLaneSessionKey } from '../../../../shared/custody-types'
+import { isSessionDrag, readSessionDrag, type SessionDragPayload } from '../thread/session-drag'
+import { crewCoderProfileLocksExecutionMode, type CrewCoderMode } from '../../../../shared/crewcoder-types'
 
 type CrewBranchWithMessagesProps = Omit<React.ComponentProps<typeof CrewBranch>, 'messagesByTab'>
 
@@ -58,6 +61,12 @@ interface ChatPaneProps {
   worktreeBranch?: string | null
   agents: AgentInfo[]
   chatSessions: any
+  /** Live chats shown in the selected workspace's Sessions list. */
+  workspaceSessions: Session[]
+  /** Resolve the destination chat's own worktree instead of reusing the source cwd. */
+  resolveHandoffSessionPath: (session: Session) => string
+  /** Reveal the destination through the canonical workspace/session navigation path. */
+  onHandoffDestinationActivate: (session: Session) => void
   bridges: any
   pty: any
   crewSession?: any | null
@@ -128,6 +137,11 @@ interface ChatPaneProps {
   freshChat?: { kicker?: string; title: string; body: string; suggestions: string[] }
   /** Refresh App-owned worktree metadata before selecting a newly-created worktree. */
   onWorktreesChanged?: () => void | Promise<void>
+  /** Pin this pane to a session without changing the owner tab's active session. */
+  pinnedSessionId?: string
+  /** Layout/PTY/git identity when this pane is a split viewport of another tab. */
+  surfaceTabId?: string
+  onSessionDrop?: (payload: SessionDragPayload) => void
 }
 
 export function ChatPane({
@@ -139,6 +153,9 @@ export function ChatPane({
   worktreeBranch,
   agents,
   chatSessions,
+  workspaceSessions,
+  resolveHandoffSessionPath,
+  onHandoffDestinationActivate,
   bridges,
   pty,
   crewSession,
@@ -195,10 +212,15 @@ export function ChatPane({
   onPluginTerminalWatcher,
   freshChat,
   onWorktreesChanged,
+  pinnedSessionId,
+  surfaceTabId,
+  onSessionDrop,
 }: ChatPaneProps) {
+  const { isMobile } = useMobileLayout()
   // Draft lives in an isolated store keyed by this tab. Typing re-renders only
   // this pane, not App (and therefore not sibling Workbench panes).
-  const [composer, setComposer] = useComposerDraft(tabId)
+  const layoutTabId = surfaceTabId ?? tabId
+  const [composer, setComposer] = useComposerDraft(pinnedSessionId ?? layoutTabId)
   const [fallbackTermWidth, setFallbackTermWidth] = useState(360)
   const termWidth = externalTermWidth ?? fallbackTermWidth
   const setTermWidth = externalSetTermWidth ?? setFallbackTermWidth
@@ -240,7 +262,10 @@ export function ChatPane({
 
   useEffect(() => { chatSessions.ensureTab(tabId, workspace.name) }, [tabId, workspace.name])
 
-  const activeSession = chatSessions.getActiveSession(tabId)
+  const ownerSessions = chatSessions.getSessions(tabId)
+  const activeSession = pinnedSessionId
+    ? ownerSessions.find((session: { id: string }) => session.id === pinnedSessionId) ?? chatSessions.getActiveSession(tabId)
+    : chatSessions.getActiveSession(tabId)
   const sessActive = activeSession?.id ?? tabId
   const sessionEnabledSkillIds = activeSession?.enabledSkillIds ?? []
   const sessionSkills = useMemo(() => {
@@ -260,7 +285,9 @@ export function ChatPane({
     return skills.map(skill => ({ ...skill, enabled: activeIds.has(skill.id) }))
   }, [sessionEnabledSkillIds, skills])
   const toggleSessionSkill = useCallback((id: string) => {
-    const current = chatSessions.getActiveSession(tabId)
+    const current = pinnedSessionId
+      ? chatSessions.getSessions(tabId).find((session: { id: string }) => session.id === pinnedSessionId)
+      : chatSessions.getActiveSession(tabId)
     if (!current) return
     const ids = current.enabledSkillIds ?? []
     const enabled = !ids.includes(id)
@@ -268,7 +295,7 @@ export function ChatPane({
       enabledSkillIds: enabled ? [...ids, id] : ids.filter((skillId: string) => skillId !== id),
     })
     onToggleSkillEnabled?.(id)
-  }, [chatSessions, onToggleSkillEnabled, tabId])
+  }, [chatSessions, onToggleSkillEnabled, pinnedSessionId, tabId])
   // Subscribe only to this session's scope. Hidden chat streams update other
   // scope arrays, so they no longer re-render the visible thread mid-scroll.
   const messages = useMessagesForScope(sessActive)
@@ -277,15 +304,19 @@ export function ChatPane({
   const activeAgentId = activeSession?.agentId ?? settingsDefaultAgent ?? 'pi'
   const model = activeSession?.model ?? ''
   const effort = (activeSession?.effort ?? 'medium') as EffortLevel
-  const modeLevel = normalizeModeLevel(activeSession?.mode ?? settingsDefaultMode)
+  const crewcoderMode = activeSession?.crewcoderMode
+  const crewCoderProfileActive = crewCoderProfileLocksExecutionMode(activeAgentId, crewcoderMode)
+  const modeLevel = crewCoderProfileActive ? 'build' : normalizeModeLevel(activeSession?.mode ?? settingsDefaultMode)
   const composerMode: Mode = MODE_FROM_SETTINGS[modeLevel] ?? 'Build'
-  const tabPanes = useMemo(() => pty.panes.filter((p: any) => p.tabId === tabId), [pty.panes, tabId])
+  const tabPanes = useMemo(() => pty.panes.filter((p: any) => p.tabId === layoutTabId), [layoutTabId, pty.panes])
   const [terminalHidden, setTerminalHidden] = useState(false)
   const [sendInFlight, setSendInFlight] = useState(false)
   const [externalDirsMode, setExternalDirsMode] = useState<'add' | 'remove' | null>(null)
   const [handoffOpen, setHandoffOpen] = useState(false)
   const [handoffBusy, setHandoffBusy] = useState(false)
   const [handoffError, setHandoffError] = useState<string | null>(null)
+  const [sessionDropActive, setSessionDropActive] = useState(false)
+  const sessionDropDepth = useRef(0)
   const [changesDrawerTarget, setChangesDrawerTarget] = useState<TurnChangeTarget | null>(null)
   const openHandoff = useCallback(() => {
     setHandoffError(null)
@@ -304,16 +335,16 @@ export function ChatPane({
   }, [controlledTerminalVisibility, onTerminalColumnVisibleChange])
   const openTerminalForPath = useCallback((path: string) => {
     setTerminalVisible(true)
-    pty.addShell(activeWs, tabId, path, terminalShell)
-  }, [activeWs, pty, setTerminalVisible, tabId, terminalShell])
+    pty.addShell(activeWs, layoutTabId, path, terminalShell)
+  }, [activeWs, layoutTabId, pty, setTerminalVisible, terminalShell])
   const openHeaderTerminal = useCallback(() => {
     if (terminalVisible) {
       setTerminalVisible(false)
       return
     }
     setTerminalVisible(true)
-    if (tabPanes.length === 0) pty.ensurePane(tabId, activeWs, effectivePath, terminalShell)
-  }, [activeWs, effectivePath, pty, setTerminalVisible, tabId, tabPanes.length, terminalShell, terminalVisible])
+    if (tabPanes.length === 0) pty.ensurePane(layoutTabId, activeWs, effectivePath, terminalShell)
+  }, [activeWs, effectivePath, layoutTabId, pty, setTerminalVisible, tabPanes.length, terminalShell, terminalVisible])
   const activeAgentPane = useMemo(() =>
     [...tabPanes].reverse().find((p: any) => p.agentId === activeAgentId) ?? null,
     [tabPanes, activeAgentId],
@@ -344,9 +375,17 @@ export function ChatPane({
     chatSessions.update(tabId, sessActive, { effort: e })
   }, [tabId, sessActive, chatSessions])
 
-  const setComposerMode = useCallback((m: Mode) => {
-    chatSessions.update(tabId, sessActive, { mode: MODE_TO_LEVEL[m] })
+  const setCrewCoderMode = useCallback((nextMode: CrewCoderMode | undefined) => {
+    chatSessions.update(tabId, sessActive, {
+      crewcoderMode: nextMode,
+      ...(nextMode ? { mode: 'build' as const } : {}),
+    })
   }, [tabId, sessActive, chatSessions])
+
+  const setComposerMode = useCallback((m: Mode) => {
+    if (crewCoderProfileActive) return
+    chatSessions.update(tabId, sessActive, { mode: MODE_TO_LEVEL[m] })
+  }, [tabId, sessActive, chatSessions, crewCoderProfileActive])
 
   const selectedMcpIds = activeSession?.mcpServerIds ?? []
   const onToggleMcp = useCallback((id: string) => {
@@ -415,6 +454,7 @@ export function ChatPane({
     activeAgentId,
     model,
     effort,
+    crewcoderMode,
     mode: modeLevel,
     effectivePath,
     bridges,
@@ -556,7 +596,7 @@ export function ChatPane({
     const sourceSession = activeSession
     let target = selection.targetSessionId === 'new'
       ? chatSessions.add(tabId, `Handoff from ${sourceSession.label}`)
-      : chatSessions.getSessions(tabId).find((session: any) => session.id === selection.targetSessionId) ?? null
+      : workspaceSessions.find(session => session.id === selection.targetSessionId) ?? null
     if (!target) {
       setHandoffError('Unable to create or find the destination chat.')
       return
@@ -577,9 +617,11 @@ export function ChatPane({
       message: 'summarizing context for destination chat', percent: 35,
       fromProvider: sourceSession.agentId, toProvider: target.agentId,
     }])
-    chatSessions.activate(tabId, target.id)
     setHandoffBusy(true)
     setHandoffError(null)
+    setHandoffOpen(false)
+    chatSessions.activate(target.tabId, target.id)
+    onHandoffDestinationActivate(target)
 
     const targetAgent = agents.find(agent => agent.id === target!.agentId)
     if (!targetAgent || targetAgent.transport !== 'bridge') {
@@ -587,13 +629,13 @@ export function ChatPane({
         ? { ...message, status: 'failed', message: 'destination provider does not support chat handoff', percent: 100 }
         : message))
       setHandoffBusy(false)
-      setHandoffError('The destination provider does not support bridge context handoff.')
       return
     }
 
     const targetMcp = resolveSessionMcpServers(mcpEnabled, mcpServers, target.mcpServerIds)
+    const targetPath = resolveHandoffSessionPath(target)
     const started = await bridges.ensureBridge(
-      target.id, target.agentId, target.agentId, effectivePath, target.model || undefined,
+      target.id, target.agentId, target.agentId, targetPath, target.model || undefined,
       target.effort, normalizeModeLevel(target.mode), undefined, false, targetMcp, true, target.externalDirectories ?? [],
     )
     let result: { ok: boolean; error?: string }
@@ -609,12 +651,10 @@ export function ChatPane({
     })
 
     setMessagesForTab(target.id, prev => prev.map(message => message.kind === 'handoff' && message.id === handoffId
-      ? { ...message, status: result.ok ? 'completed' : 'failed', message: result.ok ? 'handoff complete' : 'handoff failed', percent: 100 }
+      ? { ...message, status: result.ok ? 'completed' : 'failed', message: result.ok ? 'handoff complete' : (result.error ?? 'handoff failed'), percent: 100 }
       : message))
     setHandoffBusy(false)
-    if (result.ok) setHandoffOpen(false)
-    else setHandoffError(result.error ?? 'Context handoff failed.')
-  }, [activeSession, agents, bridges, chatSessions, effectiveBranch, effectivePath, handoffBusy, mcpEnabled, mcpServers, setMessagesForTab, tabId, workspace.name, worktreeBranch])
+  }, [activeSession, agents, bridges, chatSessions, effectiveBranch, effectivePath, handoffBusy, mcpEnabled, mcpServers, onHandoffDestinationActivate, resolveHandoffSessionPath, setMessagesForTab, tabId, workspace.name, workspaceSessions, worktreeBranch])
 
   // A custom slash-command fires the moment it is picked. While the agent is
   // running the body is queued as a follow-up (mirroring composer send); idle,
@@ -732,8 +772,36 @@ export function ChatPane({
     )
   }
 
+  const acceptSessionDrag = useCallback((event: React.DragEvent) => {
+    if (!onSessionDrop || !isSessionDrag(event.dataTransfer.types)) return false
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'copy'
+    return true
+  }, [onSessionDrop])
+
   return (
-    <div className="chat-pane-row">
+    <div
+      className={`chat-pane-row${sessionDropActive ? ' session-drop-target' : ''}`}
+      onDragEnter={event => {
+        if (!onSessionDrop || !isSessionDrag(event.dataTransfer.types)) return
+        sessionDropDepth.current += 1
+        setSessionDropActive(true)
+      }}
+      onDragOver={event => { acceptSessionDrag(event) }}
+      onDragLeave={() => {
+        sessionDropDepth.current = Math.max(0, sessionDropDepth.current - 1)
+        if (sessionDropDepth.current === 0) setSessionDropActive(false)
+      }}
+      onDrop={event => {
+        sessionDropDepth.current = 0
+        setSessionDropActive(false)
+        if (!onSessionDrop) return
+        const payload = readSessionDrag(event.dataTransfer)
+        if (!payload) return
+        event.preventDefault()
+        onSessionDrop(payload)
+      }}
+    >
       <div
         className={`main ${terminalVisible ? '' : 'no-term'}`}
         style={{ ['--term-width' as any]: `${termWidth}px` }}
@@ -793,6 +861,8 @@ export function ChatPane({
             setModel={setModel}
             effort={effort}
             setEffort={setEffort}
+            crewcoderMode={crewcoderMode}
+            setCrewCoderMode={setCrewCoderMode}
             delegationEnabled={delegation.enabled}
             onToggleDelegation={canSessionDelegate(activeSession) ? toggleDelegation : undefined}
             modePromptsEnabled={modePromptsEnabled}
@@ -844,18 +914,20 @@ export function ChatPane({
             <TermColumn
               panes={tabPanes}
               agents={agents}
+              tabKind={crewSession ? 'crew' : 'chat'}
               onClose={pty.close}
-              onAddShell={() => pty.addShell(activeWs, tabId, effectivePath)}
+              onAddShell={() => pty.addShell(activeWs, layoutTabId, effectivePath)}
               onAddAgent={(agentId) => {
                 const a = agents.find(x => x.id === agentId)
-                return a ? pty.addAgent(activeWs, tabId, a.id, a.name, effectivePath, a.path) : undefined
+                return a ? pty.addAgent(activeWs, layoutTabId, a.id, a.name, effectivePath, a.path) : undefined
               }}
-              onAddSsh={(target) => pty.addSsh(activeWs, tabId, target, effectivePath)}
+              onAddSsh={(target) => pty.addSsh(activeWs, layoutTabId, target, effectivePath)}
               layout={termLayout}
               onLayoutChange={onTermLayoutChange}
               onOpenUrl={(url) => onOpenBrowser?.(url)}
               pluginTerminalWatchers={pluginTerminalWatchers}
               onPluginTerminalWatcher={onPluginTerminalWatcher}
+              onSessionDrop={onSessionDrop}
             />
           </>
         )}
@@ -863,7 +935,7 @@ export function ChatPane({
       <HandoffCard
         open={handoffOpen}
         sourceSessionId={sessActive}
-        sessions={chatSessions.getSessions(tabId)}
+        sessions={workspaceSessions}
         agents={chatAgents}
         defaultProvider={activeAgentId}
         defaultModel={model}
@@ -901,10 +973,13 @@ export function ChatPane({
       />
       {gitOpen && (
         <>
-          <Splitter
-            orientation="vertical"
-            onDrag={delta => setGitWidth(w => Math.max(280, Math.min(720, w - delta)))}
-          />
+          {isMobile && <button type="button" className="mobile-git-backdrop" aria-label="Close Git sidebar" onClick={() => setGitOpen(false)} />}
+          {!isMobile && (
+            <Splitter
+              orientation="vertical"
+              onDrag={delta => setGitWidth(w => Math.max(280, Math.min(720, w - delta)))}
+            />
+          )}
           <GitSidebar
             workspace={{
               name:   workspace.name,
@@ -919,6 +994,7 @@ export function ChatPane({
             onOpenTerminal={openTerminalForPath}
             pluginGitLenses={pluginGitLenses}
             onPluginGitLens={onPluginGitLens}
+            onClose={isMobile ? () => setGitOpen(false) : undefined}
           />
         </>
       )}

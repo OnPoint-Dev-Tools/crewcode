@@ -8,13 +8,14 @@
 import { describe, it, expect, vi } from 'vitest'
 import { YuHeardServer, type YuHeardPaneRegistry } from './yuheard-server'
 
-function makeRegistry(panes: Record<string, { cwd?: string; agentId?: string | null; createdAt?: number }> = {}): YuHeardPaneRegistry {
+function makeRegistry(panes: Record<string, { cwd?: string; agentId?: string | null; createdAt?: number; yuheard?: boolean }> = {}): YuHeardPaneRegistry {
   return {
     hasPane: id => id in panes,
     getPaneCwd: id => panes[id]?.cwd,
     getPaneAgentId: id => panes[id]?.agentId ?? null,
     getPaneCreatedAt: id => panes[id]?.createdAt,
     listPaneIds: () => Object.keys(panes),
+    isYuHeardEligible: id => panes[id]?.yuheard !== false,
   }
 }
 
@@ -128,6 +129,25 @@ describe('yuheard-server.processLine', () => {
     const r = srv.processLine(JSON.stringify({ method: 'pane-id-lookup' }))
     expect(r).toEqual({ ok: false, error: 'missing-cwd' })
   })
+
+  it('does not apply reports or cwd-lookup for chat sidecar panes', () => {
+    const panes = {
+      'chat-side': { cwd: '/home/me/proj', createdAt: 9000, yuheard: false },
+      'term': { cwd: '/home/me/proj', createdAt: 1000, yuheard: true },
+    }
+    const registry = makeRegistry(panes)
+    const emit = vi.fn()
+    const srv = new YuHeardServer({ registry, emit, socketPath: '/tmp/none' })
+    expect(srv.processLine(JSON.stringify({ pane_id: 'chat-side', state: 'complete', ts: 1 }))).toMatchObject({
+      ok: false,
+      error: 'unknown-pane',
+    })
+    expect(emit).not.toHaveBeenCalled()
+    expect(srv.processLine(JSON.stringify({ method: 'pane-id-lookup', cwd: '/home/me/proj' }))).toEqual({
+      ok: true,
+      paneId: 'term',
+    })
+  })
 })
 
 describe('yuheard-server.process lifecycle', () => {
@@ -168,5 +188,47 @@ describe('yuheard-server.process lifecycle', () => {
     expect(srv.shouldAutoComplete('pn-1')).toBe(true)
     srv.notePaneClosed('pn-1')
     expect(srv.shouldAutoComplete('pn-1')).toBe(false)
+    expect(srv.isSessionActive('pn-1')).toBe(false)
+  })
+
+  it('noteSessionRunning arms idle watch without emitting', () => {
+    const emit = vi.fn()
+    const srv = new YuHeardServer({ registry: REGISTRY, emit, socketPath: '/tmp/none' })
+    srv.notePaneSpawned('pn-2', '/home/me/proj')
+    srv.noteSessionRunning('pn-2')
+    expect(srv.isSessionActive('pn-2')).toBe(true)
+    expect(srv.shouldAutoComplete('pn-2')).toBe(true)
+    expect(emit).not.toHaveBeenCalled()
+  })
+
+  it('keeps the session active after complete so later turns can idle-notify', () => {
+    const srv = new YuHeardServer({ registry: REGISTRY, emit: vi.fn(), socketPath: '/tmp/none' })
+    srv.processLine(JSON.stringify({ pane_id: 'pn-1', state: 'running', ts: 1 }))
+    expect(srv.isSessionActive('pn-1')).toBe(true)
+    srv.processLine(JSON.stringify({ pane_id: 'pn-1', state: 'complete', ts: 2 }))
+    expect(srv.isSessionActive('pn-1')).toBe(true)
+    expect(srv.shouldAutoComplete('pn-1')).toBe(false)
+  })
+
+  it('accepts process-exit complete after the live registry has dropped the pane', () => {
+    const panes: Record<string, { cwd?: string }> = { 'pn-1': { cwd: '/home/me/proj' } }
+    const registry = makeRegistry(panes)
+    const emit = vi.fn()
+    const srv = new YuHeardServer({ registry, emit, socketPath: '/tmp/none' })
+    srv.notePaneSpawned('pn-1', '/home/me/proj')
+    srv.processLine(JSON.stringify({ pane_id: 'pn-1', state: 'running', ts: 1 }))
+    delete panes['pn-1']
+    const r = srv.reportYuHeardFromProcess({
+      pane_id: 'pn-1',
+      state: 'complete',
+      source: 'auto-wrap-exit',
+      ts: 2,
+    })
+    expect(r).toBe('applied')
+    expect(emit).toHaveBeenCalledWith(expect.objectContaining({
+      paneId: 'pn-1',
+      state: 'complete',
+      source: 'auto-wrap-exit',
+    }))
   })
 })

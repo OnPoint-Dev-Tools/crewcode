@@ -119,6 +119,7 @@ describe('useBridgeRegistry navigation keepalive', () => {
 
     act(() => hook.result.current.releaseTab('sess-1'))
     expect(bridgeStop).not.toHaveBeenCalled()
+    expect(hook.result.current.isBridgeRunning('sess-1', 'pi')).toBe(true)
 
     await act(async () => {
       start.resolve({ ok: true })
@@ -178,9 +179,11 @@ describe('useBridgeRegistry navigation keepalive', () => {
       await hook.result.current.prompt(bridgeId, 'keep working')
     })
     expect(hook.result.current.isBridgeRunning('sess-1', 'claude')).toBe(true)
+    expect(useBridgeActivityStore.getState().runningByScope['sess-1']).toBe(true)
 
     act(() => emitEvent({ type: 'turn_end', bridgeId, turnId: 'turn-1' }))
     expect(hook.result.current.isBridgeRunning('sess-1', 'claude')).toBe(false)
+    expect(useBridgeActivityStore.getState().runningByScope['sess-1']).toBeUndefined()
 
     hook.unmount()
   })

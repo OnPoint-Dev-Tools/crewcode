@@ -17,6 +17,8 @@ import { chatSessionSurface } from '../../hooks/chat-session-tab-owner'
 import { workspaceDisplayPath } from './workspace-display-path'
 import { isCompletedChatShortcutVisible } from './completed-chat-expiry'
 import { pinnedSessionsFirst } from './pinned-session-order'
+import { useRunningByScope } from '../../stores/bridge-activity-store'
+import { liveSessionAgentStatus, liveWorkingChats } from './working-chats'
 
 // App-tab feature list. Icons mirror the brand AppMenu so the two routes to
 // these destinations read identically.
@@ -205,6 +207,15 @@ export function WorkspacesDrawer({
   const now = useNow()
   // Only this drawer re-renders on background terminal output, not the App shell.
   const unreadByPane = useUnreadByPane()
+  const runningByScope = useRunningByScope()
+  const liveStatus = liveSessionAgentStatus(sessionAgentStatus, sessionsByWorkspace, runningByScope)
+  const liveWorking = liveWorkingChats(workspaces, sessionsByWorkspace, runningByScope, workingChats)
+  const liveWorkspaceStatus = { ...workspaceAgentStatus }
+  for (const workspace of workspaces) {
+    if ((sessionsByWorkspace[workspace.id] ?? []).some(session => runningByScope[session.id])) {
+      liveWorkspaceStatus[workspace.id] = 'working'
+    }
+  }
 
   useEffect(() => {
     window.electronAPI?.appHomePath().then(setHomePath).catch(() => setHomePath(''))
@@ -392,7 +403,7 @@ export function WorkspacesDrawer({
           <WorkspaceRow
             ws={ws}
             active={ws.id === active}
-            agentActivity={workspaceAgentStatus[ws.id]}
+            agentActivity={liveWorkspaceStatus[ws.id]}
             displayPath={workspaceDisplayPath(ws.path, homePath)}
             onClick={() => {
               setActive(ws.id)
@@ -460,9 +471,10 @@ export function WorkspacesDrawer({
             }}
             onRemove={removeSession}
             onRowContextMenu={openSessionCtx(wsSessions)}
-            sessionActivity={sessionAgentStatus}
+            sessionActivity={liveStatus}
             sessionCompletedAt={sessionCompletedAt}
             now={now}
+            draggable={!mobileOverlay}
           />
         </div>
 
@@ -483,9 +495,10 @@ export function WorkspacesDrawer({
                 onActivate={activateSession}
                 onRemove={removeSession}
                 onRowContextMenu={openSessionCtx(wsSessions)}
-                sessionActivity={sessionAgentStatus}
+                sessionActivity={liveStatus}
                 sessionCompletedAt={sessionCompletedAt}
                 now={now}
+                draggable={!mobileOverlay}
               />
             </div>
           </Section>
@@ -575,8 +588,8 @@ export function WorkspacesDrawer({
             {(() => {
               const q = query.toLowerCase()
               const working = q
-                ? workingChats.filter(c => `${c.label} ${c.wsName} ${c.agentId}`.toLowerCase().includes(q))
-                : workingChats
+                ? liveWorking.filter(c => `${c.label} ${c.wsName} ${c.agentId}`.toLowerCase().includes(q))
+                : liveWorking
               const unexpiredChats = completedChats.filter(c =>
                 isCompletedChatShortcutVisible(c.completedAt, now),
               )
@@ -683,8 +696,8 @@ export function WorkspacesDrawer({
                                 <span className="ws-path">{c.wsName} · {c.agentId}</span>
                               </span>
                               <span className="ws-meta">
-                                {sessionAgentStatus[c.sessionId] && (
-                                  <AgentActivityIndicator state={sessionAgentStatus[c.sessionId]} size={12} />
+                                {liveStatus[c.sessionId] && (
+                                  <AgentActivityIndicator state={liveStatus[c.sessionId]} size={12} />
                                 )}
                                 {c.completedAt && (
                                   <span className="ws-elapsed" title="completed">

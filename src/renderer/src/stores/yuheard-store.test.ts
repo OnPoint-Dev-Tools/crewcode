@@ -30,11 +30,24 @@ vi.mock('../hooks/useSettings', () => ({
 
 import { useYuHeardStore } from './yuheard-store'
 
-function installDom({ hasFocus = false }: { hasFocus?: boolean } = {}) {
+function installDom({ hasFocus = false, focusedPaneId }: { hasFocus?: boolean; focusedPaneId?: string } = {}) {
+  class MockElement {
+    constructor(private readonly paneId?: string) {}
+    closest(selector: string) {
+      if (selector !== '[data-yuheard-pane-id]' || !this.paneId) return null
+      return {
+        getAttribute: (name: string) => name === 'data-yuheard-pane-id' ? this.paneId! : null,
+      }
+    }
+  }
   vi.stubGlobal('window', {
     electronAPI: { notify },
   })
-  vi.stubGlobal('document', { hasFocus: () => hasFocus })
+  vi.stubGlobal('Element', MockElement)
+  vi.stubGlobal('document', {
+    hasFocus: () => hasFocus,
+    activeElement: focusedPaneId ? new MockElement(focusedPaneId) : null,
+  })
 }
 
 beforeEach(() => {
@@ -63,7 +76,7 @@ describe('useYuHeardStore.applyReport', () => {
     useYuHeardStore.getState().applyReport({ paneId: 'pn-1', state: 'complete', message: 'all done', source: 'claude-hook', at: 1 })
     expect(playSound).toHaveBeenCalledWith('knock')
     expect(notify).toHaveBeenCalledWith(expect.objectContaining({
-      title: 'Agent finished',
+      title: 'Terminal agent finished',
       body: 'all done',
       scopeId: 'pane:pn-1',
       silent: true,
@@ -75,6 +88,28 @@ describe('useYuHeardStore.applyReport', () => {
     useYuHeardStore.getState().applyReport({ paneId: 'pn-1', state: 'complete', message: null, source: 'claude-hook', at: 1 })
     expect(playSound).toHaveBeenCalledWith('knock')
     expect(notify).not.toHaveBeenCalled()
+  })
+
+  it('suppresses every alert when the exact completing terminal has keyboard focus', () => {
+    installDom({ hasFocus: true, focusedPaneId: 'pn-1' })
+    useYuHeardStore.getState().applyReport({ paneId: 'pn-1', state: 'complete', message: null, source: 'claude-hook', at: 1 })
+    expect(playSound).not.toHaveBeenCalled()
+    expect(notify).not.toHaveBeenCalled()
+    expect(useYuHeardStore.getState().lastNotifiedAt['pn-1']).toBeGreaterThan(0)
+  })
+
+  it('still alerts when a different terminal has keyboard focus', () => {
+    installDom({ hasFocus: true, focusedPaneId: 'pn-2' })
+    useYuHeardStore.getState().applyReport({ paneId: 'pn-1', state: 'complete', message: null, source: 'claude-hook', at: 1 })
+    expect(playSound).toHaveBeenCalledWith('knock')
+    expect(notify).not.toHaveBeenCalled()
+  })
+
+  it('alerts when the window is unfocused even if xterm remains the active DOM element', () => {
+    installDom({ hasFocus: false, focusedPaneId: 'pn-1' })
+    useYuHeardStore.getState().applyReport({ paneId: 'pn-1', state: 'complete', message: null, source: 'claude-hook', at: 1 })
+    expect(playSound).toHaveBeenCalledWith('knock')
+    expect(notify).toHaveBeenCalled()
   })
 
   it('plays knock but skips the OS notify when nativeNotifications is off', () => {
@@ -91,9 +126,15 @@ describe('useYuHeardStore.applyReport', () => {
     expect(notify).not.toHaveBeenCalled()
   })
 
+  it('ignores leftover bridge-sourced completes so solo chat is not double-notified', () => {
+    useYuHeardStore.getState().applyReport({ paneId: 'chat:tab-1', state: 'complete', message: 'hi', source: 'bridge', at: 1 })
+    expect(playSound).not.toHaveBeenCalled()
+    expect(notify).not.toHaveBeenCalled()
+  })
+
   it('dedupes two complete reports for the same pane within 500ms', () => {
     useYuHeardStore.getState().applyReport({ paneId: 'pn-1', state: 'complete', message: 'first', source: 'cli', at: 1 })
-    useYuHeardStore.getState().applyReport({ paneId: 'pn-1', state: 'complete', message: 'second', source: 'bridge', at: 2 })
+    useYuHeardStore.getState().applyReport({ paneId: 'pn-1', state: 'complete', message: 'second', source: 'pty-idle', at: 2 })
     expect(playSound).toHaveBeenCalledTimes(1)
     expect(notify).toHaveBeenCalledTimes(1)
     expect(notify).toHaveBeenCalledWith(expect.objectContaining({ body: 'first' }))
@@ -109,7 +150,7 @@ describe('useYuHeardStore.applyReport', () => {
 
 describe('useYuHeardStore.applyComplete', () => {
   it('is a thin wrapper around applyReport with state=complete', () => {
-    useYuHeardStore.getState().applyComplete('pn-x', 'preview text', 'bridge')
+    useYuHeardStore.getState().applyComplete('pn-x', 'preview text', 'pty')
     expect(playSound).toHaveBeenCalledWith('knock')
     expect(notify).toHaveBeenCalledWith(expect.objectContaining({
       body: 'preview text',
@@ -120,8 +161,8 @@ describe('useYuHeardStore.applyComplete', () => {
   it('defaults to source=bridge and no message', () => {
     useYuHeardStore.getState().applyComplete('pn-y')
     expect(notify).toHaveBeenCalledWith(expect.objectContaining({
-      title: 'CrewCode',
-      body: '',
+      title: 'Terminal agent finished',
+      body: 'A terminal agent finished a turn.',
       scopeId: 'pane:pn-y',
     }))
   })

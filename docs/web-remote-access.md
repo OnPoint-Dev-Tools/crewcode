@@ -69,7 +69,7 @@ and does not execute workspace operations.
 
 | Concern | `crewcode serve` | Self-hosted Hub relay |
 | --- | --- | --- |
-| Processes | One direct server | One `crewcode hub` plus `crewcode brain` on each enrolled machine |
+| Processes | One direct server | One `crewcode hub` plus `crewcode brain` on each enrolled machine. `crewcode hub --local-brain` is a supervisor: Hub stays the parent process and spawns a sibling Brain for that host only |
 | Browser route | Browser connects directly to the Brain | Browser connects to Hub; Hub routes encrypted frames to the selected Brain |
 | Network reachability | The Brain must be reachable from the browser | Brains connect outbound; only the Hub needs a browser-reachable endpoint |
 | Authentication | One-time pairing URL exchanged for a revocable Brain-local device session | Passkey Hub session, machine selection, and a short-lived one-shot connection ticket |
@@ -98,10 +98,21 @@ crewcode serve \
 Example Hub deployment:
 
 ```bash
-# On the persistent Hub host:
-crewcode hub mobile --tailscale
+# On the persistent Hub host (VPS, NAS, or always-on desktop):
+# Identity/relay only — recommended when this box should not execute agents:
+crewcode hub --host 0.0.0.0 --public-origin https://your-hub.example
 
-# On each development machine, enroll once:
+# Same host should also appear as a machine (sibling Brain, not one process):
+crewcode hub --local-brain \
+  --host 0.0.0.0 \
+  --public-origin https://your-hub.example \
+  --workspace-root /path/to/projects \
+  --allow-scope workspace:read \
+  --allow-scope workspace:write \
+  --allow-scope terminal \
+  --allow-scope agent
+
+# On each additional development machine, enroll once:
 crewcode enroll --hub https://your-hub.example
 
 # Then run the outbound Brain with explicit local authority:
@@ -112,6 +123,8 @@ crewcode brain \
   --allow-scope terminal \
   --allow-scope agent
 ```
+
+`--local-brain` does not merge Hub identity with Brain execution. After the owner passkey exists, the Hub supervisor enrolls **this host only** and spawns `crewcode brain` as a sibling. Extra laptops/desktops still use `enroll` then `brain` against the Hub origin. Omit `--local-brain` on a public VPS that should only route; a co-located Brain executes against that host's workspace roots.
 
 ### Direct mode (implemented preview)
 
@@ -348,7 +361,12 @@ or become a general-purpose TCP proxy.
 
 The Hub runs as a separate headless process rather than inside the Electron renderer
 or main process. It may ship from this repository as `crewcode hub`, but its storage
-and network lifecycle remain independent from any one brain. This repository owns
+and network lifecycle remain independent from any one brain. `crewcode hub --local-brain`
+is a supervisor on the Hub host: it must spawn a sibling Brain process, keep
+`~/.crewcode/hub` and `~/.crewcode/brain` separate, and wait for owner passkey
+setup before in-process local enrollment. It must not fold Brain RPC, workspace
+roots, or provider secrets into the Hub SQLite store. Extra machines never use
+`--local-brain`; they enroll remotely. This repository owns
 the shared protocol, Hub service, brain connector, CLI enrollment flow, and browser
 adapter. No identity, proxy, or database vendor SDK may leak into renderer components
 or backend workspace services.
@@ -415,6 +433,7 @@ Implemented self-hosted Hub and mobile QR commands:
 
 ```bash
 crewcode hub
+crewcode hub --local-brain --workspace-root ~/developing --allow-scope agent
 crewcode hub mobile --tailscale
 crewcode hub mobile --public-origin https://your-hub.example
 crewcode hub --host 0.0.0.0 --public-origin https://your-hub.example
@@ -452,7 +471,11 @@ require an explicit final public origin; non-loopback origins require HTTPS beca
 the origin is cryptographically bound to passkeys. Put a TLS reverse proxy or
 Tailscale HTTPS in front of the HTTP listener for network deployment.
 
-After signing in on the phone, run this on the machine:
+`--local-brain` waits for that owner passkey, enrolls the Hub host without the
+phone comparison-code dance, and spawns a sibling Brain. The local credential is
+still owner-only on disk; Hub identity still cannot widen Brain scopes.
+
+After signing in on the phone, run this on every additional machine:
 
 ```bash
 crewcode enroll --hub https://your-hub.example

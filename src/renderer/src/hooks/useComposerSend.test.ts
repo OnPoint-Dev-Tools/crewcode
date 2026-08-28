@@ -108,4 +108,21 @@ describe('useComposerSend session continuity', () => {
 
     h.unmount()
   })
+
+  it('respawns CrewCoder when its agent profile changes', () => {
+    const crewcoder = { ...agent, id: 'crewcoder', name: 'CrewCoder' }
+    const opts = makeOpts({ agents: [crewcoder], activeAgentId: 'crewcoder', crewcoderMode: 'general' })
+    const h = renderHook(useComposerSend, opts)
+
+    h.rerender(makeOpts({
+      bridges: opts.bridges,
+      agents: [crewcoder],
+      activeAgentId: 'crewcoder',
+      crewcoderMode: 'plugin',
+    }))
+
+    expect(opts.bridges.dropBridge).toHaveBeenCalledOnce()
+    expect(opts.bridges.dropBridge).toHaveBeenCalledWith('sess-1', 'crewcoder')
+    h.unmount()
+  })
 })

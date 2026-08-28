@@ -9,6 +9,7 @@ CrewCode's code editor uses a fork of CodeMirror 6 for the active editing surfac
 - `src/renderer/src/components/editor/CrewCodeMirrorEditor.tsx` owns the live editing surface.
 - CodeMirror is intentionally kept below `CodeEditor` so high-frequency typing, selection, autocomplete, and scroll state do not force broad React/App re-renders.
 - Source documents, including Markdown opened in the code editor, soft-wrap long lines by default. Wrapping is visual only: it never inserts newlines or changes line-number semantics.
+- At phone widths (`≤768px`), the editor canvas owns the page. Open tabs remain horizontally scrollable, path-bar actions stay reachable as touch targets, and status metadata scrolls instead of widening the viewport. The file tree starts closed and opens as a dismissible right-side overlay; selecting a file closes it. Problems and references use the editor width rather than squeezing the code canvas.
 - Direct `@codemirror/*` dependencies are declared in `package.json` as local `file:` dependencies. npm links them to the package sources under `packages/crew-codemirror`, so locally built changes are used by CrewCode at runtime.
 
 ## Local CodeMirror development

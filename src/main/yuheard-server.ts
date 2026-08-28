@@ -56,6 +56,8 @@ export interface YuHeardPaneRegistry {
   getPaneCreatedAt(paneId: string): number | undefined
   /** Lists all live pane ids. */
   listPaneIds(): string[]
+  /** Chat/crew sidecar panes must not receive YuHeard reports or cwd lookup. */
+  isYuHeardEligible?(paneId: string): boolean
 }
 
 export interface YuHeardServerOptions {
@@ -93,6 +95,9 @@ export class YuHeardServer {
   private cwdByPane = new Map<string, string>()
   /** paneId -> creation timestamp mirrored from the registry. */
   private createdByPane = new Map<string, number>()
+  /** Panes that have received `running` and have not yet closed. Used so
+   *  interactive CLIs can idle-complete later turns after `complete`. */
+  private sessionActive = new Set<string>()
 
   constructor(opts: YuHeardServerOptions) {
     this.socketPath = opts.socketPath
@@ -167,6 +172,7 @@ export class YuHeardServer {
     this.createdByPane.delete(paneId)
     this.lastReport.delete(paneId)
     this.lastRunning.delete(paneId)
+    this.sessionActive.delete(paneId)
   }
 
   /** Returns true if the pane was reported running within the last
@@ -176,6 +182,23 @@ export class YuHeardServer {
     const t = this.lastRunning.get(paneId)
     if (t === undefined) return false
     return this.now() - t <= this.autoCompleteWindowMs
+  }
+
+  /** True while a YuHeard session is open for this pane (running seen,
+   *  pane still known). Idle/BEL turn detection uses this so a wrapped
+   *  `claude` in a plain shell keeps notifying on later replies. */
+  isSessionActive(paneId: string): boolean {
+    return this.sessionActive.has(paneId)
+  }
+
+  /** Arm idle-detect without a socket `running` report (typed `codex` /
+   *  `claude` in a Fish pane whose function skipped the PATH shim). Does
+   *  not emit to the renderer. */
+  noteSessionRunning(paneId: string): void {
+    if (!this.isKnownPane(paneId)) return
+    if (this.registry.isYuHeardEligible && !this.registry.isYuHeardEligible(paneId)) return
+    this.sessionActive.add(paneId)
+    this.lastRunning.set(paneId, this.now())
   }
 
   // ─── internals ───────────────────────────────────────────────────────
@@ -266,7 +289,10 @@ export class YuHeardServer {
   }
 
   private applyReport(report: YuHeardReport): 'applied' | 'duplicate' | 'unknown-pane' {
-    if (!this.registry.hasPane(report.pane_id)) {
+    if (!this.isKnownPane(report.pane_id)) {
+      return 'unknown-pane'
+    }
+    if (this.registry.isYuHeardEligible && !this.registry.isYuHeardEligible(report.pane_id)) {
       return 'unknown-pane'
     }
     const last = this.lastReport.get(report.pane_id)
@@ -277,6 +303,7 @@ export class YuHeardServer {
     this.lastReport.set(report.pane_id, { state: report.state, at: now })
     if (report.state === 'running') {
       this.lastRunning.set(report.pane_id, now)
+      this.sessionActive.add(report.pane_id)
     } else {
       this.lastRunning.delete(report.pane_id)
     }
@@ -298,11 +325,20 @@ export class YuHeardServer {
     return 'applied'
   }
 
+  /** Live PTY or a pane we recorded at spawn. Process-exit auto-complete
+   *  reports after PtyService has already dropped the live handle. */
+  private isKnownPane(paneId: string): boolean {
+    return this.registry.hasPane(paneId)
+      || this.cwdByPane.has(paneId)
+      || this.createdByPane.has(paneId)
+  }
+
   private lookupPaneIdByCwd(cwd: string): string | null {
     // Prefer the registry's createdAt; fall back to the local mirror
     // (populated when reports come in without a prior registry call).
     const candidates: Array<{ paneId: string, at: number }> = []
     for (const paneId of this.registry.listPaneIds()) {
+      if (this.registry.isYuHeardEligible && !this.registry.isYuHeardEligible(paneId)) continue
       if (this.registry.getPaneCwd(paneId) === cwd) {
         const at = this.registry.getPaneCreatedAt(paneId)
           ?? this.createdByPane.get(paneId)

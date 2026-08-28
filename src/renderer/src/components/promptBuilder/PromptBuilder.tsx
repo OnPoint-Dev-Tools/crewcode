@@ -55,7 +55,9 @@ export function PromptBuilder({ lib, onUseInChat, onApplySkill }: PromptBuilderP
   const categories = useMemo(() => getAllCategories(lib.customCategories), [lib.customCategories])
 
   const filtered = items.filter(x => {
-    if (category !== 'all' && x.category !== category) return false
+    // Category chips are not part of the phone UI, so a category selected at
+    // desktop width must not leave an invisible filter active after resize.
+    if (!isMobile && category !== 'all' && x.category !== category) return false
     if (favOnly && !x.favorite) return false
     if (q) {
       const h = (x.title + ' ' + x.description + ' ' + x.body).toLowerCase()
@@ -134,7 +136,7 @@ export function PromptBuilder({ lib, onUseInChat, onApplySkill }: PromptBuilderP
     lib.addCustomCategory(def)
     setNewCatName('')
     setCatMenuOpen(false)
-    setCategory(id)
+    if (!isMobile) setCategory(id)
   }
 
   return (
@@ -175,23 +177,7 @@ export function PromptBuilder({ lib, onUseInChat, onApplySkill }: PromptBuilderP
 
         <div className="pb-cats">
           {isMobile ? (
-            <>
-              <div className="pb-cats-scroll">
-                {categories.map(c => (
-                  <button key={c.id} type="button"
-                    className={`pb-cat ${category === c.id ? 'on' : ''}`}
-                    onClick={() => setCategory(c.id)}>
-                    <span className="pb-cat-dot" style={{
-                      background: c.id === 'all'
-                        ? 'var(--muted-foreground)'
-                        : getCategoryColor(c.id),
-                    }} />
-                    {getCategoryLabel(c.id, lib.customCategories)}
-                    <span className="pb-cat-count">{counts[c.id] ?? 0}</span>
-                  </button>
-                ))}
-              </div>
-              <div className="pb-cats-tools">
+            <div className="pb-cats-tools">
                 <div className="pb-cat-menu-wrap" ref={catMenuRef} style={{ position: 'relative' }}>
                   <button type="button"
                     className={`pb-icobtn ${catMenuOpen ? 'on' : ''}`}
@@ -257,8 +243,7 @@ export function PromptBuilder({ lib, onUseInChat, onApplySkill }: PromptBuilderP
                   onClick={() => setLayout(l => l === 'cards' ? 'rows' : 'cards')} title="layout">
                   <Icon name="grid" size={12} />
                 </button>
-              </div>
-            </>
+            </div>
           ) : (
             <>
               {categories.map(c => (
@@ -375,6 +360,7 @@ export function PromptBuilder({ lib, onUseInChat, onApplySkill }: PromptBuilderP
             key={active.id}
             kind={tab}
             p={active}
+            isMobile={isMobile}
             mdMode={mdMode}
             setMdMode={setMdMode}
             customCategories={lib.customCategories}

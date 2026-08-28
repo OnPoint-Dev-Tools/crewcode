@@ -133,6 +133,26 @@ describe('Hub HTTP security boundary', () => {
     expect(JSON.parse(body)).toEqual({ service: 'crewcode-hub', protocolVersion: 1, ownerConfigured: false })
   })
 
+  it('enrolls a local Brain only after the owner exists', async () => {
+    const running = await server()
+    expect(running.ownerConfigured()).toBe(false)
+    const publicKey = generateKeyPairSync('ed25519').publicKey.export({ type: 'spki', format: 'der' }).toString('base64url')
+    expect(() => running.enrollLocalMachine({ publicKey, name: 'vps', platform: 'linux', version: 'test' })).toThrow('Hub owner must be configured')
+
+    const { running: ready, cookie } = await authenticatedServer(() => 10_000)
+    expect(ready.ownerConfigured()).toBe(true)
+    const created = ready.enrollLocalMachine({ publicKey, name: 'vps', platform: 'linux', version: 'test' })
+    expect(created.machineId).toMatch(/^[a-f0-9]{32}$/)
+    const heartbeat = await fetch(`${ready.url}/api/v1/hub/machines/heartbeat`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${created.token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ platform: 'linux', version: 'test' }),
+    })
+    expect(heartbeat.status).toBe(200)
+    const machines = await (await fetch(`${ready.url}/api/v1/hub/machines`, { headers: { cookie } })).json() as { machines: Array<{ name: string; status: string }> }
+    expect(machines.machines).toEqual([expect.objectContaining({ name: 'vps', status: 'online' })])
+  })
+
   it('rejects foreign browser origins and unauthenticated machine access', async () => {
     const running = await server()
     const foreign = await fetch(`${running.url}/api/v1/hub/status`, { headers: { origin: 'https://evil.example' } })

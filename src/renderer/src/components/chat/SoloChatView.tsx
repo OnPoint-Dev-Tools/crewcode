@@ -8,6 +8,7 @@ import { ActiveSkillsStrip } from '../promptBuilder/ActiveSkillsStrip'
 import { AgentActivityOverlay } from '../thread/AgentActivityOverlay'
 import { CustodyHaltBanner } from './CustodyHaltBanner'
 import { latestTodoActivity } from '../thread/todo-from-toolcall'
+import { CREWCODER_APPROVE_PLAN_PROMPT, latestCrewCoderPlanGate } from '../thread/crewcoder-plan-gate'
 import { useIsDark } from '../../hooks/useIsDark'
 import logoDark from '../../assets/icon-logo-dark.png'
 import logoLight from '../../assets/icon-logo-light.png'
@@ -20,6 +21,7 @@ import type { EffortLevel } from '../composer/EffortPicker'
 import type { McpServerConfig } from '../../hooks/useSettings'
 import type { VoiceControlSurface } from '../../../../shared/voice-types'
 import type { TurnChangeTarget } from '../thread/turn-changes-data'
+import type { CrewCoderMode } from '../../../../shared/crewcoder-types'
 
 type ThreadView = 'chat' | 'code' | 'md'
 
@@ -85,6 +87,8 @@ export interface SoloChatViewProps {
   setModel: (m: string) => void
   effort: EffortLevel
   setEffort: (e: EffortLevel) => void
+  crewcoderMode?: CrewCoderMode
+  setCrewCoderMode: (mode: CrewCoderMode | undefined) => void
   // MCP — registry + this session's opt-in selection. Picker hidden when disabled.
   mcpEnabled?: boolean
   mcpServers?: McpServerConfig[]
@@ -147,7 +151,7 @@ export function SoloChatView(props: SoloChatViewProps) {
     agentLabel, modelLabel, voiceControl,
     gitOpen, setGitOpen, github, dirtyCount = 0, changesOpen, changesCount, toggleChangesOpen, onStartCrew, onOpenCanvas, onOpenTerminal, onHandoff,
     composerMode, setComposerMode, composer, setComposer, onSend, onRunCommand, onQueueFollowUp, queuedFollowUps = [], onRemoveQueuedFollowUp, isRunning, loadingStatus = null, onStop, agentRequest, custodyHalt, onReauthorizeCustody, onAgentRequestResponse,
-    agents, activeAgentId, setActiveAgentId, model, setModel, effort, setEffort,
+    agents, activeAgentId, setActiveAgentId, model, setModel, effort, setEffort, crewcoderMode, setCrewCoderMode,
     mcpEnabled, mcpServers, selectedMcpIds, onToggleMcp,
     shortcutOverrides, onOpenFile, onOpenTurnChange, editorInitialFile, onThreadContextMenu, onOpenPrompts, onOpenBrowser,
     delegationEnabled, onToggleDelegation,
@@ -211,6 +215,7 @@ export function SoloChatView(props: SoloChatViewProps) {
   }, [messages, scrollToThreadBottom, threadView, updateBottomState])
 
   const todoActivity = useMemo(() => latestTodoActivity(messages), [messages])
+  const planGate = useMemo(() => latestCrewCoderPlanGate(messages), [messages])
   const sentMessageHistory = useMemo(() => (
     messages
       .flatMap(message => {
@@ -262,6 +267,8 @@ export function SoloChatView(props: SoloChatViewProps) {
       onSelectModel={setModel}
       effort={effort}
       onSelectEffort={setEffort}
+      crewcoderMode={crewcoderMode}
+      onSelectCrewCoderMode={setCrewCoderMode}
       mcpEnabled={mcpEnabled}
       mcpServers={mcpServers}
       selectedMcpIds={selectedMcpIds}
@@ -378,13 +385,15 @@ export function SoloChatView(props: SoloChatViewProps) {
           {custodyHalt && onReauthorizeCustody && (
             <CustodyHaltBanner halt={custodyHalt} onReauthorize={onReauthorizeCustody} />
           )}
-          {(agentRequest || todoActivity) && (
+          {(agentRequest || todoActivity || planGate) && (
             <div className="composer-activity-shell">
               <AgentActivityOverlay
                 todos={todoActivity?.todos ?? []}
                 isStreaming={todoActivity?.isStreaming ?? !!agentRequest}
                 request={agentRequest ?? undefined}
                 onRespond={onAgentRequestResponse}
+                planGate={planGate}
+                onApprovePlan={() => onRunCommand?.(CREWCODER_APPROVE_PLAN_PROMPT)}
               />
             </div>
           )}

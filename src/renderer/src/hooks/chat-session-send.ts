@@ -2,6 +2,8 @@ import type { AgentInfo, AgentProviderId, ChatAttachment, ChatPromptOptions, Mes
 import type { Skill } from '../types/prompts'
 import type { EffortLevel } from '../components/composer/EffortPicker'
 import type { McpServerConfig } from './useSettings'
+import type { CrewCoderMode } from '../../../shared/crewcoder-types'
+import { createTurnActivity, settleCurrentTurnActivity } from '../components/thread/turn-activity'
 
 interface BridgesLike {
   ensureBridge: (
@@ -17,6 +19,7 @@ interface BridgesLike {
     mcpServers?: McpServerConfig[],
     freshSession?: boolean,
     externalDirectories?: string[],
+    crewcoderMode?: CrewCoderMode,
   ) => Promise<{ bridgeId: string } | { error: string }>
   prompt: (bridgeId: string, text: string, options?: ChatPromptOptions) => Promise<{ ok: boolean; error?: string }>
 }
@@ -37,6 +40,7 @@ export interface SendChatSessionPromptArgs {
   model: string
   effort: EffortLevel
   mode: ModeLevel
+  crewcoderMode?: CrewCoderMode
   effectivePath: string
   bridges: BridgesLike
   pty: PtyLike
@@ -219,6 +223,7 @@ export async function sendChatSessionPrompt(opts: SendChatSessionPromptArgs): Pr
     markDelegationDelivered,
     takeDelegationReports,
     externalDirectories,
+    crewcoderMode,
   } = opts
 
   if (!text.trim() || !activeWs) return
@@ -232,7 +237,11 @@ export async function sendChatSessionPrompt(opts: SendChatSessionPromptArgs): Pr
 
   const trimmed = text.trim()
   const time = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
-  setMessages(m => [...m, { kind: 'user', text: trimmed, time, attachments }])
+  setMessages(m => [
+    ...m,
+    { kind: 'user', text: trimmed, time, attachments },
+    ...(agent.transport === 'bridge' ? [createTurnActivity(trimmed, time)] : []),
+  ])
 
   const { pending, preamble: skillPreamble } = buildSkillPreamble(enabledSkills, skillsDeliveredTo(sessActive))
   const prevMode = lastDeliveredMode(sessActive)
@@ -311,12 +320,17 @@ export async function sendChatSessionPrompt(opts: SendChatSessionPromptArgs): Pr
 
   if (agent.transport === 'bridge') {
     const provider = agent.id as AgentProviderId
-    const ensure = (force: boolean) => bridges.ensureBridge(
-      sessActive, agent.id, provider, effectivePath, model || undefined, effort, mode, undefined, force, mcpServers, !!promptOptions?.handoff, externalDirectories,
-    )
+    const ensure = (force: boolean) => provider === 'crewcoder'
+      ? bridges.ensureBridge(
+          sessActive, agent.id, provider, effectivePath, model || undefined, effort, mode, undefined, force, mcpServers, !!promptOptions?.handoff, externalDirectories, crewcoderMode,
+        )
+      : bridges.ensureBridge(
+          sessActive, agent.id, provider, effectivePath, model || undefined, effort, mode, undefined, force, mcpServers, !!promptOptions?.handoff, externalDirectories,
+        )
 
     const r1 = await ensure(false)
     if ('error' in r1) {
+      setMessages(m => settleCurrentTurnActivity(m, 'interrupted'))
       updateHandoff('failed', 'handoff failed before the next agent started', 100)
       setMessages(m => [...m, { kind: 'system', time, tone: 'error', text: r1.error }])
       return
@@ -329,6 +343,7 @@ export async function sendChatSessionPrompt(opts: SendChatSessionPromptArgs): Pr
     if (!res.ok && res.error === 'bridge not found') {
       const r2 = await ensure(true)
       if ('error' in r2) {
+        setMessages(m => settleCurrentTurnActivity(m, 'interrupted'))
         updateHandoff('failed', 'handoff failed before the next agent started', 100)
         setMessages(m => [...m, { kind: 'system', time, tone: 'error', text: r2.error }])
         return
@@ -337,6 +352,7 @@ export async function sendChatSessionPrompt(opts: SendChatSessionPromptArgs): Pr
     }
 
     if (!res.ok) {
+      setMessages(m => settleCurrentTurnActivity(m, 'interrupted'))
       updateHandoff('failed', 'handoff failed', 100)
       setMessages(m => [...m, { kind: 'system', time, tone: 'error', text: res.error ?? 'prompt failed' }])
     } else {

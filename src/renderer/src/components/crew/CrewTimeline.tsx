@@ -4,6 +4,7 @@ import { Icon } from '../ui/Icon'
 import { Messages } from '../thread/Messages'
 import { AgentActivityOverlay } from '../thread/AgentActivityOverlay'
 import { latestTodoActivity } from '../thread/todo-from-toolcall'
+import { CREWCODER_APPROVE_PLAN_PROMPT, latestCrewCoderPlanGate } from '../thread/crewcoder-plan-gate'
 import { LaneComposer } from './LaneComposer'
 import { LaneModelButton } from './LaneModelButton'
 import { LaneRunSwitch } from './LaneRunSwitch'
@@ -152,6 +153,7 @@ export function CrewTimeline({
                 const live  = !!(lane.bridgeId || lane.paneId)
                 const usage = lane.usage
                 const todoActivity = i === rounds.length - 1 ? latestTodoActivity(group.messages) : null
+                const planGate = i === rounds.length - 1 ? latestCrewCoderPlanGate(group.messages) : null
                 const request = (userRequestsByTab?.[lane.tabId ?? ''] ?? [])[0]
                 const groupKey = `${i}:${lane.laneId}`
                 const collapsed = collapsedGroups[groupKey] === true
@@ -224,13 +226,15 @@ export function CrewTimeline({
                             {shortModel(lane.model)}
                           </div>
                         )}
-                        {(request || todoActivity) && (
+                        {(request || todoActivity || planGate) && (
                           <div className="composer-activity-shell">
                             <AgentActivityOverlay
                               todos={todoActivity?.todos ?? []}
                               isStreaming={todoActivity?.isStreaming ?? live}
                               request={request}
                               onRespond={onAgentRequestResponse}
+                              planGate={planGate}
+                              onApprovePlan={() => onSendToLane(lane.laneId, CREWCODER_APPROVE_PLAN_PROMPT)}
                             />
                           </div>
                         )}

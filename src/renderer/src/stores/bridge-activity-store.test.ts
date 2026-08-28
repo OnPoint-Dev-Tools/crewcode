@@ -29,6 +29,26 @@ describe('bridge-activity-store — running', () => {
     bridgeActivity.setRunning('missing', false)
     expect(state().runningByBridge).toBe(before)
   })
+
+  it('keys Running by conversation scope so the drawer can list a chat before the registry map commits', () => {
+    bridgeActivity.bindScope('b-grok', 'sess-1')
+    bridgeActivity.setRunning('b-grok', true)
+    expect(state().runningByScope).toEqual({ 'sess-1': true })
+
+    bridgeActivity.setRunning('b-grok', false)
+    expect(state().runningByScope).toEqual({})
+  })
+
+  it('keeps a scope running while any of its bridges is still in flight', () => {
+    bridgeActivity.bindScope('b1', 'sess-1')
+    bridgeActivity.bindScope('b2', 'sess-1')
+    bridgeActivity.setRunning('b1', true)
+    bridgeActivity.setRunning('b2', true)
+    bridgeActivity.setRunning('b1', false)
+    expect(state().runningByScope).toEqual({ 'sess-1': true })
+    bridgeActivity.setRunning('b2', false)
+    expect(state().runningByScope).toEqual({})
+  })
 })
 
 describe('bridge-activity-store — status', () => {
@@ -104,6 +124,7 @@ describe('bridge-activity-store — teardown', () => {
     bridgeActivity.clearBridges(['b1'])
 
     expect(state().runningByBridge).toEqual({})
+    expect(state().runningByScope).toEqual({})
     expect(state().statusByBridge).toEqual({})
     expect(state().followUpsByBridge).toEqual({})
     expect(state().userRequestsByTab['tab-1']).toHaveLength(1)

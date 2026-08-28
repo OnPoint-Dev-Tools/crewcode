@@ -118,6 +118,7 @@ export class AgentBridgeService {
       const sameExecution = existing.opts.provider === rawOpts.provider
         && existing.opts.cwd === rawOpts.cwd
         && existing.opts.model === rawOpts.model
+        && existing.opts.crewcoderMode === rawOpts.crewcoderMode
         && existing.opts.conversationKey === rawOpts.conversationKey
       return sameExecution
         ? { ok: true }

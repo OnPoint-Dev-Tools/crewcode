@@ -1,11 +1,11 @@
 import { ipcMain, webContents } from 'electron'
 import { PtyService, detectShells, type PtyCreateOpts, type PtyDaemon } from './pty-service'
-import { startYuHeardServer } from './yuheard-server'
+import { getYuHeardServer, startYuHeardServer } from './yuheard-server'
 import { pruneYuHeardWrappers } from './yuheard-wrapper'
 
 export type { PtyCreateOpts, PtyDaemon } from './pty-service'
 
-const service = new PtyService()
+const service = new PtyService(() => getYuHeardServer())
 const owners = new Map<string, number>()
 
 service.subscribe(event => {
