@@ -368,7 +368,7 @@ useMessagesStore.subscribe((state, prev) => {
 // from localStorage; disk fills any scope L1 evicted and restores full history
 // for scopes L1 trimmed. Never clobber an in-memory scope that is already longer
 // (a turn that arrived — and is only in L1 — during this async load wins).
-async function hydrateFromDisk(): Promise<void> {
+export async function hydrateMessagesFromBackend(): Promise<void> {
   const api = transcriptApi()
   if (!api?.transcriptsLoadAll) return
   let disk: Record<string, Message[]>
@@ -413,7 +413,7 @@ function flushAllOnTeardown(): void {
 if (typeof window !== 'undefined') {
   window.addEventListener('beforeunload', flushAllOnTeardown)
   window.addEventListener('pagehide', flushAllOnTeardown)
-  hydrateFromDisk()
+  void hydrateMessagesFromBackend()
 }
 if (typeof document !== 'undefined') {
   document.addEventListener('visibilitychange', () => {

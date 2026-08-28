@@ -2,17 +2,16 @@ import React, { useEffect, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebglAddon } from '@xterm/addon-webgl'
-import { CanvasAddon } from '@xterm/addon-canvas'
 import type { ITerminalAddon } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 
 import { monoFontStack, resolveTerminalFont, type Gpu } from '../../hooks/useSettings'
 
 // Browsers hard-cap live WebGL contexts (~16 in Chromium); past that the oldest
-// context is force-lost, which cascades into contextLost→dispose→canvas-fallback
-// churn across every terminal. With many agent terminals open that thrash is a
-// primary source of Workbench jank. Budget WebGL to a safe count and let the
-// overflow terminals ride the Canvas renderer, which needs no GL context.
+// context is force-lost, which cascades into contextLost→dispose churn across
+// every terminal. With many agent terminals open that thrash is a primary source
+// of Workbench jank. Budget WebGL to a safe count and let overflow terminals use
+// xterm's built-in renderer, which needs no extra WebGL context.
 const MAX_WEBGL_CONTEXTS = 8
 let activeWebglContexts = 0
 // addon → decrement callback, so disposal from any site (unmount, GPU-toggle,
@@ -25,14 +24,14 @@ function releaseRenderer(addon: ITerminalAddon | null): void {
   try { addon.dispose() } catch { /* already gone */ }
 }
 
-// Pick a renderer per the user's GPU setting, with the same fallback chain
-// VS Code uses: WebGL → Canvas → DOM. Returns null on 'off' or when no GPU
-// addon initialized (xterm keeps its built-in DOM renderer in that case).
+// Pick a renderer per the user's GPU setting. Returns null on 'off', when the
+// WebGL budget is exhausted, or when initialization fails; xterm then keeps its
+// built-in renderer. The old CanvasAddon fallback only supports xterm 5.
 function loadRenderer(term: Terminal, gpu: Gpu): ITerminalAddon | null {
   if (gpu === 'off') return null
 
   const tryWebgl = (): WebglAddon | null => {
-    // Over budget — skip WebGL so this terminal falls through to Canvas.
+    // Over budget — skip WebGL so this terminal keeps the built-in renderer.
     if (activeWebglContexts >= MAX_WEBGL_CONTEXTS) return null
     try {
       const addon = new WebglAddon()
@@ -58,23 +57,12 @@ function loadRenderer(term: Terminal, gpu: Gpu): ITerminalAddon | null {
     }
   }
 
-  const tryCanvas = (): CanvasAddon | null => {
-    try {
-      const addon = new CanvasAddon()
-      term.loadAddon(addon)
-      return addon
-    } catch {
-      return null
-    }
-  }
-
-  if (gpu === 'on')   return tryWebgl() ?? tryCanvas()
-  // 'auto' — WebGL first, Canvas fallback, DOM as last resort.
-  return tryWebgl() ?? tryCanvas()
+  return tryWebgl()
 }
 import { Icon } from '../ui/Icon'
 import type { PtyPane } from '../../types'
-import { useSettings } from '../../hooks/useSettings'
+import { getCurrentSettings, useSettings } from '../../hooks/useSettings'
+import { yuheardPtySpawnFlags } from '../../../../shared/yuheard-types'
 import { providerImageClass } from '../composer/provider-meta'
 
 import claudeIcon   from '../../assets/claude-color.svg'
@@ -117,6 +105,7 @@ export interface TerminalClipboardActions {
 
 interface XTermPaneProps {
   pane:    PtyPane
+  tabKind?: string
   shell?:  string
   argv?:   string[]
   env?:    Record<string, string>
@@ -131,7 +120,7 @@ interface XTermPaneProps {
 }
 
 
-export function XTermPane({ pane, shell, argv, env, collapsed = false, onCollapsedChange, onExit, onClose, onOpenUrl, onHeaderDragStart, onHeaderDragEnd, onClipboardActionsChange }: XTermPaneProps) {
+export function XTermPane({ pane, tabKind, shell, argv, env, collapsed = false, onCollapsedChange, onExit, onClose, onOpenUrl, onHeaderDragStart, onHeaderDragEnd, onClipboardActionsChange }: XTermPaneProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef  = useRef<FitAddon | null>(null)
@@ -199,8 +188,8 @@ export function XTermPane({ pane, shell, argv, env, collapsed = false, onCollaps
     termRef.current = term
     fitRef.current  = fit
 
-    // GPU renderer must be loaded *after* term.open so the canvas/WebGL addons
-    // have a screen element to attach to.
+    // GPU renderer must be loaded *after* term.open so the WebGL addon has a
+    // screen element to attach to.
     rendererRef.current = loadRenderer(term, settings.gpu)
 
     const fitIfVisible = (): boolean => {
@@ -236,6 +225,12 @@ export function XTermPane({ pane, shell, argv, env, collapsed = false, onCollaps
       shell,
       argv,
       env,
+      ...yuheardPtySpawnFlags({
+        tabKind,
+        shell: pane.shell ?? shell,
+        agentId: pane.agentId,
+        autoWrapEnabled: getCurrentSettings().yuheardAutoWrap,
+      }),
     }).then(result => {
       if (disposed) return
       if (result.error) {
@@ -397,7 +392,7 @@ export function XTermPane({ pane, shell, argv, env, collapsed = false, onCollaps
           <button className="ibtn" title="close" draggable={false} onClick={onClose}><Icon name="close" /></button>
         </div>
       </div>
-      {!collapsed && <div className="xterm-host" ref={hostRef} />}
+      {!collapsed && <div className="xterm-host" data-yuheard-pane-id={pane.paneId} ref={hostRef} />}
     </div>
   )
 }

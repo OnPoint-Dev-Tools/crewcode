@@ -25,4 +25,23 @@ describe('TranscriptService', () => {
     ])
     expect(service.loadAll()).toEqual({ one: [{ text: 'kept' }] })
   })
+
+  it('returns bounded recent thread metadata without transcript bodies', () => {
+    const service = new TranscriptService(mkdtempSync(join(tmpdir(), 'crewcode-transcripts-')))
+    service.save('thread-one', [
+      { kind: 'user', text: 'Build the mobile machine dashboard' },
+      { kind: 'assistant', text: 'A private response that must not be returned.' },
+    ])
+    service.save('thread-two', [{ role: 'user', content: 'Review the Hub relay' }])
+
+    const recent = service.recent(2)
+    expect(recent).toHaveLength(2)
+    expect(recent).toEqual(expect.arrayContaining([
+      expect.objectContaining({ scopeId: 'thread-one', firstUserText: 'Build the mobile machine dashboard' }),
+      expect.objectContaining({ scopeId: 'thread-two', firstUserText: 'Review the Hub relay' }),
+    ]))
+    expect(JSON.stringify(recent)).not.toContain('private response')
+    expect(service.recent(1)).toHaveLength(1)
+    expect(service.recent(0)).toEqual([])
+  })
 })

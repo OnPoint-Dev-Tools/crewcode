@@ -24,7 +24,7 @@ import { CrewDiffView }      from './components/crew/CrewDiffView'
 import { CrewGitSidebar }    from './components/crew/CrewGitSidebar'
 import { SettingsScreen }   from './components/settings/SettingsScreen'
 import { PromptBuilder }    from './components/promptBuilder/PromptBuilder'
-import { MissionDataProvider, MissionControlHost, MenuletHost } from './components/mission/MissionDataContext'
+import { MissionDataProvider, MissionControlHost, MenuletHost, MissionActivitySheetHost } from './components/mission/MissionDataContext'
 import { PluginTabHost } from './components/plugins/PluginTabHost'
 import { PluginsPage } from './components/plugins/PluginsPage'
 import { ArchivePage, type ArchivedEntry } from './components/archive/ArchivePage'
@@ -35,9 +35,11 @@ import { useCrewcodePromptFiles } from './hooks/useCrewcodePromptFiles'
 import { useAppliedSkillsBySession } from './hooks/useAppliedSkillsBySession'
 import { useAppliedModesBySession } from './hooks/useAppliedModesBySession'
 import { chatSessionOwnerWorkspaceId } from './hooks/chat-session-tab-owner'
+import { isSessionViewTab, type SessionDragPayload } from './components/thread/session-drag'
 import type { Prompt as PromptDef, Skill as SkillDef } from './types/prompts'
 import { Icon }             from './components/ui/Icon'
 import { LoadingScreen }    from './components/ui/LoadingScreen'
+import { MobileShell, useMobileShell } from './components/ui/MobileShell'
 import type { AgentActivityState } from './components/ui/AgentActivityIndicator'
 import { Onboarding }       from './components/onboarding/Onboarding'
 import { NotificationBar }  from './components/ui/NotificationBar'
@@ -54,7 +56,7 @@ import {
 } from './components/TweaksPanel'
 
 import { useTweaks }      from './hooks/useTweaks'
-import { useSettings, effectiveShell } from './hooks/useSettings'
+import { useSettings, getCurrentSettings, effectiveShell } from './hooks/useSettings'
 import { useMcpFileServers } from './hooks/useMcpFileServers'
 import { mergeMcpServers } from './hooks/session-mcp-selection'
 import { useNotifications } from './hooks/useNotifications'
@@ -77,17 +79,29 @@ import { knownModelIds } from './hooks/useProviderModels'
 import { dockUsageProviderId } from './hooks/dock-usage-provider'
 import { ChatNotifications } from './components/thread/ChatNotifications'
 import { useGlobalShortcuts } from './hooks/useGlobalShortcuts'
+import { useMobileWindowTabsAutoHide } from './hooks/useMobileWindowTabsAutoHide'
 import { LOCAL_SHORTCUTS, effectiveChord, matchesChord, type ActionId } from './shortcuts'
 import { useTerminalSessions } from './hooks/useTerminalSessions'
 import { useTerminalUnreadSync, useClearPane } from './stores/terminal-unread-store'
+import { isYuHeardPaneFocused, useYuHeardSync } from './stores/yuheard-store'
+import { tabKindAllowsYuHeard } from '../../shared/yuheard-types'
 import { composerDraftActions } from './stores/composer-draft-store'
 import { useUserRequestsByTab } from './stores/bridge-activity-store'
-import { useChatRecency } from './hooks/useChatRecency'
 import { useCompletedChats } from './hooks/useCompletedChats'
+import {
+  EMPTY_WORKSPACE_NAVIGATION_HISTORY,
+  moveInTabHistory,
+  moveInWorkspaceHistory,
+  recordTabVisit,
+  recordWorkspaceVisit,
+} from './workspace-navigation-history'
 import { useCodeEditorSessions } from './hooks/useEditorSessions'
 import { terminalTabDisplay } from './terminal-tab-display'
 import { playNotificationSound, usesNativeNotificationSound } from './notifications/notification-sounds'
 import { playSelectionSpeech, useSelectionSpeechState } from './voice/selection-speech-playback'
+import { resolveSelectedWorktree, worktreeSelectionKey } from './surface-worktree-selection'
+import { isSurfaceOpen, setSurfaceOpen, type SurfaceOpenState } from './surface-ui-state'
+import { getCrewCodeClient } from './runtime/crewcode-client'
 
 import type { Message, TweakConfig, AgentInfo, AgentProviderId, ModeLevel, Session, Tab, GitHubStatus, Command } from './types'
 import type { PluginOpenContext, RegisteredPluginBrowserAction, RegisteredPluginChatAction, RegisteredPluginChatHeaderItem, RegisteredPluginEditorAction, RegisteredPluginGitLens, RegisteredPluginMissionWidget, RegisteredPluginSidebarPanel, RegisteredPluginStatusItem, RegisteredPluginTab, RegisteredPluginTerminalWatcher } from '../../shared/plugin-types'
@@ -115,12 +129,13 @@ interface CanvasPaneState {
 }
 
 const ACTIVE_WORKSPACE_STORAGE = 'crewcode:activeWorkspaceId'
-const ACTIVE_WORKTREE_STORAGE = 'crewcode:activeWorktreeIds:v1'
+const SURFACE_WORKTREE_STORAGE = 'crewcode:surfaceWorktreeIds:v1'
 const GIT_OPEN_STORAGE = 'crewcode:gitOpenByTab:v1'
 const GIT_WIDTH_STORAGE = 'crewcode:gitWidthByTab:v1'
 const CHAT_UI_STORAGE = 'crewcode:chatUiByTab:v1'
 const WORKBENCH_PANES_STORAGE = 'crewcode:workbenchPanesByTab:v1'
-const CHANGES_DRAWER_STORAGE = 'crewcode:changesDrawerOpenByWorkspace:v1'
+const CHANGES_DRAWER_STORAGE = 'crewcode:changesDrawerOpenBySurface:v1'
+const MOBILE_DRAWER_SIDE_STORAGE = 'crewcode:mobileDrawerSide:v1'
 
 function readLastActiveWorkspaceId(): string {
   try { return localStorage.getItem(ACTIVE_WORKSPACE_STORAGE) ?? '' } catch { return '' }
@@ -294,13 +309,10 @@ export default function App() {
 
   const activeWorkspace = ws.workspaces.find(w => w.id === activeWs) ?? EMPTY_WS
 
-  // ── Worktree selection per workspace ─────────────────────────────────────
-  const [activeWorktreeIds, setActiveWorktreeIds] = useLocalStorageJsonState<Record<string, string | null>>(ACTIVE_WORKTREE_STORAGE, {})
-  const activeWorktreeId = activeWorktreeIds[activeWs] ?? null
-  const activeWorktree   = activeWorkspace.worktrees?.find(wt => wt.id === activeWorktreeId) ?? null
-  const effectivePath    = activeWorktree?.path   ?? activeWorkspace.path
-  const effectiveBranch  = activeWorktree?.branch ?? activeWorkspace.branch ?? '—'
-  const effectiveDirty   = activeWorktree?.dirty  ?? activeWorkspace.dirty ?? 0
+  // Worktree choices are keyed by the surface that owns them (chat session or
+  // non-chat tab), never by workspace. A missing selection means the primary
+  // checkout, so newly-added workspaces naturally start on their main branch.
+  const [surfaceWorktreeIds, setSurfaceWorktreeIds] = useLocalStorageJsonState<Record<string, string | null>>(SURFACE_WORKTREE_STORAGE, {})
 
   const [gitOpenByTab, setGitOpenByTab] = useLocalStorageJsonState<Record<string, boolean>>(GIT_OPEN_STORAGE, {})
   const setGitOpenForTab = useCallback((tabId: string, next: boolean | ((prev: boolean) => boolean)) => {
@@ -320,18 +332,24 @@ export default function App() {
       return { ...prev, [tabId]: value }
     })
   }, [setGitWidthByTab])
-  const selectWorktreeForActiveWs = useCallback(
-    (id: string | null) => setActiveWorktreeIds(prev => ({ ...prev, [activeWs]: id })),
-    [activeWs],
-  )
+  // ── Mobile shell ──────────────────────────────────────────────────────────
+  const mobile = useMobileShell()
+  const [storedMobileDrawerSide, setMobileDrawerSide] = useLocalStorageJsonState<'left' | 'right'>(MOBILE_DRAWER_SIDE_STORAGE, 'left')
+  const mobileDrawerSide = storedMobileDrawerSide === 'right' ? 'right' : 'left'
+  // A desktop bottom-drawer preference must never turn into a bottom sheet on
+  // phones. Mobile keeps its own side preference so desktop layout is untouched.
+  const effectiveDrawerPosition = mobile.isMobile ? mobileDrawerSide : tweaks.drawerPosition
 
   // ── Tabs per workspace ───────────────────────────────────────────────────
   const {
-    tabs, activeTab, activeTabId, setActiveTabId, setActiveTabInWorkspace, selectWorkspace, openTab: handleNewTab, openTabInWorkspace, openPluginTab, restoreChatTabInWorkspace, closeTab, closeTabInWorkspace,
-    splitGroups, splitTabIds, splitPrimaryTabId, setSplitTab, closeSplitGroup, pinTab, unpinTab, renameTab, setTabColor, setTabUrl,
+    tabs, activeTab, activeTabId, setActiveTabId, setActiveTabInWorkspace, getActiveTabIdForWorkspace, selectWorkspace, openTab: handleNewTab, openTabInWorkspace, openPluginTab, restoreChatTabInWorkspace, closeTab, closeTabInWorkspace,
+    splitGroups, splitTabIds, splitPrimaryTabId, setSplitTab, splitAnchorWithSession, pinTab, unpinTab, renameTab, setTabColor, setTabUrl,
     setBrowserSessionMode, reorderTab, allTabIds, tabInfoById,
   } = useWorkspaceTabs({ activeWs, workspaceName: activeWorkspace.name })
   const activeTabGitOpen = activeTabId ? (gitOpenByTab[activeTabId] ?? false) : false
+  const workspaceNavigationHistoryRef = useRef(EMPTY_WORKSPACE_NAVIGATION_HISTORY)
+  const workspaceDestinationByIdRef = useRef<Record<string, { tabId: string; sessionId?: string }>>({})
+  const tabNavigationHistoryByWorkspaceRef = useRef<Record<string, typeof EMPTY_WORKSPACE_NAVIGATION_HISTORY>>({})
   // App settings must remain reachable before the first server workspace is
   // registered. Workspace tabs cannot materialize without a workspace id, so
   // browser/empty-state settings use this app-level destination.
@@ -448,13 +466,20 @@ export default function App() {
 
   const handleWsSelect = useCallback((wsId: string) => {
     if (!wsId || wsId === activeWs) return
-    // Workspace swaps can remount heavy editor/browser panes; make rapid
-    // keyboard cycling interruptible so the shell stays responsive.
+    // Record the destination before starting the transition. Remote workspaces
+    // may mount slowly, and React can coalesce rapid transitions before their
+    // effects run; history must still include the workspace the user selected.
+    const remembered = workspaceDestinationByIdRef.current[wsId]
+    const tabId = remembered?.tabId || getActiveTabIdForWorkspace(wsId)
+    workspaceNavigationHistoryRef.current = recordWorkspaceVisit(
+      workspaceNavigationHistoryRef.current,
+      { wsId, tabId, sessionId: remembered?.sessionId },
+    )
     startTransition(() => {
       selectWorkspace(wsId)
       setActiveWs(wsId)
     })
-  }, [activeWs, selectWorkspace])
+  }, [activeWs, getActiveTabIdForWorkspace, selectWorkspace])
 
   const jumpToWorkspaceTab = useCallback((wsId: string, tabId: string) => {
     if (!wsId || !tabId) return
@@ -483,13 +508,65 @@ export default function App() {
     model:   '',
     mode:    settings.defaultMode as ModeLevel,
     effort:  'medium',
+    initialBranch: settings.defaultBranchByWorkspace[activeWs] ?? '',
   })
   useEffect(() => {
-    if (activeTab?.kind === 'chat') chatSessions.ensureTab(activeTabId, activeWorkspace.name)
-  }, [activeTab?.kind, activeTabId, activeWorkspace.name, chatSessions.ensureTab])
-  const sessions          = chatSessions.getSessions(activeTabId)
-  const sessActive        = chatSessions.getActiveId(activeTabId)
-  const activeSession     = chatSessions.getActiveSession(activeTabId)
+    if (activeTab?.kind === 'chat' && !isSessionViewTab(activeTab)) chatSessions.ensureTab(activeTabId, activeWorkspace.name)
+  }, [activeTab, activeTabId, activeWorkspace.name, chatSessions.ensureTab])
+  const chatOwnerTabId    = activeTab?.sessionOwnerTabId ?? activeTabId
+  const sessions          = chatSessions.getSessions(chatOwnerTabId)
+  const sessActive        = activeTab?.pinnedSessionId ?? chatSessions.getActiveId(chatOwnerTabId)
+  const activeSession     = (activeTab?.pinnedSessionId
+    ? sessions.find(session => session.id === activeTab.pinnedSessionId)
+    : null) ?? chatSessions.getActiveSession(chatOwnerTabId)
+  const worktreeSurfaceId = worktreeSelectionKey(activeTabId, activeTab?.kind, sessActive)
+  const requestedWorktreeId = worktreeSurfaceId ? surfaceWorktreeIds[worktreeSurfaceId] : null
+  const activeWorktree = resolveSelectedWorktree(requestedWorktreeId, activeWorkspace.worktrees ?? [])
+  const activeWorktreeId = activeWorktree?.id ?? null
+  const effectivePath    = activeWorktree?.path   ?? activeWorkspace.path
+  const effectiveBranch  = activeWorktree?.branch ?? activeWorkspace.branch ?? '—'
+  const effectiveDirty   = activeWorktree?.dirty  ?? activeWorkspace.dirty ?? 0
+  const selectWorktreeForActiveSurface = useCallback((id: string | null) => {
+    if (!worktreeSurfaceId) return
+    setSurfaceWorktreeIds(prev => ({ ...prev, [worktreeSurfaceId]: id }))
+  }, [setSurfaceWorktreeIds, worktreeSurfaceId])
+  const worktreeForChatSurface = useCallback((surfaceTabId: string, sessionId?: string) => {
+    const resolvedSessionId = sessionId ?? chatSessions.getActiveId(surfaceTabId)
+    const key = worktreeSelectionKey(surfaceTabId, 'chat', resolvedSessionId)
+    const selected = resolveSelectedWorktree(surfaceWorktreeIds[key], activeWorkspace.worktrees ?? [])
+    return {
+      key,
+      id: selected?.id ?? null,
+      path: selected?.path ?? activeWorkspace.path,
+      branch: selected?.branch ?? activeWorkspace.branch ?? '—',
+      worktreeBranch: selected?.branch ?? null,
+      dirty: selected?.dirty ?? activeWorkspace.dirty ?? 0,
+    }
+  }, [activeWorkspace.branch, activeWorkspace.dirty, activeWorkspace.path, activeWorkspace.worktrees, chatSessions, surfaceWorktreeIds])
+  const selectWorktreeForKey = useCallback((key: string, id: string | null) => {
+    if (!key) return
+    setSurfaceWorktreeIds(prev => prev[key] === id ? prev : { ...prev, [key]: id })
+  }, [setSurfaceWorktreeIds])
+  useEffect(() => {
+    if (!activeWs || !activeTabId) return
+    const visit = {
+      wsId: activeWs,
+      tabId: activeTabId,
+      sessionId: activeTab?.kind === 'chat' ? (sessActive || undefined) : undefined,
+    }
+    workspaceDestinationByIdRef.current[activeWs] = {
+      tabId: visit.tabId,
+      sessionId: visit.sessionId,
+    }
+    workspaceNavigationHistoryRef.current = recordWorkspaceVisit(
+      workspaceNavigationHistoryRef.current,
+      visit,
+    )
+    tabNavigationHistoryByWorkspaceRef.current[activeWs] = recordTabVisit(
+      tabNavigationHistoryByWorkspaceRef.current[activeWs] ?? EMPTY_WORKSPACE_NAVIGATION_HISTORY,
+      visit,
+    )
+  }, [activeTab?.kind, activeTabId, activeWs, sessActive])
   const lastSoloSessionIdRef = useRef<string | null>(null)
   if (activeTab?.kind === 'chat' && sessActive) lastSoloSessionIdRef.current = sessActive
   const handleRenameWindowTab = useCallback((tabId: string, label: string) => {
@@ -522,6 +599,52 @@ export default function App() {
     }
     return byTab
   }, [activeTab?.kind, activeTabId, allTabIds, chatSessions.sessionsByTab, ws.workspaces])
+
+  const provisioningBranchSessionsRef = useRef(new Set<string>())
+  useEffect(() => {
+    for (const list of Object.values(chatSessions.sessionsByTab) as Session[][]) {
+      for (const session of list) {
+        const branch = session.initialBranch?.trim()
+        if (!branch || session.origin === 'delegated' || provisioningBranchSessionsRef.current.has(session.id)) continue
+        const workspaceId = workspaceByChatTabId[session.tabId]
+        const workspace = ws.workspaces.find(candidate => candidate.id === workspaceId)
+        if (!workspace || workspace.kind !== 'repo') continue
+
+        provisioningBranchSessionsRef.current.add(session.id)
+        void (async () => {
+          try {
+            const selectionKey = worktreeSelectionKey(session.tabId, 'chat', session.id)
+            if (branch === workspace.branch) {
+              setSurfaceWorktreeIds(prev => ({ ...prev, [selectionKey]: null }))
+            } else {
+              let worktree = workspace.worktrees.find(candidate => candidate.branch === branch)
+              if (!worktree) {
+                const beforeCreate = await window.electronAPI?.worktreeList(workspace.path)
+                worktree = beforeCreate?.worktrees?.find(candidate => candidate.branch === branch)
+              }
+              if (!worktree) {
+                const created = await window.electronAPI?.worktreeCreate(workspace.path, branch)
+                if (!created?.path || created.error) throw new Error(created?.error ?? `Unable to create a worktree for ${branch}`)
+                const listed = await window.electronAPI?.worktreeList(workspace.path)
+                worktree = listed?.worktrees?.find(candidate => candidate.path === created.path || candidate.branch === branch)
+                if (!worktree) throw new Error(`Created ${branch}, but could not detect its worktree`)
+                await ws.refreshWorktrees(workspace.id)
+              }
+              setSurfaceWorktreeIds(prev => ({ ...prev, [selectionKey]: worktree!.id }))
+            }
+            // This field is a one-shot creation request. Clearing it protects an
+            // existing chat from being moved again after the user switches it.
+            chatSessions.update(session.tabId, session.id, { initialBranch: undefined })
+          } catch (error) {
+            chatSessions.update(session.tabId, session.id, { initialBranch: undefined })
+            show({ type: 'error', message: `default branch: ${(error as Error).message}`, duration: 5000 })
+          } finally {
+            provisioningBranchSessionsRef.current.delete(session.id)
+          }
+        })()
+      }
+    }
+  }, [chatSessions, setSurfaceWorktreeIds, show, workspaceByChatTabId, ws])
 
   const validChatSessionTabIds = useMemo(() => new Set(Object.keys(workspaceByChatTabId)), [workspaceByChatTabId])
   const validRuntimeTabIds = useMemo(() => {
@@ -597,12 +720,10 @@ export default function App() {
   const codeEditors = useCodeEditorSessions()
   const [pendingGitDiff, setPendingGitDiff] = useState<{ title: string; diff: string } | null>(null)
   const [editorInitialFile, setEditorInitialFile] = useState<string | null>(null)
-  const [changesDrawerOpenByWorkspace, setChangesDrawerOpenByWorkspace] = useLocalStorageJsonState<Record<string, boolean>>(CHANGES_DRAWER_STORAGE, {})
-  const changesDrawerOpen = activeWs ? (changesDrawerOpenByWorkspace[activeWs] ?? false) : false
-  const setChangesDrawerOpen = useCallback((open: boolean) => {
-    if (!activeWs) return
-    setChangesDrawerOpenByWorkspace(prev => ({ ...prev, [activeWs]: open }))
-  }, [activeWs])
+  const [changesDrawerOpenBySurface, setChangesDrawerOpenBySurface] = useLocalStorageJsonState<SurfaceOpenState>(CHANGES_DRAWER_STORAGE, {})
+  const setChangesDrawerOpenForSurface = useCallback((surfaceId: string, open: boolean) => {
+    setChangesDrawerOpenBySurface(prev => setSurfaceOpen(prev, surfaceId, open))
+  }, [setChangesDrawerOpenBySurface])
 
   const [github, setGithub] = useState<GitHubStatus | null>(null)
   useEffect(() => {
@@ -645,24 +766,28 @@ export default function App() {
   }, [])
 
   // Git sidebar — conflict resolution drops a prompt into the composer.
+  const handleGitAskAgent = useCallback((text: string, targetTabId?: string) => {
+    // Route the conflict prompt: a fresh chat tab, a chosen existing one (focus
+    // it), or — when no target is given (crew path) — the currently active tab.
+    let destId: string | undefined
+    if (targetTabId === NEW_CHAT_TARGET) destId = handleNewTab('chat')
+    else if (targetTabId) { setActiveTabId(targetTabId); destId = targetTabId }
+    else destId = activeTabIdRef.current
+    if (!destId) return
+    composerDraftActions().set(destId, text)
+  }, [handleNewTab, setActiveTabId])
   const git = useGitSidebar({
     repoPath:          effectivePath,
     workspacePath:     activeWorkspace.path,
     mainBranch:        activeWorkspace.branch ?? 'main',
+    comparisonRef:     settings.defaultBranchByWorkspace[activeWs]?.trim() || undefined,
     currentWorktreeId: activeWorktreeId,
-    enabled:           (activeTabGitOpen || activeTab?.kind === 'git') && !!activeWs,
-    onSwitchWorktree:  selectWorktreeForActiveWs,
-    onAskAgent:        (text, targetTabId) => {
-      // Route the conflict prompt: a fresh chat tab, a chosen existing one (focus
-      // it), or — when no target is given (crew path) — the currently active tab.
-      let destId: string | undefined
-      if (targetTabId === NEW_CHAT_TARGET) destId = handleNewTab('chat')
-      else if (targetTabId) { setActiveTabId(targetTabId); destId = targetTabId }
-      else destId = activeTabIdRef.current
-      if (!destId) return
-      composerDraftActions().set(destId, text)
-    },
-    onWorktreesChanged: () => { if (activeWs) ws.refreshWorktrees(activeWs) },
+    // Chat, writer, and Workbench panes own path-scoped Git controllers below.
+    // Keep this shared controller dormant for those surfaces to avoid duplicate polling.
+    enabled:           (activeTab?.kind === 'git' || (activeTabGitOpen && !['chat', 'crew', 'writer', 'canvas'].includes(activeTab?.kind ?? ''))) && !!activeWs,
+    onSwitchWorktree:  selectWorktreeForActiveSurface,
+    onAskAgent:        handleGitAskAgent,
+    onWorktreesChanged: () => activeWs ? ws.refreshWorktrees(activeWs) : undefined,
     onRequestGitAuth: requestGitAuth,
     onRequestSigningPassphrase: requestSigningPassphrase,
     alwaysCommitUnsigned: settings.alwaysCommitUnsigned,
@@ -713,18 +838,24 @@ export default function App() {
 
   const openGitFileDiff = useCallback(async (path: string, staged: boolean) => {
     if (!activeWorkspace) return
-    const api = window.electronAPI
-    if (!api) return
-    const r = await api.gitDiff(activeWorkspace.path, path, staged)
+    const api = getCrewCodeClient()
+    const comparisonRef = settings.defaultBranchByWorkspace[activeWs]?.trim()
+    const r = comparisonRef
+      ? await api.gitDiffVsRef(effectivePath, comparisonRef, path)
+      : await api.gitDiff(effectivePath, path, staged)
+    if (r?.error) {
+      show({ type: 'error', message: `diff failed: ${r.error}` })
+      return
+    }
     const diff = r?.diff ?? ''
-    const title = `${staged ? 'staged' : 'unstaged'}: ${path}`
+    const title = comparisonRef ? `vs ${comparisonRef}: ${path}` : `${staged ? 'staged' : 'unstaged'}: ${path}`
     // The diff renders in a dedicated Code Editor tab via <CodeEditor externalDiff>.
     // Reuse the active editor tab if there is one; otherwise open a fresh one.
     if (tabsRef.current.find(t => t.id === activeTabIdRef.current)?.kind !== 'code') {
       handleNewTab('code')
     }
     setPendingGitDiff({ title, diff })
-  }, [activeWorkspace?.path, handleNewTab])
+  }, [activeWorkspace, activeWs, effectivePath, handleNewTab, settings.defaultBranchByWorkspace, show])
 
   // ── Agent registry ───────────────────────────────────────────────────────
   const [agents, setAgents] = useState<AgentInfo[]>([])
@@ -797,7 +928,9 @@ export default function App() {
   }, [agents, activeSession?.id])
 
   // ── PTY panes (real terminals) ───────────────────────────────────────────
-  const pty = useTerminalSessions()
+  const pty = useTerminalSessions({
+    tabKind: tabId => tabInfoById[tabId]?.kind,
+  })
 
   // Drawer quick-jump data: unread badges for terminal CLIs + recency ranking
   // for chat sessions across every workspace.
@@ -806,13 +939,32 @@ export default function App() {
   // shell, which is what made the Workbench page stutter. Only the drawer badges
   // (useUnreadByPane) re-render on output.
   useTerminalUnreadSync(pty.panes, activeTabId)
+  // Mount the YuHeard IPC listener once. The store dispatches the
+  // knock sound + optional OS notification on every `complete` transition.
+  useYuHeardSync()
+  // In-app toast for terminal completes. Chat already has its own bar;
+  // YuHeard previously had no visible notice while the window was focused,
+  // so a Codex pane finishing in view looked like "no notification".
+  useEffect(() => {
+    return window.electronAPI?.onYuheardState?.((event) => {
+      if (event.state !== 'complete') return
+      if (!getCurrentSettings().yuheardEnabled) return
+      if (isYuHeardPaneFocused(event.paneId)) return
+      const pane = pty.panes.find(p => p.paneId === event.paneId)
+      if (pane && !tabKindAllowsYuHeard(tabInfoById[pane.tabId]?.kind)) return
+      const name = pane?.title?.trim() || pane?.agentId || 'Terminal'
+      const preview = event.message?.trim() || 'finished a turn'
+      show({
+        type: 'info',
+        message: `${name}: ${preview}`,
+        duration: 9000,
+        onClick: pane ? () => jumpToWorkspaceTab(pane.wsId, pane.tabId) : undefined,
+      })
+    })
+  }, [jumpToWorkspaceTab, pty.panes, show, tabInfoById])
   const clearPane = useClearPane()
-  // Counts (not message arrays) come straight from the store; this re-renders
-  // App only when a scope gains/loses a message, never on a streamed token.
-  // Two separate lists on purpose: recency drives next/prev-chat cycling, while
-  // completion drives the drawer's Completed section. Conflating them made the
-  // Completed list show chats that merely had a transcript.
-  const { rankByScope, touch: touchChatRecency } = useChatRecency()
+  // Completion metadata (not message arrays) comes straight from the store, so
+  // streamed tokens do not make App rebuild the drawer's Completed section.
   const {
     completedAtByScope,
     dismissedAtByScope,
@@ -837,19 +989,6 @@ export default function App() {
         wsName:  ws.workspaces.find(w => w.id === p.wsId)?.name ?? '',
       }))
   }, [pty.panes, tabInfoById, ws.workspaces])
-
-  // Recently-active chats, newest first — powers next/prev-chat cycling only.
-  const recentChats = useMemo(() => {
-    const entries: { sessionId: string; tabId: string; wsId: string; rank: number }[] = []
-    for (const workspace of ws.workspaces) {
-      for (const session of sessionsByWorkspace[workspace.id] ?? []) {
-        const rank = rankByScope[session.id] ?? 0
-        if (rank === 0) continue
-        entries.push({ sessionId: session.id, tabId: session.tabId, wsId: workspace.id, rank })
-      }
-    }
-    return entries.sort((a, b) => b.rank - a.rank).slice(0, 6)
-  }, [ws.workspaces, sessionsByWorkspace, rankByScope])
 
   // Chat sessions that have actually finished an agent turn, newest first
   // (capped). The drawer passively hides entries after one hour; keep timestamps
@@ -1037,9 +1176,8 @@ export default function App() {
       restoreChatTabInWorkspace(targetWs.id, targetWs.name, session.tabId)
       jumpToWorkspaceTab(targetWs.id, session.tabId)
     }
-    touchChatRecency(session.id)
     window.setTimeout(() => window.dispatchEvent(new CustomEvent('crewcode:focus-composer')), 80)
-  }, [chatSessions, jumpToWorkspaceTab, restoreChatTabInWorkspace, touchChatRecency, workspaceByChatTabId, ws.workspaces])
+  }, [chatSessions, jumpToWorkspaceTab, restoreChatTabInWorkspace, workspaceByChatTabId, ws.workspaces])
 
   // Flat, cross-workspace view of the archive for the Archive page.
   const archivedEntries = useMemo<ArchivedEntry[]>(() => {
@@ -1097,8 +1235,44 @@ export default function App() {
     if (targetWsId) jumpToWorkspaceTab(targetWsId, chatTabId)
     else setActiveTabId(chatTabId)
     if (session) chatSessions.activate(session.tabId, session.id)
-    touchChatRecency(scopeId)
-  }, [chatSessions, jumpToWorkspaceTab, restoreChatTabInWorkspace, sessionById, setActiveTabId, tabInfoById, touchChatRecency, workspaceByChatTabId, ws.workspaces])
+  }, [chatSessions, jumpToWorkspaceTab, restoreChatTabInWorkspace, sessionById, setActiveTabId, tabInfoById, workspaceByChatTabId, ws.workspaces])
+
+  const mobileThreadDeepLinkHandledRef = useRef(false)
+  useEffect(() => {
+    if (mobileThreadDeepLinkHandledRef.current || ws.loading) return
+    const query = new URLSearchParams(window.location.search)
+    const scopeId = query.get('thread')?.trim() ?? ''
+    if (!scopeId) return
+    const tabId = query.get('threadTab')?.trim() ?? ''
+    const workspaceId = query.get('threadWorkspace')?.trim() ?? ''
+    const label = query.get('threadLabel')?.trim() ?? 'Recovered thread'
+    const agentHint = query.get('threadAgent')?.trim() ?? ''
+    const workspace = ws.workspaces.find(item => item.id === workspaceId)
+    const ownsTab = !!workspace && (tabId === workspace.id || tabId.startsWith(`${workspace.id}-`))
+    const ownsScope = scopeId === tabId || scopeId.startsWith(`${tabId}::s`)
+    if (!workspace || !ownsTab || !ownsScope || scopeId.length > 512 || tabId.length > 512) {
+      mobileThreadDeepLinkHandledRef.current = true
+      return
+    }
+    const restored = chatSessions.restoreRemote({
+      id: scopeId,
+      tabId,
+      label,
+      ...(agents.some(agent => agent.id === agentHint) ? { agentId: agentHint } : {}),
+    })
+    if (!restored) {
+      mobileThreadDeepLinkHandledRef.current = true
+      return
+    }
+    if (restored.archived) chatSessions.setArchived(restored.tabId, restored.id, false)
+    restoreChatTabInWorkspace(workspace.id, workspace.name, tabId)
+    setActiveWs(workspace.id)
+    setActiveTabInWorkspace(workspace.id, tabId)
+    chatSessions.activate(tabId, scopeId)
+    mobileThreadDeepLinkHandledRef.current = true
+    for (const key of ['thread', 'threadTab', 'threadWorkspace', 'threadLabel', 'threadAgent']) query.delete(key)
+    window.history.replaceState(null, '', `${window.location.pathname}?${query.toString()}`)
+  }, [agents, chatSessions, restoreChatTabInWorkspace, setActiveTabInWorkspace, ws.loading, ws.workspaces])
 
   const voiceNotificationSource = useCallback((scopeId: string): { chatName: string; workspaceName?: string } => {
     const session = sessionById[scopeId]
@@ -1166,9 +1340,16 @@ export default function App() {
   // the chat that produced it.
   useEffect(() => {
     return window.electronAPI?.onNotificationClick(({ scopeId }) => {
-      if (scopeId) navigateToChatScope(scopeId)
+      if (!scopeId) return
+      if (scopeId.startsWith('pane:')) {
+        const paneId = scopeId.slice('pane:'.length)
+        const pane = pty.panes.find(p => p.paneId === paneId)
+        if (pane) jumpToWorkspaceTab(pane.wsId, pane.tabId)
+        return
+      }
+      navigateToChatScope(scopeId)
     })
-  }, [navigateToChatScope])
+  }, [jumpToWorkspaceTab, navigateToChatScope, pty.panes])
 
   useEffect(() => {
     return subscribeBridgeActivity((_bridgeId, scopeId, type) => {
@@ -1205,8 +1386,6 @@ export default function App() {
       const preview = replyPreview(reply.text)
       if (!preview) return
 
-      // A finished turn counts as both recent (for cycling) and completed.
-      touchChatRecency(scopeId)
       completeChatRecency(scopeId)
       show({
         type: 'info',
@@ -1224,7 +1403,7 @@ export default function App() {
         queueNativeNotification({ chatName, preview, scopeId })
       }
     })
-  }, [activeWs, completeChatRecency, touchChatRecency, navigateToChatScope, queueNativeNotification, sessionById, show, subscribeBridgeTurnEnd, tabInfoById, workspaceByChatTabId, ws.workspaces])
+  }, [activeWs, completeChatRecency, navigateToChatScope, queueNativeNotification, sessionById, show, subscribeBridgeTurnEnd, tabInfoById, workspaceByChatTabId, ws.workspaces])
 
   const workspaceAgentStatus = useMemo<Record<string, AgentActivityState | undefined>>(() => {
     const byWorkspace: Record<string, AgentActivityState | undefined> = {}
@@ -1329,6 +1508,16 @@ export default function App() {
     }
   }, [chatSessions, lastDeliveredMode])
   const [promptPickerOpen, setPromptPickerOpen] = useState(false)
+  const [promptPickerTarget, setPromptPickerTarget] = useState<{ sessionId: string; composerId: string } | null>(null)
+  const openPromptPicker = useCallback((sessionId: string | null | undefined, composerId: string) => {
+    if (!sessionId || !composerId) return
+    setPromptPickerTarget({ sessionId, composerId })
+    setPromptPickerOpen(true)
+  }, [])
+  const closePromptPicker = useCallback(() => {
+    setPromptPickerOpen(false)
+    setPromptPickerTarget(null)
+  }, [])
 
   // ── Solo send ───────────────────────────────────────────────────────────
   const displayTabs = useMemo(() => tabs.map(tab => {
@@ -1484,11 +1673,11 @@ export default function App() {
     })
   }
 
-  const toggleSkillForSession = useCallback((sessionId: string, id: string): boolean => {
+  const toggleSkillForSession = useCallback((sessionId: string, id: string): boolean | null => {
     const session = Object.values(sessionsByWorkspace)
       .flat()
       .find(candidate => candidate.id === sessionId)
-    if (!session) return false
+    if (!session) return null
     const ids = session.enabledSkillIds ?? []
     const enabled = !ids.includes(id)
     chatSessions.update(session.tabId, session.id, {
@@ -1941,37 +2130,34 @@ export default function App() {
   // dispatching a synthetic keydown matching their chord — the local
   // listener at window level picks them up. The global useGlobalShortcuts
   // hook skips LOCAL_SHORTCUTS so we never double-handle a real keypress.
-  // Cycle the most-recently-active chats (across workspaces), newest first. The
-  // active chat anchors the position; if it isn't in the recency list we start
-  // from one end so the first press still moves. We deliberately don't bump
-  // recency while cycling — that would re-sort the list mid-cycle.
-  const cycleRecentChat = useCallback((delta: 1 | -1) => {
-    const list = recentChats
-    if (list.length === 0) return
-    const idx = list.findIndex(c => c.tabId === activeTabId)
-    const from = idx === -1 ? (delta === 1 ? -1 : 0) : idx
-    const next = list[((from + delta) % list.length + list.length) % list.length]
-    if (!next) return
-    if (next.wsId !== activeWs) handleWsSelect(next.wsId)
-    setActiveTabInWorkspace(next.wsId, next.tabId)
-  }, [recentChats, activeTabId, activeWs, handleWsSelect, setActiveTabInWorkspace])
+  // Workspace navigation behaves like browser back/forward history. Each entry
+  // remembers the tab and active chat session that was visible in that workspace.
+  const navigateWorkspaceHistory = useCallback((delta: -1 | 1) => {
+    const moved = moveInWorkspaceHistory(
+      workspaceNavigationHistoryRef.current,
+      delta,
+      new Set(ws.workspaces.map(workspace => workspace.id)),
+    )
+    if (!moved.visit) return
+    workspaceNavigationHistoryRef.current = moved.history
+    const target = moved.visit
+    startTransition(() => {
+      setActiveTabInWorkspace(target.wsId, target.tabId)
+      setActiveWs(target.wsId)
+    })
+    if (target.sessionId) chatSessions.activate(target.tabId, target.sessionId)
+  }, [chatSessions, setActiveTabInWorkspace, ws.workspaces])
 
-  const cycleWorkspace = useCallback((delta: 1 | -1) => {
-    const list = ws.workspaces
-    if (list.length <= 1) return
-    const idx = list.findIndex(workspace => workspace.id === activeWs)
-    const from = idx === -1 ? (delta === 1 ? -1 : 0) : idx
-    const next = list[((from + delta) % list.length + list.length) % list.length]
-    if (next) handleWsSelect(next.id)
-  }, [activeWs, handleWsSelect, ws.workspaces])
-
-  const cycleTab = useCallback((delta: 1 | -1) => {
-    if (tabs.length <= 1) return
-    const idx  = tabs.findIndex(t => t.id === activeTabId)
-    if (idx === -1) return
-    const next = tabs[(idx + delta + tabs.length) % tabs.length]
-    if (next) setActiveTabId(next.id)
-  }, [tabs, activeTabId, setActiveTabId])
+  const navigateTabHistory = useCallback((delta: -1 | 1) => {
+    if (!activeWs) return
+    const history = tabNavigationHistoryByWorkspaceRef.current[activeWs]
+      ?? EMPTY_WORKSPACE_NAVIGATION_HISTORY
+    const moved = moveInTabHistory(history, delta, new Set(tabs.map(tab => tab.id)))
+    if (!moved.visit) return
+    tabNavigationHistoryByWorkspaceRef.current[activeWs] = moved.history
+    setActiveTabId(moved.visit.tabId)
+    if (moved.visit.sessionId) chatSessions.activate(moved.visit.tabId, moved.visit.sessionId)
+  }, [activeWs, chatSessions, setActiveTabId, tabs])
 
   const openInEditor = useCallback(() => {
     const path = activeWorkspace.path
@@ -2044,14 +2230,18 @@ export default function App() {
     switch (id) {
       case 'palette':                 setPaletteOpen(o => !o); return
       case 'workspaces':              setDrawerOpen(o => !o); return
-      case 'prev-chat':               cycleRecentChat(-1); return
-      case 'next-chat':               cycleRecentChat(1); return
-      case 'next-workspace':          cycleWorkspace(1); return
-      case 'prev-workspace':          cycleWorkspace(-1); return
-      case 'next-tab':                cycleTab(1); return
-      case 'prev-tab':                cycleTab(-1); return
+      case 'next-workspace':          navigateWorkspaceHistory(1); return
+      case 'prev-workspace':          navigateWorkspaceHistory(-1); return
+      case 'next-tab':                navigateTabHistory(1); return
+      case 'prev-tab':                navigateTabHistory(-1); return
       case 'settings-search':         handleNewTab('settings'); return
-      case 'prompt-picker':           setPromptPickerOpen(o => !o); return
+      case 'prompt-picker':
+        if (promptPickerOpen) closePromptPicker()
+        else {
+          const shortcutTab = activeTab?.kind === 'chat' ? activeTab : promptBuilderChatTab
+          openPromptPicker(promptBuilderSessionId, shortcutTab?.pinnedSessionId ?? shortcutTab?.id ?? '')
+        }
+        return
       case 'split-terminal-right':    openTerminalSplit('right'); return
       case 'split-terminal-down':     openTerminalSplit('down'); return
       case 'toggle-terminal-column':  setTweak('showTerminal', !tweaks.showTerminal); return
@@ -2103,8 +2293,9 @@ export default function App() {
         }
     }
   }, [
-    activeWorkspace.name, activeWorkspace.path, activeTabId, activeWs, sessActive,
-    chatSessions, cycleTab, cycleRecentChat, cycleWorkspace, handleCloseTab, handleNewTab, openInEditor,
+    activeWorkspace.name, activeWorkspace.path, activeTab, activeTabId, activeWs, sessActive,
+    chatSessions, navigateTabHistory, navigateWorkspaceHistory, handleCloseTab, handleNewTab, openInEditor,
+    closePromptPicker, openPromptPicker, promptBuilderChatTab, promptBuilderSessionId, promptPickerOpen,
     openTerminalSplit, pty, setAddOpen, setDrawerOpen, setPaletteOpen, setSetting, setTweak, startCanvasFromAnywhere, startCrewFromAnywhere,
     settings.appTheme, settings.shortcutOverrides, settings, tweaks.density, tweaks.showTerminal, ws, effectivePath,
   ])
@@ -2142,6 +2333,12 @@ export default function App() {
   // <MissionDataProvider/> below so its subscription stays off App. The Mission
   // tab and menulet read it through context via MissionControlHost/MenuletHost.
   const [menuletOpen, setMenuletOpen] = useState(false)
+  const [systemMonitorOpen, setSystemMonitorOpen] = useState(false)
+  const [windowTabsMenuOpen, setWindowTabsMenuOpen] = useState(false)
+  const windowTabsHidden = useMobileWindowTabsAutoHide({
+    enabled: mobile.isMobile,
+    locked: windowTabsMenuOpen || drawerOpen || menuletOpen || systemMonitorOpen,
+  })
   const openMissionControl = useCallback((): void => {
     setMenuletOpen(false)
     handleNewTab('mission')
@@ -2238,16 +2435,51 @@ export default function App() {
     focusComposerSoon()
   }, [ws.workspaces, activeWs, setActiveTabId, setActiveTabInWorkspace, chatSessions, focusComposerSoon])
 
+  const handleSessionDrop = useCallback((payload: SessionDragPayload, anchorTabId: string) => {
+    if (mobile.isMobile) return
+    const session = chatSessions.getSessions(payload.tabId).find(item => item.id === payload.sessionId)
+    if (!session) return
+    const targetWsId = workspaceByChatTabId[session.tabId] ?? activeWs
+    if (!targetWsId || targetWsId !== activeWs) return
+    const result = splitAnchorWithSession(
+      anchorTabId,
+      { sessionId: session.id, ownerTabId: session.tabId, label: session.label },
+      chatSessions.getActiveId(session.tabId),
+    )
+    if (!result) return
+    if (result.activateOwner) chatSessions.activate(session.tabId, session.id)
+  }, [activeWs, chatSessions, mobile.isMobile, splitAnchorWithSession, workspaceByChatTabId])
+
+  const resolveHandoffSessionPath = useCallback((session: Session) =>
+    session.delegatedWorktreePath ?? worktreeForChatSurface(session.tabId, session.id).path,
+  [worktreeForChatSurface])
+
+  const activateHandoffDestination = useCallback((session: Session) => {
+    const targetWsId = workspaceByChatTabId[session.tabId]
+    const targetWs = ws.workspaces.find(workspace => workspace.id === targetWsId)
+    if (!targetWsId || !targetWs) return
+    restoreChatTabInWorkspace(targetWsId, targetWs.name, session.tabId)
+    jumpToWorkspaceTab(targetWsId, session.tabId)
+    chatSessions.activate(session.tabId, session.id)
+  }, [chatSessions, jumpToWorkspaceTab, restoreChatTabInWorkspace, workspaceByChatTabId, ws.workspaces])
+
   const renderTabContent = (tab: Tab | null) => {
     const tabKind = standaloneSettingsOpen && !activeWs ? 'settings' : (tab?.kind ?? 'chat')
     const tabId = tab?.id ?? activeTabId
+    const sessionOwnerTabId = tab?.sessionOwnerTabId ?? tabId
+    const pinnedSessionId = tab?.pinnedSessionId
     const tabGitOpen = gitOpenByTab[tabId] ?? false
     const tabGitWidth = gitWidthByTab[tabId] ?? 380
     const setTabGitOpen = (open: boolean) => setGitOpenForTab(tabId, open)
     const setTabGitWidth = (next: number | ((prev: number) => number)) => setGitWidthForTab(tabId, next)
 
-    // Tab-specific session lookups
-    const tabActiveSession = chatSessions.getActiveSession(tabId)
+    // Tab-specific session and worktree lookups. Split/workbench surfaces may
+    // render alongside the active outer tab, so they must never inherit its cwd.
+    const tabActiveSession = pinnedSessionId
+      ? chatSessions.getSessions(sessionOwnerTabId).find(session => session.id === pinnedSessionId)
+        ?? chatSessions.getActiveSession(sessionOwnerTabId)
+      : chatSessions.getActiveSession(sessionOwnerTabId)
+    const tabWorktree = worktreeForChatSurface(sessionOwnerTabId, pinnedSessionId ?? tabActiveSession?.id)
 
     // Tab-specific chat state
     const tabAgentId = tabActiveSession?.agentId ?? settings.defaultAgent ?? 'pi'
@@ -2262,7 +2494,7 @@ export default function App() {
     // Tab-specific PTY panes
     const tabPanes = pty.panes.filter(p => p.tabId === tabId)
 
-    if (tabKind === 'settings') return <SettingsScreen />
+    if (tabKind === 'settings') return <SettingsScreen activeWorkspace={activeWorkspace} />
     if (tabKind === 'plugins') return <PluginsPage workspaces={ws.workspaces} activeWorkspaceId={activeWs} pluginWorkspaceEnabled={settings.pluginWorkspaceEnabled} setSetting={setSetting} />
     if (tabKind === 'mission') {
       return (
@@ -2274,6 +2506,7 @@ export default function App() {
           onRespondRequest={bridges.respondUserRequest}
           pluginMissionWidgets={pluginMissionWidgets}
           onPluginMissionWidget={(target) => runPluginActionTarget(target, { source: 'mission-widget' })}
+          onOpenActivity={mobile.isMobile ? () => mobile.onSheetToggle('mission-activity') : undefined}
         />
       )
     }
@@ -2322,7 +2555,9 @@ export default function App() {
           workspaceName={activeWorkspace.name}
           openChatCount={canvasPanes.filter(pane => pane.kind === 'chat').length}
           openTerminalCount={canvasPanes.filter(pane => pane.kind === 'terminal').length}
-          panes={canvasPanes.map(pane => ({
+          panes={canvasPanes.map(pane => {
+            const paneWorktree = worktreeForChatSurface(pane.id)
+            return {
             id: pane.id,
             kind: pane.kind,
             title: pane.title,
@@ -2333,11 +2568,14 @@ export default function App() {
                 tabId={pane.id}
                 activeWs={activeWs}
                 workspace={activeWorkspace}
-                effectivePath={effectivePath}
-                effectiveBranch={effectiveBranch}
-                worktreeBranch={activeWorktree?.branch}
+                effectivePath={paneWorktree.path}
+                effectiveBranch={paneWorktree.branch}
+                worktreeBranch={paneWorktree.worktreeBranch}
                 agents={agents}
                 chatSessions={chatSessions}
+                workspaceSessions={sessionsByWorkspace[activeWs] ?? []}
+                resolveHandoffSessionPath={resolveHandoffSessionPath}
+                onHandoffDestinationActivate={activateHandoffDestination}
                 bridges={bridges}
                 pty={pty}
                 crewSession={null}
@@ -2353,7 +2591,7 @@ export default function App() {
                 onOpenFile={openFileInEditor}
                 onOpenBrowser={openBrowserUrl}
                 onOpenCanvas={startCanvasFromAnywhere}
-                onOpenPrompts={() => setPromptPickerOpen(true)}
+                onOpenPrompts={() => openPromptPicker(chatSessions.getActiveSession(pane.id)?.id, pane.id)}
                 prompts={promptLib.prompts}
                 skills={promptLib.skills}
                 commands={promptFiles.commands}
@@ -2375,8 +2613,13 @@ export default function App() {
                 gitOpen={gitOpenByTab[pane.id] ?? false}
                 setGitOpen={(open) => setGitOpenForTab(pane.id, open)}
                 github={github}
-                dirtyCount={effectiveDirty}
-                git={git}
+                dirtyCount={paneWorktree.dirty}
+                currentWorktreeId={paneWorktree.id}
+                onSwitchWorktree={(id) => selectWorktreeForKey(paneWorktree.key, id)}
+                onGitAskAgent={handleGitAskAgent}
+                onRequestGitAuth={requestGitAuth}
+                onRequestSigningPassphrase={requestSigningPassphrase}
+                alwaysCommitUnsigned={settings.alwaysCommitUnsigned}
                 gitWidth={gitWidthByTab[pane.id] ?? 380}
                 setGitWidth={(w) => setGitWidthForTab(pane.id, w)}
                 onOpenGitFileDiff={openGitFileDiff}
@@ -2397,14 +2640,15 @@ export default function App() {
                 onPluginTerminalWatcher={(target, paneId) => runPluginActionTarget(target, { source: 'terminal-watcher', terminalPaneId: paneId })}
                 setPendingGitDiff={setPendingGitDiff}
                 onWorktreesChanged={() => ws.refreshWorktrees(activeWs)}
-                changesDrawerOpen={changesDrawerOpen}
-                setChangesDrawerOpen={setChangesDrawerOpen}
+                changesDrawerOpen={isSurfaceOpen(changesDrawerOpenBySurface, pane.id)}
+                setChangesDrawerOpen={(open) => setChangesDrawerOpenForSurface(pane.id, open)}
               />
             ) : (
               <div className="full-term canvas-full-term">
                 <TermColumn
                   panes={pty.panes.filter(p => p.tabId === pane.id)}
                   agents={agents}
+                  tabKind="canvas"
                   onClose={pty.close}
                   onAddShell={() => pty.addShell(activeWs, pane.id, effectivePath, effectiveShell(settings))}
                   onAddAgent={(agentId) => {
@@ -2421,7 +2665,8 @@ export default function App() {
                 />
               </div>
             ),
-          }))}
+          }
+          })}
           onNewChat={() => addCanvasPane(tabId, 'chat')}
           onNewTerminal={() => addCanvasPane(tabId, 'terminal')}
           onClosePane={(paneId) => closeCanvasPane(tabId, paneId)}
@@ -2432,14 +2677,20 @@ export default function App() {
       return (
         <ChatPane
           key={tabId}
-          tabId={tabId}
+          tabId={sessionOwnerTabId}
+          surfaceTabId={tabId}
+          pinnedSessionId={pinnedSessionId}
+          onSessionDrop={payload => handleSessionDrop(payload, tabId)}
           activeWs={activeWs}
           workspace={activeWorkspace}
-          effectivePath={effectivePath}
-          effectiveBranch={effectiveBranch}
-          worktreeBranch={activeWorktree?.branch}
+          effectivePath={tabWorktree.path}
+          effectiveBranch={tabWorktree.branch}
+          worktreeBranch={tabWorktree.worktreeBranch}
           agents={agents}
           chatSessions={chatSessions}
+          workspaceSessions={sessionsByWorkspace[activeWs] ?? []}
+          resolveHandoffSessionPath={resolveHandoffSessionPath}
+          onHandoffDestinationActivate={activateHandoffDestination}
           bridges={bridges}
           pty={pty}
           crewSession={tabCrewSession}
@@ -2454,13 +2705,15 @@ export default function App() {
           onOpenFile={openFileInEditor}
           onOpenBrowser={openBrowserUrl}
           onOpenCanvas={startCanvasFromAnywhere}
-          onOpenPrompts={() => setPromptPickerOpen(true)}
+          onOpenPrompts={() => openPromptPicker(tabActiveSession?.id, pinnedSessionId ?? tabId)}
           prompts={promptLib.prompts}
           skills={promptLib.skills}
           commands={promptFiles.commands}
           onToggleSkillEnabled={(id) => {
             const target = promptLib.skills.find(s => s.id === id)
-            const current = chatSessions.getActiveSession(tabId)
+            const current = pinnedSessionId
+              ? chatSessions.getSessions(sessionOwnerTabId).find(session => session.id === pinnedSessionId)
+              : chatSessions.getActiveSession(sessionOwnerTabId)
             if (target && current) {
               handleApplySkill({
                 ...target,
@@ -2476,8 +2729,13 @@ export default function App() {
           gitOpen={tabGitOpen}
           setGitOpen={setTabGitOpen}
           github={github}
-          dirtyCount={effectiveDirty}
-          git={git}
+          dirtyCount={tabWorktree.dirty}
+          currentWorktreeId={tabWorktree.id}
+          onSwitchWorktree={(id) => selectWorktreeForKey(tabWorktree.key, id)}
+          onGitAskAgent={handleGitAskAgent}
+          onRequestGitAuth={requestGitAuth}
+          onRequestSigningPassphrase={requestSigningPassphrase}
+          alwaysCommitUnsigned={settings.alwaysCommitUnsigned}
           gitWidth={tabGitWidth}
           setGitWidth={setTabGitWidth}
           onOpenGitFileDiff={openGitFileDiff}
@@ -2498,8 +2756,8 @@ export default function App() {
           onPluginTerminalWatcher={(target, paneId) => runPluginActionTarget(target, { source: 'terminal-watcher', terminalPaneId: paneId })}
           setPendingGitDiff={setPendingGitDiff}
           onWorktreesChanged={() => ws.refreshWorktrees(activeWs)}
-          changesDrawerOpen={changesDrawerOpen}
-          setChangesDrawerOpen={setChangesDrawerOpen}
+          changesDrawerOpen={isSurfaceOpen(changesDrawerOpenBySurface, tabId)}
+          setChangesDrawerOpen={(open) => setChangesDrawerOpenForSurface(tabId, open)}
         />
       )
     }
@@ -2589,10 +2847,13 @@ export default function App() {
         />
         {tabGitOpen && (
           <>
-            <Splitter
-              orientation="vertical"
-              onDrag={delta => setGitWidthForTab(tabId, w => Math.max(280, Math.min(720, w - delta)))}
-            />
+            {mobile.isMobile && <button type="button" className="mobile-git-backdrop" aria-label="Close Git sidebar" onClick={() => setGitOpenForTab(tabId, false)} />}
+            {!mobile.isMobile && (
+              <Splitter
+                orientation="vertical"
+                onDrag={delta => setGitWidthForTab(tabId, w => Math.max(280, Math.min(720, w - delta)))}
+              />
+            )}
             <GitSidebar
               workspace={{
                 name:   activeWorkspace.name,
@@ -2611,6 +2872,7 @@ export default function App() {
               }}
               pluginGitLenses={pluginGitLenses}
               onPluginGitLens={(target) => runPluginActionTarget(target, { source: 'git-lens' })}
+              onClose={mobile.isMobile ? () => setGitOpenForTab(tabId, false) : undefined}
             />
           </>
         )}
@@ -2621,13 +2883,17 @@ export default function App() {
       return (
         <WriterWorkspace
           tabId={tabId}
+          onSessionDrop={payload => handleSessionDrop(payload, tabId)}
           activeWs={activeWs}
           workspace={activeWorkspace}
-          effectivePath={effectivePath}
-          effectiveBranch={effectiveBranch}
-          worktreeBranch={activeWorktree?.branch}
+          effectivePath={tabWorktree.path}
+          effectiveBranch={tabWorktree.branch}
+          worktreeBranch={tabWorktree.worktreeBranch}
           agents={agents}
           chatSessions={chatSessions}
+          workspaceSessions={sessionsByWorkspace[activeWs] ?? []}
+          resolveHandoffSessionPath={resolveHandoffSessionPath}
+          onHandoffDestinationActivate={activateHandoffDestination}
           bridges={bridges}
           pty={pty}
           density={tweaks.density}
@@ -2639,7 +2905,7 @@ export default function App() {
           shortcutOverrides={settings.shortcutOverrides}
           onOpenFile={openFileInEditor}
           onOpenBrowser={openBrowserUrl}
-          onOpenPrompts={() => setPromptPickerOpen(true)}
+          onOpenPrompts={() => openPromptPicker(chatSessions.getActiveSession(tabId)?.id, tabId)}
           prompts={promptLib.prompts}
           skills={promptLib.skills}
           commands={promptFiles.commands}
@@ -2660,8 +2926,13 @@ export default function App() {
           gitOpen={tabGitOpen}
           setGitOpen={setTabGitOpen}
           github={github}
-          dirtyCount={effectiveDirty}
-          git={git}
+          dirtyCount={tabWorktree.dirty}
+          currentWorktreeId={tabWorktree.id}
+          onSwitchWorktree={(id) => selectWorktreeForKey(tabWorktree.key, id)}
+          onGitAskAgent={handleGitAskAgent}
+          onRequestGitAuth={requestGitAuth}
+          onRequestSigningPassphrase={requestSigningPassphrase}
+          alwaysCommitUnsigned={settings.alwaysCommitUnsigned}
           gitWidth={tabGitWidth}
           setGitWidth={setTabGitWidth}
           onOpenGitFileDiff={openGitFileDiff}
@@ -2675,8 +2946,8 @@ export default function App() {
           termLayout={pty.getTabLayout(tabId)}
           onTermLayoutChange={(layout) => pty.setTabLayout(tabId, layout)}
           setPendingGitDiff={setPendingGitDiff}
-          changesDrawerOpen={changesDrawerOpen}
-          setChangesDrawerOpen={setChangesDrawerOpen}
+          changesDrawerOpen={isSurfaceOpen(changesDrawerOpenBySurface, tabId)}
+          setChangesDrawerOpen={(open) => setChangesDrawerOpenForSurface(tabId, open)}
         />
       )
     }
@@ -2686,6 +2957,8 @@ export default function App() {
           <TermColumn
             panes={tabPanes}
             agents={agents}
+            tabKind="terminal"
+            onSessionDrop={payload => handleSessionDrop(payload, tabId)}
             onClose={pty.close}
             onAddShell={() => pty.addShell(activeWs, tabId, effectivePath, effectiveShell(settings))}
             onAddAgent={(agentId) => {
@@ -2746,6 +3019,14 @@ export default function App() {
       case 'start-canvas':     startCanvasFromAnywhere(); return
       case 'updates':          window.electronAPI?.updaterCheck?.(); return
       case 'docs':             window.electronAPI?.openExternal?.('https://crewcode-docs.logixhub.icu'); return
+      case 'toggle-menulet':
+        setSystemMonitorOpen(false)
+        setMenuletOpen(open => !open)
+        return
+      case 'toggle-system-monitor':
+        setMenuletOpen(false)
+        setSystemMonitorOpen(open => !open)
+        return
     }
   }, [activeWs, tabs, setActiveTabId, handleNewTab, setPaletteOpen, setTweak, tweaks.showTerminal, startCanvasFromAnywhere, startCrewFromAnywhere])
 
@@ -2755,7 +3036,8 @@ export default function App() {
       setOpen={setDrawerOpen}
       height={tweaks.drawerHeight}
       width={tweaks.drawerWidth}
-      position={tweaks.drawerPosition}
+      position={effectiveDrawerPosition}
+      mobileOverlay={mobile.isMobile}
       active={activeWs}
       setActive={handleWsSelect}
       density={tweaks.density}
@@ -2770,7 +3052,6 @@ export default function App() {
         // to that workspace explicitly instead of using the current-workspace setter.
         if (targetWsId) jumpToWorkspaceTab(targetWsId, session.tabId)
         chatSessions.activate(session.tabId, session.id)
-        touchChatRecency(session.id)
       }}
       onSessionAdd={(wsId) => {
         const targetWs = ws.workspaces.find(w => w.id === wsId)
@@ -2806,14 +3087,12 @@ export default function App() {
         if (targetWs) restoreChatTabInWorkspace(entry.wsId, targetWs.name, entry.tabId)
         jumpToWorkspaceTab(entry.wsId, entry.tabId)
         chatSessions.activate(entry.tabId, entry.sessionId)
-        touchChatRecency(entry.sessionId)
       }}
       onCompletedChatActivate={(entry) => {
         const targetWs = ws.workspaces.find(w => w.id === entry.wsId)
         if (targetWs) restoreChatTabInWorkspace(entry.wsId, targetWs.name, entry.tabId)
         jumpToWorkspaceTab(entry.wsId, entry.tabId)
         chatSessions.activate(entry.tabId, entry.sessionId)
-        touchChatRecency(entry.sessionId)
         // Opening it clears it from Completed until its next finished turn.
         dismissCompletedChat(entry.sessionId)
       }}
@@ -2937,6 +3216,264 @@ export default function App() {
     </aside>
   ) : null
 
+  // Mobile sheet content components
+  const WorkspacesContent = () => (
+    <div style={{ padding: 'var(--space-4)', maxHeight: 'calc(100vh - 200px)', overflow: 'auto' }}>
+      <div style={{ marginBottom: 'var(--space-4)' }}>
+        <button
+          onClick={async () => { const id = await ws.addViaPicker(); if (id) { setActiveWs(id); mobile.closeSheet('workspaces') }}}
+          style={{
+            width: '100%', padding: 'var(--space-3)', background: 'var(--primary)', color: 'var(--primary-foreground)',
+            border: 'none', borderRadius: 'var(--radius)', fontSize: '14px', fontWeight: 500, cursor: 'pointer'
+          }}
+        >
+          + Add Workspace
+        </button>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+        {ws.workspaces.map(workspace => (
+          <button
+            key={workspace.id}
+            onClick={() => { handleWsSelect(workspace.id); mobile.closeSheet('workspaces') }}
+            style={{
+              width: '100%', padding: 'var(--space-3)', background: activeWs === workspace.id ? 'var(--primary)' : 'var(--card)',
+              color: activeWs === workspace.id ? 'var(--primary-foreground)' : 'var(--foreground)',
+              border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontSize: '14px',
+              textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 'var(--space-2)'
+            }}
+          >
+            <Icon name="folder" size={20} />
+            <span style={{ flex: 1 }}>{workspace.name}</span>
+            {workspace.worktrees && workspace.worktrees.length > 0 && (
+              <span className="cc-mono-sm" style={{ color: 'var(--muted-foreground)' }}>
+                {workspace.worktrees.length} worktree{workspace.worktrees.length === 1 ? '' : 's'}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+      <div style={{ marginTop: 'var(--space-6)', paddingTop: 'var(--space-4)', borderTop: '1px solid var(--border)' }}>
+        <div className="cc-label" style={{ marginBottom: 'var(--space-2)' }}>Quick Actions</div>
+        <button
+          onClick={() => { handleNewTab('settings'); mobile.closeSheet('workspaces') }}
+          style={{
+            width: '100%', padding: 'var(--space-3)', background: 'var(--card)', color: 'var(--foreground)',
+            border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontSize: '14px',
+            textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 'var(--space-2)'
+          }}
+        >
+          <Icon name="settings" size={20} />
+          <span>Settings</span>
+        </button>
+      </div>
+    </div>
+  )
+
+  const GitSheetContent = () => (
+    <div style={{ padding: 'var(--space-4)', maxHeight: 'calc(100vh - 200px)', overflow: 'auto' }}>
+      {hasWs && activeWorkspace ? (
+        <div>
+          <div style={{ marginBottom: 'var(--space-4)' }}>
+            <div className="cc-h3" style={{ margin: 0 }}>{activeWorkspace.name}</div>
+            <div className="cc-mono-sm" style={{ color: 'var(--muted-foreground)' }}>{effectivePath}</div>
+            <div className="cc-mono-sm" style={{ color: 'var(--muted-foreground)' }}>Branch: {effectiveBranch}</div>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+            <button
+              onClick={() => git.handlers.onStageAll?.([])}
+              style={{
+                width: '100%', padding: 'var(--space-3)', background: 'var(--primary)', color: 'var(--primary-foreground)',
+                border: 'none', borderRadius: 'var(--radius)', fontSize: '14px', fontWeight: 500, cursor: 'pointer',
+                display: 'flex', alignItems: 'center', gap: 'var(--space-2)', justifyContent: 'center'
+              }}
+            >
+              <Icon name="gitCommit" size={20} />
+              <span>Stage All & Commit</span>
+            </button>
+            <button
+              onClick={() => git.handlers.onPush?.()}
+              style={{
+                width: '100%', padding: 'var(--space-3)', background: 'var(--card)', color: 'var(--foreground)',
+                border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontSize: '14px',
+                textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 'var(--space-2)'
+              }}
+            >
+              <Icon name="arrowUp" size={20} />
+              <span>Push</span>
+            </button>
+            <button
+              onClick={() => git.handlers.onPull?.()}
+              style={{
+                width: '100%', padding: 'var(--space-3)', background: 'var(--card)', color: 'var(--foreground)',
+                border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontSize: '14px',
+                textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 'var(--space-2)'
+              }}
+            >
+              <Icon name="arrowDown" size={20} />
+              <span>Pull</span>
+            </button>
+            <button
+              onClick={() => git.handlers.onFetch?.()}
+              style={{
+                width: '100%', padding: 'var(--space-3)', background: 'var(--card)', color: 'var(--foreground)',
+                border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontSize: '14px',
+                textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 'var(--space-2)'
+              }}
+            >
+              <Icon name="refresh" size={20} />
+              <span>Fetch</span>
+            </button>
+            <button
+              onClick={() => { handleNewTab('git'); mobile.closeSheet('git') }}
+              style={{
+                width: '100%', padding: 'var(--space-3)', background: 'var(--card)', color: 'var(--foreground)',
+                border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontSize: '14px',
+                textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 'var(--space-2)'
+              }}
+            >
+              <Icon name="gitBranch" size={20} />
+              <span>Open Git Workspace</span>
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div style={{ textAlign: 'center', padding: 'var(--space-8)', color: 'var(--muted-foreground)' }}>
+          No workspace selected
+        </div>
+      )}
+    </div>
+  )
+
+  const TerminalSheetContent = () => (
+    <div style={{ height: 'calc(100vh - 200px)', display: 'flex', flexDirection: 'column' }}>
+      {hasWs ? (
+        <>
+          <TermColumn
+            panes={wsPanes}
+            agents={agents}
+            tabKind={tabInfoById[activeTabId]?.kind}
+            onClose={pty.close}
+            onAddShell={() => pty.addShell(activeWs, activeTabId, effectivePath, effectiveShell(settings))}
+            onAddAgent={(agentId) => {
+              const a = agents.find(x => x.id === agentId)
+              return a ? pty.addAgent(activeWs, activeTabId, a.id, a.name, effectivePath, a.path) : undefined
+            }}
+            onAddSsh={(target) => pty.addSsh(activeWs, activeTabId, target, effectivePath)}
+            sshTargets={sshTargets}
+            layout={pty.getTabLayout(activeTabId)}
+            onLayoutChange={(layout) => pty.setTabLayout(activeTabId, layout)}
+            onOpenUrl={openBrowserUrl}
+            pluginTerminalWatchers={pluginTerminalWatchers}
+            onPluginTerminalWatcher={(target, paneId) => runPluginActionTarget(target, { source: 'terminal-watcher', terminalPaneId: paneId })}
+          />
+        </>
+      ) : (
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--muted-foreground)' }}>
+          No workspace selected
+        </div>
+      )}
+    </div>
+  )
+
+  const MoreSheetContent = () => (
+    <div style={{ padding: 'var(--space-4)', maxHeight: 'calc(100vh - 200px)', overflow: 'auto' }}>
+      <div style={{ marginBottom: 'var(--space-4)' }}>
+        <h3 className="cc-h3" style={{ margin: '0 0 var(--space-3)' }}>Settings</h3>
+        <button
+          onClick={() => { handleNewTab('settings'); mobile.closeSheet('more') }}
+          style={{
+            width: '100%', padding: 'var(--space-3)', background: 'var(--card)', color: 'var(--foreground)',
+            border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontSize: '14px',
+            textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 'var(--space-2)'
+          }}
+        >
+          <Icon name="settings" size={20} />
+          <span>Settings</span>
+        </button>
+        <button
+          onClick={() => { handleNewTab('archive'); mobile.closeSheet('more') }}
+          style={{
+            width: '100%', padding: 'var(--space-3)', background: 'var(--card)', color: 'var(--foreground)',
+            border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontSize: '14px',
+            textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginTop: 'var(--space-2)'
+          }}
+        >
+          <Icon name="archive" size={20} />
+          <span>Archive</span>
+        </button>
+        <button
+          onClick={() => { handleNewTab('prompts'); mobile.closeSheet('more') }}
+          style={{
+            width: '100%', padding: 'var(--space-3)', background: 'var(--card)', color: 'var(--foreground)',
+            border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontSize: '14px',
+            textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginTop: 'var(--space-2)'
+          }}
+        >
+          <Icon name="fileText" size={20} />
+          <span>Prompts & Skills</span>
+        </button>
+        <button
+          onClick={() => { handleNewTab('plugins'); mobile.closeSheet('more') }}
+          style={{
+            width: '100%', padding: 'var(--space-3)', background: 'var(--card)', color: 'var(--foreground)',
+            border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontSize: '14px',
+            textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginTop: 'var(--space-2)'
+          }}
+        >
+          <Icon name="plug" size={20} />
+          <span>Plugins</span>
+        </button>
+        <button
+          onClick={() => { handleNewTab('mission'); mobile.closeSheet('more') }}
+          style={{
+            width: '100%', padding: 'var(--space-3)', background: 'var(--card)', color: 'var(--foreground)',
+            border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontSize: '14px',
+            textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginTop: 'var(--space-2)'
+          }}
+        >
+          <Icon name="cpu" size={20} />
+          <span>Mission Control</span>
+        </button>
+      </div>
+      <div>
+        <h3 className="cc-h3" style={{ margin: '0 0 var(--space-3)' }}>Actions</h3>
+        <button
+          onClick={() => { startCrewFromAnywhere(); mobile.closeSheet('more') }}
+          style={{
+            width: '100%', padding: 'var(--space-3)', background: 'var(--primary)', color: 'var(--primary-foreground)',
+            border: 'none', borderRadius: 'var(--radius)', fontSize: '14px', fontWeight: 500,
+            cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 'var(--space-2)'
+          }}
+        >
+          <Icon name="crew" size={20} />
+          <span>Start Crew</span>
+        </button>
+        <button
+          onClick={() => { startCanvasFromAnywhere(); mobile.closeSheet('more') }}
+          style={{
+            width: '100%', padding: 'var(--space-3)', background: 'var(--card)', color: 'var(--foreground)',
+            border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontSize: '14px',
+            textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginTop: 'var(--space-2)'
+          }}
+        >
+          <Icon name="workbench" size={20} />
+          <span>Canvas Mode</span>
+        </button>
+        <button
+          onClick={() => { openInEditor(); mobile.closeSheet('more') }}
+          style={{
+            width: '100%', padding: 'var(--space-3)', background: 'var(--card)', color: 'var(--foreground)',
+            border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontSize: '14px',
+            textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 'var(--space-2)', marginTop: 'var(--space-2)'
+          }}
+        >
+          <Icon name="external" size={20} />
+          <span>Open in VS Code</span>
+        </button>
+      </div>
+    </div>
+  )
+
   return (
     <MissionDataProvider
       workspaces={ws.workspaces}
@@ -2946,87 +3483,122 @@ export default function App() {
       userRequestsByTab={missionUserRequestsByTab}
       isBridgeRunning={bridges.isBridgeRunning}
     >
-    <div className="app">
-      {loadingScreenMounted && <LoadingScreen exiting={!showLoadingScreen} />}
+      <MobileShell
+        isMobile={mobile.isMobile}
+        sheets={{
+          workspaces: {
+            open: mobile.sheets.workspaces?.open ?? false,
+            title: 'Workspaces',
+            content: <WorkspacesContent />
+          },
+          git: {
+            open: mobile.sheets.git?.open ?? false,
+            title: 'Git',
+            content: <GitSheetContent />
+          },
+          terminal: {
+            open: mobile.sheets.terminal?.open ?? false,
+            title: 'Terminal',
+            content: <TerminalSheetContent />
+          },
+          more: {
+            open: mobile.sheets.more?.open ?? false,
+            title: 'More',
+            content: <MoreSheetContent />
+          },
+          'mission-activity': {
+            open: mobile.sheets['mission-activity']?.open ?? false,
+            title: 'Activity',
+            content: <MissionActivitySheetHost />
+          },
+        }}
+        onSheetToggle={mobile.onSheetToggle}
+      >
+        <div className="app">
+          {loadingScreenMounted && <LoadingScreen exiting={!showLoadingScreen} />}
 
-      {!settings.onboardingCompleted && !showLoadingScreen && (
-        <Onboarding
-          agents={agents}
-          defaultAgent={settings.defaultAgent}
-          onSetDefaultAgent={(id) => setSetting('defaultAgent', id)}
-          hasProjects={ws.workspaces.length > 0}
-          onAddProject={() => setAddOpen(true)}
-          onFinish={() => setSetting('onboardingCompleted', true)}
+          {!settings.onboardingCompleted && !showLoadingScreen && (
+            <Onboarding
+              agents={agents}
+              defaultAgent={settings.defaultAgent}
+              onSetDefaultAgent={(id) => setSetting('defaultAgent', id)}
+              hasProjects={ws.workspaces.length > 0}
+              onAddProject={() => setAddOpen(true)}
+              onFinish={() => setSetting('onboardingCompleted', true)}
+            />
+          )}
+
+        <div className={`window-tabs${windowTabsHidden ? ' mobile-tabs-hidden' : ''}`}>
+          <WindowTabs
+            tabs={displayTabs}
+            activeId={activeTabId}
+            onActivate={setActiveTabId}
+            onClose={handleCloseTab}
+            crewTabs={crewTabs}
+            splitGroups={splitGroups}
+            splitTabIds={splitTabIds}
+            splitPrimaryTabId={splitPrimaryTabId}
+            onSplit={setSplitTab}
+            onPin={pinTab}
+            onUnpin={unpinTab}
+            onRename={handleRenameWindowTab}
+            onColor={setTabColor}
+            onReorder={reorderTab}
+            activeKind={activeTab?.kind}
+            appMenuFootStatus={`${activeWorkspace?.name || 'no workspace'} · ${sessions.length} session${sessions.length === 1 ? '' : 's'}`}
+            onAppMenuAction={handleAppMenuAction}
+            pluginMenuItems={pluginAddMenuItems}
+            onPluginMenuItem={(item) => runPluginActionTarget(item.target, { source: 'plugin-menu' })}
+            onNewTabMenuOpenChange={setWindowTabsMenuOpen}
+          />
+        </div>
+        <NotificationBar
+          onNavigateToChat={navigateToChatScope}
+          resolveChatSource={voiceNotificationSource}
         />
-      )}
+        <TooltipHost />
+        <GitAuthModal
+          open={!!gitAuthRequest}
+          remoteUrl={gitAuthRequest?.remoteUrl}
+          error={gitAuthRequest?.error}
+          onSubmit={resolveGitAuth}
+          onCancel={() => resolveGitAuth(null)}
+        />
+        <GitSigningModal
+          open={!!gitSigningRequest}
+          error={gitSigningRequest?.error}
+          onSubmit={resolveSigningPassphrase}
+          onCancel={() => resolveSigningPassphrase(null)}
+        />
+        <ChatNotifications
+          sessActive={sessActive}
+          show={show}
+        />
 
-      <WindowTabs
-        tabs={displayTabs}
-        activeId={activeTabId}
-        onActivate={setActiveTabId}
-        onClose={handleCloseTab}
-        crewTabs={crewTabs}
-        splitGroups={splitGroups}
-        splitTabIds={splitTabIds}
-        splitPrimaryTabId={splitPrimaryTabId}
-        onSplit={setSplitTab}
-        onCloseSplitGroup={closeSplitGroup}
-        onPin={pinTab}
-        onUnpin={unpinTab}
-        onRename={handleRenameWindowTab}
-        onColor={setTabColor}
-        onReorder={reorderTab}
-        activeKind={activeTab?.kind}
-        appMenuFootStatus={`${activeWorkspace?.name || 'no workspace'} · ${sessions.length} session${sessions.length === 1 ? '' : 's'}`}
-        onAppMenuAction={handleAppMenuAction}
-        pluginMenuItems={pluginAddMenuItems}
-        onPluginMenuItem={(item) => runPluginActionTarget(item.target, { source: 'plugin-menu' })}
-      />
-      <NotificationBar
-        onNavigateToChat={navigateToChatScope}
-        resolveChatSource={voiceNotificationSource}
-      />
-      <TooltipHost />
-      <GitAuthModal
-        open={!!gitAuthRequest}
-        remoteUrl={gitAuthRequest?.remoteUrl}
-        error={gitAuthRequest?.error}
-        onSubmit={resolveGitAuth}
-        onCancel={() => resolveGitAuth(null)}
-      />
-      <GitSigningModal
-        open={!!gitSigningRequest}
-        error={gitSigningRequest?.error}
-        onSubmit={resolveSigningPassphrase}
-        onCancel={() => resolveSigningPassphrase(null)}
-      />
-      <ChatNotifications
-        sessActive={sessActive}
-        show={show}
-      />
+        <MenuletHost
+          open={menuletOpen}
+          onToggle={() => setMenuletOpen(o => !o)}
+          onClose={() => setMenuletOpen(false)}
+          onOpenHub={openMissionControl}
+          onOpenAgent={handleMcOpen}
+          onPauseAgent={handleMcPause}
+          onResumeAgent={handleMcResume}
+          onSpawnAgent={handleMcSpawn}
+          onRespondRequest={bridges.respondUserRequest}
+        />
 
-      <MenuletHost
-        open={menuletOpen}
-        onToggle={() => setMenuletOpen(o => !o)}
-        onClose={() => setMenuletOpen(false)}
-        onOpenHub={openMissionControl}
-        onOpenAgent={handleMcOpen}
-        onPauseAgent={handleMcPause}
-        onResumeAgent={handleMcResume}
-        onSpawnAgent={handleMcSpawn}
-        onRespondRequest={bridges.respondUserRequest}
-      />
+        <SystemMonitorMount
+          open={systemMonitorOpen}
+          onOpenChange={setSystemMonitorOpen}
+          terminals={sysmonTerminals}
+          workspaces={sysmonWorkspaces}
+          onKillTerminal={killTerminalSession}
+          onOpenTerminal={openSysmonTerminal}
+          onOpenDaemon={openSysmonDaemon}
+        />
 
-      <SystemMonitorMount
-        terminals={sysmonTerminals}
-        workspaces={sysmonWorkspaces}
-        onKillTerminal={killTerminalSession}
-        onOpenTerminal={openSysmonTerminal}
-        onOpenDaemon={openSysmonDaemon}
-      />
-
-      <div className={`app-region drawer-${tweaks.drawerPosition}${drawerOpen ? ' drawer-open' : ''}`}>
-        {tweaks.drawerPosition === 'left' && workspacesPanel}
+        <div className={`app-region drawer-${effectiveDrawerPosition}${drawerOpen ? ' drawer-open' : ''}`}>
+        {effectiveDrawerPosition === 'left' && workspacesPanel}
         <div className="app-main-row">
           <div className="app-body">
           {splitVisible ? (
@@ -3088,7 +3660,7 @@ export default function App() {
           </div>
           {pluginSidebar}
         </div>
-        {tweaks.drawerPosition === 'right' && workspacesPanel}
+        {effectiveDrawerPosition === 'right' && workspacesPanel}
       </div>
 
       <WorkspaceDock
@@ -3110,7 +3682,7 @@ export default function App() {
         weeklyResetDescription={weeklyResetDescription}
       />
 
-      {tweaks.drawerPosition === 'bottom' && workspacesPanel}
+      {effectiveDrawerPosition === 'bottom' && workspacesPanel}
 
       <AddProjectModal
         open={addOpen}
@@ -3123,7 +3695,7 @@ export default function App() {
         onClone={ws.cloneRepo}
         onInit={ws.initProject}
         onAddRemote={ws.addRemote}
-        onAdded={(id) => { setActiveWs(id); setDrawerOpen(false) }}
+        onAdded={(id) => { handleWsSelect(id); setDrawerOpen(false) }}
       />
 
       {crewSession && (
@@ -3182,12 +3754,25 @@ export default function App() {
 
       <PromptPicker
         open={promptPickerOpen}
-        onClose={() => setPromptPickerOpen(false)}
+        onClose={closePromptPicker}
         prompts={promptLib.prompts}
+        skills={promptBuilderLib.skills}
         seed={{ repo: activeWorkspace?.name ?? '', branch: effectiveBranch }}
         onInsert={(body, p) => {
           promptLib.incUsage('prompts', p.id)
-          insertPromptIntoComposer(body, p)
+          if (promptPickerTarget) {
+            composerDraftActions().set(promptPickerTarget.composerId, current => current ? `${current}\n\n${body}` : body)
+          } else {
+            insertPromptIntoComposer(body, p)
+          }
+        }}
+        onToggleSkill={(skill) => {
+          const sessionId = promptPickerTarget?.sessionId ?? promptBuilderSessionId
+          if (!sessionId) return
+          const enabled = toggleSkillForSession(sessionId, skill.id)
+          if (enabled === null) return
+          promptLib.incUsage('skills', skill.id)
+          handleApplySkill({ ...skill, enabled })
         }}
       />
 
@@ -3221,8 +3806,16 @@ export default function App() {
         <TweaksPanel title="Tweaks">
           <TweakSection label="Layout" />
           <TweakRadio   label="Density"  value={tweaks.density}  options={['compact','regular']} onChange={v => setTweak('density',  v as TweakConfig['density'])} />
-          <TweakRadio   label="Workspaces dock" value={tweaks.drawerPosition} options={['bottom','left','right']} onChange={v => setTweak('drawerPosition', v as TweakConfig['drawerPosition'])} />
-          {tweaks.drawerPosition === 'bottom'
+          <TweakRadio
+            label="Workspaces dock"
+            value={effectiveDrawerPosition}
+            options={mobile.isMobile ? ['left', 'right'] : ['bottom', 'left', 'right']}
+            onChange={v => {
+              if (mobile.isMobile) setMobileDrawerSide(v === 'right' ? 'right' : 'left')
+              else setTweak('drawerPosition', v as TweakConfig['drawerPosition'])
+            }}
+          />
+          {effectiveDrawerPosition === 'bottom'
             ? <TweakSlider label="Drawer height" value={tweaks.drawerHeight} min={220} max={560} step={20} unit="px" onChange={v => setTweak('drawerHeight', v)} />
             : <TweakSlider label="Sidebar width" value={tweaks.drawerWidth} min={220} max={480} step={20} unit="px" onChange={v => setTweak('drawerWidth', v)} />}
           <TweakSection label="Quick actions" />
@@ -3248,8 +3841,9 @@ export default function App() {
         </div>
       )}
 
-      <DialogHost />
-    </div>
+<DialogHost />
+        </div>
+      </MobileShell>
     </MissionDataProvider>
   )
 }

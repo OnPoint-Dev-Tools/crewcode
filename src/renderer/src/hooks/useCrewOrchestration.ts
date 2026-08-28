@@ -28,6 +28,7 @@ import type {
 } from '../orchestrator/crew-session'
 import type { AgentInfo, AgentProviderId, BridgeEvent, Message, Workspace } from '../types'
 import type { EffortLevel } from '../components/composer/EffortPicker'
+import { createTurnActivity, settleCurrentTurnActivity } from '../components/thread/turn-activity'
 
 type SetMessagesForTab = (tabId: string, updater: (prev: Message[]) => Message[]) => void
 
@@ -301,6 +302,7 @@ export function useCrewOrchestration(opts: UseCrewOrchestrationOpts) {
       }
 
       if (agent.transport === 'bridge') {
+        setMessagesForTab(tabId, messages => [...messages, createTurnActivity(task.text, time)])
         // Lanes are workers: they execute, so they run in Build mode like a solo
         // Build-mode chat. Passing the mode explicitly (rather than leaving it
         // undefined) is what makes TurnPermissionGrantStore issue the
@@ -313,6 +315,7 @@ export function useCrewOrchestration(opts: UseCrewOrchestrationOpts) {
           'build',
         )
         if ('error' in r) {
+          setMessagesForTab(tabId, messages => settleCurrentTurnActivity(messages, 'interrupted'))
           setMessagesForTab(tabId, m => [...m, { kind: 'system', time, tone: 'error', text: r.error }])
           return { ...task, lane, tabId, started: false }
         }
@@ -351,9 +354,11 @@ export function useCrewOrchestration(opts: UseCrewOrchestrationOpts) {
           },
         ).then(res => {
           if (!res.ok) {
+            setMessagesForTab(item.tabId!, messages => settleCurrentTurnActivity(messages, 'interrupted'))
             setMessagesForTab(item.tabId!, m => [...m, { kind: 'system', time, tone: 'error', text: res.error ?? 'prompt failed' }])
           }
         }).catch(err => {
+          setMessagesForTab(item.tabId!, messages => settleCurrentTurnActivity(messages, 'interrupted'))
           setMessagesForTab(item.tabId!, m => [...m, { kind: 'system', time, tone: 'error', text: (err as Error).message || 'prompt failed' }])
         })
       } else if ('paneId' in item && item.paneId && item.prompt) {

@@ -7,6 +7,7 @@ export type { McpServerConfig } from '../../shared/mcp-types'
 export type { CustodyHaltPayload } from '../../shared/custody-types'
 // Re-exported (not redeclared) so main and the renderer share one union.
 import type { ModeLevel } from '../../shared/mode-types'
+import type { CrewCoderMode } from '../../shared/crewcoder-types'
 
 /**
  * Token accounting for one completed turn. Providers report different subsets,
@@ -133,6 +134,9 @@ export interface BridgeStartOpts {
   externalDirectories?: string[]
   model?:    string                  // optional model id
   mode?:     ModeLevel
+  // CrewCoder's agent profile, passed as `crewcoder acp --mode`. This is not
+  // CrewCode's Ask/Plan/Build/Full execution-permission mode above.
+  crewcoderMode?: CrewCoderMode
   // Supervisor and other constrained bridge roles can force read-only tools
   // without relying on a chat-mode prompt to behave correctly.
   toolPolicy?: BridgeToolPolicy

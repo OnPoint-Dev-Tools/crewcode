@@ -17,27 +17,39 @@ import { chatSessionSurface } from '../../hooks/chat-session-tab-owner'
 import { workspaceDisplayPath } from './workspace-display-path'
 import { isCompletedChatShortcutVisible } from './completed-chat-expiry'
 import { pinnedSessionsFirst } from './pinned-session-order'
+import { useRunningByScope } from '../../stores/bridge-activity-store'
+import { liveSessionAgentStatus, liveWorkingChats } from './working-chats'
 
 // App-tab feature list. Icons mirror the brand AppMenu so the two routes to
 // these destinations read identically.
 interface AppFeature {
   id:     string
-  icon:   'workbench' | 'inspection' | 'crew' | 'code' | 'edit' | 'gitBranch' | 'plug' | 'monitor'
+  icon:   'workbench' | 'inspection' | 'crew' | 'code' | 'edit' | 'gitBranch' | 'plug' | 'monitor' | 'settings' | 'archive' | 'globe' | 'refresh' | 'cpu' | 'sparkle'
   label:  string
   desc:   string
   tab?:   TabKind          // set when the feature maps to a tab kind (for active state)
+  mobileOnly?: boolean
   action: AppMenuAction
 }
 
+const APP_DESTINATIONS: AppFeature[] = [
+  { id: 'settings', icon: 'settings', label: 'Settings', desc: 'Configure CrewCode preferences', tab: 'settings', action: { kind: 'open-tab', tab: 'settings' } },
+  { id: 'plugins', icon: 'plug', label: 'Plugins', desc: 'Manage local-first extensions', tab: 'plugins', action: { kind: 'open-tab', tab: 'plugins' } },
+  { id: 'archive', icon: 'archive', label: 'Archive', desc: 'Browse archived chats', tab: 'archive', action: { kind: 'open-tab', tab: 'archive' } },
+  { id: 'updates', icon: 'refresh', label: 'Check for updates', desc: 'Check for a newer CrewCode release', action: { kind: 'updates' } },
+  { id: 'docs', icon: 'globe', label: 'Docs', desc: 'Open CrewCode documentation', action: { kind: 'docs' } },
+]
+
 const APP_FEATURES: AppFeature[] = [
-  { id: 'mission', icon: 'monitor',    label: 'Control Center', desc: 'Overview of every session',   tab: 'mission',  action: { kind: 'open-tab', tab: 'mission' } },
-  { id: 'canvas',  icon: 'workbench',    label: 'Workbench Mode',    desc: 'Open multiple chats and terminals together', tab: 'canvas', action: { kind: 'start-canvas' } },
-  { id: 'git',     icon: 'gitBranch', label: 'Git Workspace',   desc: 'Review changes, commits, PRs, and worktrees', tab: 'git', action: { kind: 'open-tab', tab: 'git' } },
-  { id: 'prompts', icon: 'inspection', label: 'Skills & Prompts Studio',          desc: 'Compose prompts & skills',    tab: 'prompts',  action: { kind: 'open-tab', tab: 'prompts' } },
-  { id: 'crew',    icon: 'crew',    label: 'CrewCode Workers',     desc: 'Run agents in parallel with a Supervisor',                       action: { kind: 'start-crew' } },
-  { id: 'writer',  icon: 'edit',    label: 'Writer Workspace', desc: 'Draft and revise content',    tab: 'writer',   action: { kind: 'open-tab', tab: 'writer' } },
-  { id: 'code',    icon: 'code',    label: 'Code Editor',     desc: 'Browse & edit files',         tab: 'code',     action: { kind: 'open-tab', tab: 'code' } },
- { id: 'plugin',    icon: 'plug',    label: 'Plugins',     desc: 'Manage local-first extensions',         tab: 'plugin',     action: { kind: 'open-tab', tab: 'plugins' } },
+  { id: 'agent-activity', icon: 'monitor', label: 'Agent Activity', desc: 'Open the compact live agent panel', mobileOnly: true, action: { kind: 'toggle-menulet' } },
+  { id: 'system-monitor', icon: 'cpu', label: 'System Monitor', desc: 'Inspect terminal and agent processes', mobileOnly: true, action: { kind: 'toggle-system-monitor' } },
+  { id: 'mission', icon: 'monitor', label: 'Control Center', desc: 'Overview of every session', tab: 'mission', action: { kind: 'open-tab', tab: 'mission' } },
+  { id: 'canvas', icon: 'workbench', label: 'Workbench Mode', desc: 'Open multiple chats and terminals together', tab: 'canvas', action: { kind: 'start-canvas' } },
+  { id: 'git', icon: 'gitBranch', label: 'Git Workspace', desc: 'Review changes, commits, PRs, and worktrees', tab: 'git', action: { kind: 'open-tab', tab: 'git' } },
+  { id: 'prompts', icon: 'inspection', label: 'Skills & Prompts Studio', desc: 'Compose prompts & skills', tab: 'prompts', action: { kind: 'open-tab', tab: 'prompts' } },
+  { id: 'crew', icon: 'crew', label: 'CrewCode Workers', desc: 'Run agents in parallel with a Supervisor', action: { kind: 'start-crew' } },
+  { id: 'writer', icon: 'edit', label: 'Writer Workspace', desc: 'Draft and revise content', tab: 'writer', action: { kind: 'open-tab', tab: 'writer' } },
+  { id: 'code', icon: 'code', label: 'Code Editor', desc: 'Browse & edit files', tab: 'code', action: { kind: 'open-tab', tab: 'code' } },
 ]
 
 // A chat session that finished an agent turn, flattened across every workspace
@@ -120,6 +132,7 @@ interface WorkspacesDrawerProps {
   height:             number
   width:              number
   position:           'bottom' | 'left' | 'right'
+  mobileOverlay?:     boolean
   active:             string
   setActive:          (id: string) => void
   density:            string
@@ -152,7 +165,7 @@ interface WorkspacesDrawerProps {
 }
 
 export function WorkspacesDrawer({
-  open, setOpen, height, width, position, active, setActive, density,
+  open, setOpen, height, width, position, mobileOverlay = false, active, setActive, density,
   workspaces,
   sessionsByWorkspace = {},
   activeSessionId      = '',
@@ -194,14 +207,24 @@ export function WorkspacesDrawer({
   const now = useNow()
   // Only this drawer re-renders on background terminal output, not the App shell.
   const unreadByPane = useUnreadByPane()
+  const runningByScope = useRunningByScope()
+  const liveStatus = liveSessionAgentStatus(sessionAgentStatus, sessionsByWorkspace, runningByScope)
+  const liveWorking = liveWorkingChats(workspaces, sessionsByWorkspace, runningByScope, workingChats)
+  const liveWorkspaceStatus = { ...workspaceAgentStatus }
+  for (const workspace of workspaces) {
+    if ((sessionsByWorkspace[workspace.id] ?? []).some(session => runningByScope[session.id])) {
+      liveWorkspaceStatus[workspace.id] = 'working'
+    }
+  }
 
   useEffect(() => {
     window.electronAPI?.appHomePath().then(setHomePath).catch(() => setHomePath(''))
   }, [])
 
-  // Click-outside-to-close — only for the bottom drawer, not the side sidebar.
+  // Overlay drawers close when the user returns to the workspace surface.
+  // Desktop sidebars remain persistent in-flow panes.
   useEffect(() => {
-    if (!open || position !== 'bottom') return
+    if (!open || (position !== 'bottom' && !mobileOverlay)) return
     const handle = (e: MouseEvent) => {
       const target = e.target
       // The dock's click owns toggling. Closing here on its earlier mousedown
@@ -211,9 +234,14 @@ export function WorkspacesDrawer({
         setOpen(false)
       }
     }
+    const onKeyDown = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
     document.addEventListener('mousedown', handle)
-    return () => document.removeEventListener('mousedown', handle)
-  }, [open, position, setOpen])
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', handle)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [mobileOverlay, open, position, setOpen])
 
   useEffect(() => {
     if (!ctxMenu) return
@@ -278,11 +306,12 @@ export function WorkspacesDrawer({
 
   const isSide         = position !== 'bottom'
 
-  function finishSessionAction() {
-    if (isSide) return
+  function finishSessionAction(focusComposer = true) {
+    if (isSide && !mobileOverlay) return
     setOpen(false)
-    // Bottom drawer overlays the composer; focus after it closes so typing resumes immediately.
-    window.setTimeout(() => window.dispatchEvent(new CustomEvent('crewcode:focus-composer')), 60)
+    // Chat selections can resume typing after the overlay closes. App utilities
+    // must not summon the phone keyboard behind their newly-opened panel.
+    if (focusComposer) window.setTimeout(() => window.dispatchEvent(new CustomEvent('crewcode:focus-composer')), 60)
   }
 
   function openCtx(wsId: string, e: React.MouseEvent) {
@@ -347,6 +376,26 @@ export function WorkspacesDrawer({
     })
   }
 
+  function renderAppRows(items: AppFeature[]) {
+    return items.filter(item => mobileOverlay || !item.mobileOnly).map(item => (
+      <div key={item.id} className="ws-block">
+        <div className="ws-row-wrap">
+          <button
+            className={`ws-row ${item.tab && item.tab === activeKind ? 'on' : ''}`}
+            onClick={() => { onAppFeature?.(item.action); finishSessionAction(false) }}
+          >
+            <span className="ws-kind"><Icon name={item.icon} size={14} /></span>
+            <span className="ws-main">
+              <span className="ws-name">{item.label}</span>
+              <span className="ws-path">{item.desc}</span>
+            </span>
+            <span className="ws-meta" />
+          </button>
+        </div>
+      </div>
+    ))
+  }
+
   function renderWorkspaceRow(ws: Workspace) {
     return (
       <div key={ws.id} className="ws-block">
@@ -354,9 +403,12 @@ export function WorkspacesDrawer({
           <WorkspaceRow
             ws={ws}
             active={ws.id === active}
-            agentActivity={workspaceAgentStatus[ws.id]}
+            agentActivity={liveWorkspaceStatus[ws.id]}
             displayPath={workspaceDisplayPath(ws.path, homePath)}
-            onClick={() => setActive(ws.id)}
+            onClick={() => {
+              setActive(ws.id)
+              if (mobileOverlay) setOpen(false)
+            }}
             onRename={onRenameWorkspace ? (name) => onRenameWorkspace(ws.id, name) : undefined}
           />
         </div>
@@ -419,9 +471,10 @@ export function WorkspacesDrawer({
             }}
             onRemove={removeSession}
             onRowContextMenu={openSessionCtx(wsSessions)}
-            sessionActivity={sessionAgentStatus}
+            sessionActivity={liveStatus}
             sessionCompletedAt={sessionCompletedAt}
             now={now}
+            draggable={!mobileOverlay}
           />
         </div>
 
@@ -442,9 +495,10 @@ export function WorkspacesDrawer({
                 onActivate={activateSession}
                 onRemove={removeSession}
                 onRowContextMenu={openSessionCtx(wsSessions)}
-                sessionActivity={sessionAgentStatus}
+                sessionActivity={liveStatus}
                 sessionCompletedAt={sessionCompletedAt}
                 now={now}
+                draggable={!mobileOverlay}
               />
             </div>
           </Section>
@@ -455,6 +509,14 @@ export function WorkspacesDrawer({
 
   return (
     <>
+      {mobileOverlay && open && (
+        <button
+          type="button"
+          className="ws-drawer-backdrop"
+          aria-label="Close workspaces sidebar"
+          onClick={() => setOpen(false)}
+        />
+      )}
       <div
         ref={drawerRef}
         className={`ws-drawer ws-drawer-background ${isSide ? `side ${position}` : ''} ${open ? 'open' : ''}`}
@@ -492,7 +554,7 @@ export function WorkspacesDrawer({
             )}
             <div className="ws-actions">
               {drawerTab === 'workspaces' && (
-                <button className="ws-action" onClick={onAddWorkspace}>
+                <button className="ws-action" onClick={() => { onAddWorkspace(); if (mobileOverlay) setOpen(false) }}>
                   <Icon name="plus" size={12} />Create workspace
                 </button>
               )}
@@ -501,38 +563,33 @@ export function WorkspacesDrawer({
 
           <div className="ws-list">
             {drawerTab === 'app' ? (
-              <Section
-                id="__features"
-                label="FEATURES"
-                icon="app"
-                closed={!!sectionClosed['__features']}
-                onToggle={() => setSectionClosed(p => ({ ...p, __features: !p['__features'] }))}
-              >
-                {APP_FEATURES.map(f => (
-                  <div key={f.id} className="ws-block">
-                    <div className="ws-row-wrap">
-                      <button
-                        className={`ws-row ${f.tab && f.tab === activeKind ? 'on' : ''}`}
-                        onClick={() => onAppFeature?.(f.action)}
-                      >
-                        <span className="ws-kind"><Icon name={f.icon} size={14} /></span>
-                        <span className="ws-main">
-                          <span className="ws-name">{f.label}</span>
-                          <span className="ws-path">{f.desc}</span>
-                        </span>
-                        <span className="ws-meta" />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </Section>
+              <>
+                <Section
+                  id="__app_destinations"
+                  label="APP"
+                  icon="app"
+                  closed={!!sectionClosed['__app_destinations']}
+                  onToggle={() => setSectionClosed(p => ({ ...p, __app_destinations: !p['__app_destinations'] }))}
+                >
+                  {renderAppRows(APP_DESTINATIONS)}
+                </Section>
+                <Section
+                  id="__features"
+                  label="FEATURES"
+                  icon="sparkle"
+                  closed={!!sectionClosed['__features']}
+                  onToggle={() => setSectionClosed(p => ({ ...p, __features: !p['__features'] }))}
+                >
+                  {renderAppRows(APP_FEATURES)}
+                </Section>
+              </>
             ) : (
             <>
             {(() => {
               const q = query.toLowerCase()
               const working = q
-                ? workingChats.filter(c => `${c.label} ${c.wsName} ${c.agentId}`.toLowerCase().includes(q))
-                : workingChats
+                ? liveWorking.filter(c => `${c.label} ${c.wsName} ${c.agentId}`.toLowerCase().includes(q))
+                : liveWorking
               const unexpiredChats = completedChats.filter(c =>
                 isCompletedChatShortcutVisible(c.completedAt, now),
               )
@@ -559,7 +616,7 @@ export function WorkspacesDrawer({
                           <div className="ws-row-wrap">
                             <button
                               className={`ws-row ws-completed-row ws-running-row ${c.sessionId === activeSessionId ? 'on' : ''}`}
-                              onClick={() => onWorkingChatActivate(c)}
+                              onClick={() => { onWorkingChatActivate(c); finishSessionAction() }}
                               title={`${c.label} · ${c.wsName}`}
                             >
                               <span className="ws-kind">
@@ -611,7 +668,7 @@ export function WorkspacesDrawer({
                               className={`ws-row ws-completed-row ${c.sessionId === activeSessionId ? 'on' : ''}`}
                               // App dismisses it from Completed (persisted) and
                               // activates it; it returns on the next turn end.
-                              onClick={() => onCompletedChatActivate(c)}
+                              onClick={() => { onCompletedChatActivate(c); finishSessionAction() }}
                               title={`${c.label} · ${c.wsName}`}
                             >
                               <span className="ws-kind">
@@ -639,8 +696,8 @@ export function WorkspacesDrawer({
                                 <span className="ws-path">{c.wsName} · {c.agentId}</span>
                               </span>
                               <span className="ws-meta">
-                                {sessionAgentStatus[c.sessionId] && (
-                                  <AgentActivityIndicator state={sessionAgentStatus[c.sessionId]} size={12} />
+                                {liveStatus[c.sessionId] && (
+                                  <AgentActivityIndicator state={liveStatus[c.sessionId]} size={12} />
                                 )}
                                 {c.completedAt && (
                                   <span className="ws-elapsed" title="completed">
@@ -667,7 +724,7 @@ export function WorkspacesDrawer({
                           <div className="ws-row-wrap">
                             <button
                               className={`ws-row ${t.tabId === activeTabId ? 'on' : ''}`}
-                              onClick={() => onTerminalCliActivate(t)}
+                              onClick={() => { onTerminalCliActivate(t); finishSessionAction(false) }}
                               title={`${t.title} · ${t.wsName}`}
                             >
                               <span className="ws-kind"><Icon name="terminal" size={14} /></span>

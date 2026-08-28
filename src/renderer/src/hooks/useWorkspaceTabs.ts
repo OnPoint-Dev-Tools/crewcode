@@ -12,6 +12,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import type { BrowserSessionMode, Tab, TabKind } from '../types'
 import type { PluginOpenContext, RegisteredPluginTab } from '../../../shared/plugin-types'
+import { insertTabAfter, planSessionSplit } from '../components/thread/session-drag'
 
 let tabIdCounter = 0
 function nextTabId(wsId: string, kind: TabKind): string {
@@ -207,7 +208,17 @@ export function useWorkspaceTabs({ activeWs, workspaceName }: UseWorkspaceTabsOp
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeWs, wsTabs])
 
-  /** Point the active tab at a workspace's first tab — used on workspace switch. */
+  const getActiveTabIdForWorkspace = useCallback((wsId: string) => {
+    if (!wsId) return ''
+    const latest = persistedStateRef.current
+    const list = latest.wsTabs[wsId] ?? []
+    const current = latest.activeByWs[wsId]
+    return current && (list.some(tab => tab.id === current) || current === `${wsId}-chat`)
+      ? current
+      : (list[0]?.id ?? `${wsId}-chat`)
+  }, [])
+
+  /** Point the active tab at a workspace's last active tab. */
   const selectWorkspace = useCallback((wsId: string) => {
     const latest = persistedStateRef.current
     const list = latest.wsTabs[wsId] ?? []
@@ -414,6 +425,73 @@ export function useWorkspaceTabs({ activeWs, workspaceName }: UseWorkspaceTabsOp
     setActiveByWs(prev => prev[activeWs] === nextGroup.primary ? prev : { ...prev, [activeWs]: nextGroup.primary })
   }, [activeTabId, activeWs, closeSplitGroup, splitMap, workspaceName, wsTabs])
 
+  const splitAnchorWithSession = useCallback((
+    anchorTabId: string,
+    spec: { sessionId: string; ownerTabId: string; label: string },
+    ownerActiveSessionId: string | null,
+  ): { viewTabId: string; activateOwner: boolean } | null => {
+    if (!activeWs || !anchorTabId || !spec.sessionId || !spec.ownerTabId) return null
+    const latest = persistedStateRef.current
+    const list = materializeTabList(latest.wsTabs, activeWs, workspaceName).filter(tab => !tab.splitCloneOf)
+    if (!list.some(tab => tab.id === anchorTabId)) return null
+    const groups = latest.splitMap[activeWs] ?? []
+    const plan = planSessionSplit({
+      sessionId: spec.sessionId,
+      ownerTabId: spec.ownerTabId,
+      anchorTabId,
+      tabs: list,
+      splitGroups: groups,
+      ownerActiveSessionId,
+    })
+    if (plan.type === 'noop') return { viewTabId: anchorTabId, activateOwner: false }
+
+    const isWriterOwner = spec.ownerTabId === `${activeWs}-writer` || spec.ownerTabId.startsWith(`${activeWs}-writer-`)
+    const incomingId = plan.type === 'reuse' ? plan.tabId : nextTabId(activeWs, 'chat')
+    if (incomingId === anchorTabId) return { viewTabId: anchorTabId, activateOwner: false }
+
+    const incomingTab: Tab = plan.type === 'viewport'
+      ? {
+          id: incomingId,
+          kind: 'chat',
+          label: spec.label,
+          live: false,
+          sessionOwnerTabId: spec.ownerTabId,
+          pinnedSessionId: spec.sessionId,
+        }
+      : list.find(tab => tab.id === incomingId) ?? (
+        isWriterOwner
+          ? { id: incomingId, kind: 'writer', label: KIND_LABEL.writer, live: false }
+          : { id: incomingId, kind: 'chat', label: workspaceName, live: false }
+      )
+
+    setWsTabs(prev => {
+      const existing = materializeTabList(prev, activeWs, workspaceName).filter(tab => !tab.splitCloneOf)
+      if (existing.some(tab => tab.id === incomingTab.id)) return prev
+      return { ...prev, [activeWs]: [...existing, incomingTab] }
+    })
+    setSplitMap(prev => {
+      const existingGroups = prev[activeWs] ?? []
+      if (existingGroups.some(group => group.tabs.includes(incomingId) && !group.tabs.includes(anchorTabId))) {
+        return prev
+      }
+      const activeGroup = existingGroups.find(group => group.tabs.includes(anchorTabId)) ?? null
+      if (activeGroup?.tabs.includes(incomingId)) return prev
+      const nextGroup: SplitGroup = activeGroup
+        ? { ...activeGroup, tabs: insertTabAfter(activeGroup.tabs, anchorTabId, incomingId) }
+        : { id: `split-${Date.now().toString(36)}-${incomingId}`, primary: anchorTabId, tabs: [anchorTabId, incomingId] }
+      const nextGroups = activeGroup
+        ? existingGroups.map(group => group.id === activeGroup.id ? nextGroup : group)
+        : [...existingGroups, nextGroup]
+      return { ...prev, [activeWs]: nextGroups }
+    })
+    const primary = groups.find(group => group.tabs.includes(anchorTabId))?.primary ?? anchorTabId
+    setActiveByWs(prev => prev[activeWs] === primary ? prev : { ...prev, [activeWs]: primary })
+    return {
+      viewTabId: incomingId,
+      activateOwner: plan.type === 'reuse' && incomingId === spec.ownerTabId,
+    }
+  }, [activeWs, workspaceName])
+
   const restoreChatTabInWorkspace = useCallback((wsId: string, wsName: string, tabId: string) => {
     if (!wsId || !tabId) return
     setWsTabs(prev => {
@@ -439,17 +517,19 @@ export function useWorkspaceTabs({ activeWs, workspaceName }: UseWorkspaceTabsOp
 
     const currentSplit = splitMap[wsId]
     const removeIds = new Set([tabId])
+    const splitGroup = currentSplit?.find(group => group.tabs.includes(tabId)) ?? null
+    const splitSiblings = splitGroup?.tabs.filter(id => id !== tabId && list.some(tab => tab.id === id)) ?? []
 
     const remaining = list.filter(t => !removeIds.has(t.id))
     setWsTabs(prev => ({
       ...prev,
       [wsId]: remaining,
     }))
-    if (currentSplit?.some(group => group.tabs.includes(tabId))) {
+    if (splitGroup) {
       setSplitMap(prev => ({
         ...prev,
         [wsId]: (prev[wsId] ?? []).flatMap(group => {
-          if (!group.tabs.includes(tabId)) return [group]
+          if (group.id !== splitGroup.id) return [group]
           const nextTabs = group.tabs.filter(id => id !== tabId)
           return nextTabs.length >= 2
             ? [{ ...group, primary: nextTabs.includes(group.primary) ? group.primary : nextTabs[0], tabs: nextTabs }]
@@ -459,7 +539,7 @@ export function useWorkspaceTabs({ activeWs, workspaceName }: UseWorkspaceTabsOp
     }
     const currentActive = activeByWs[wsId]
     if (currentActive && removeIds.has(currentActive)) {
-      const nextActive = remaining[remaining.length - 1]?.id ?? `${wsId}-chat`
+      const nextActive = splitSiblings[0] ?? remaining[remaining.length - 1]?.id ?? `${wsId}-chat`
       setActiveByWs(prev => prev[wsId] === nextActive ? prev : { ...prev, [wsId]: nextActive })
     }
   }, [activeByWs, splitMap, wsTabs])
@@ -543,10 +623,10 @@ export function useWorkspaceTabs({ activeWs, workspaceName }: UseWorkspaceTabsOp
   }, [wsTabs])
 
   return useMemo(() => ({
-    tabs, activeTab, activeTabId, setActiveTabId, setActiveTabInWorkspace, selectWorkspace, openTab, openTabInWorkspace, openPluginTab, openPluginTabInWorkspace, restoreChatTabInWorkspace, closeTab, closeTabInWorkspace,
-    splitGroups, splitTabId, splitTabIds, splitPrimaryTabId, setSplitTab, closeSplitGroup, pinTab, unpinTab, renameTab, setTabColor, setTabUrl,
+    tabs, activeTab, activeTabId, setActiveTabId, setActiveTabInWorkspace, getActiveTabIdForWorkspace, selectWorkspace, openTab, openTabInWorkspace, openPluginTab, openPluginTabInWorkspace, restoreChatTabInWorkspace, closeTab, closeTabInWorkspace,
+    splitGroups, splitTabId, splitTabIds, splitPrimaryTabId, setSplitTab, splitAnchorWithSession, closeSplitGroup, pinTab, unpinTab, renameTab, setTabColor, setTabUrl,
     setBrowserSessionMode, reorderTab, allTabIds, tabInfoById,
-  }), [tabs, activeTab, activeTabId, setActiveTabId, setActiveTabInWorkspace, selectWorkspace, openTab, openTabInWorkspace, openPluginTab, openPluginTabInWorkspace, restoreChatTabInWorkspace, closeTab, closeTabInWorkspace,
-    splitGroups, splitTabId, splitTabIds, splitPrimaryTabId, setSplitTab, closeSplitGroup, pinTab, unpinTab, renameTab, setTabColor, setTabUrl,
+  }), [tabs, activeTab, activeTabId, setActiveTabId, setActiveTabInWorkspace, getActiveTabIdForWorkspace, selectWorkspace, openTab, openTabInWorkspace, openPluginTab, openPluginTabInWorkspace, restoreChatTabInWorkspace, closeTab, closeTabInWorkspace,
+    splitGroups, splitTabId, splitTabIds, splitPrimaryTabId, setSplitTab, splitAnchorWithSession, closeSplitGroup, pinTab, unpinTab, renameTab, setTabColor, setTabUrl,
     setBrowserSessionMode, reorderTab, allTabIds, tabInfoById])
 }

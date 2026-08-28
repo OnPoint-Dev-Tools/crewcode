@@ -14,6 +14,7 @@ import type {
 import { buildUsage } from './model-context'
 import { enrichUsageContextWindow } from './openrouter-model-context'
 import { tripwireForToolCall } from './dangerous-command'
+import { normalizeCrewCoderMode } from '../../shared/crewcoder-types'
 
 // CrewCoder is an ACP agent. CrewCode is the client: it spawns `crewcoder acp`
 // and maps the newline-delimited JSON-RPC stream onto the shared BridgeEvent API.
@@ -182,8 +183,29 @@ function toolContent(content: CrewCoderSessionUpdate['content']): unknown {
   return text || content
 }
 
+function identifierTitle(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  const title = value.trim()
+  // CrewCoder's ACP `title` is a one-liner. When it is just the tool identifier
+  // (`TaskCreate`, `listFiles`), prefer it over ACP `kind` (`other`, `read`).
+  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(title) ? title : undefined
+}
+
+function crewCoderToolName(update: CrewCoderSessionUpdate): string | undefined {
+  const meta = record(update._meta)
+  const descriptor = record(meta?.['crewcoder/tool'])
+  const name = descriptor?.name
+  return typeof name === 'string' && name.trim() ? name.trim() : undefined
+}
+
 function toolName(update: CrewCoderSessionUpdate): string {
-  return update.kind ?? update.name ?? update.title ?? 'other'
+  const crewCoderName = crewCoderToolName(update)
+  if (crewCoderName) return crewCoderName
+  const titled = identifierTitle(update.title)
+  if (titled) return titled
+  if (typeof update.name === 'string' && update.name.trim()) return update.name.trim()
+  if (typeof update.kind === 'string' && update.kind.trim()) return update.kind.trim()
+  return typeof update.title === 'string' && update.title.trim() ? update.title.trim() : 'other'
 }
 
 /** Pure ACP update projection used by the live bridge and focused regression tests. */
@@ -383,6 +405,7 @@ export async function createCrewCoderBridge(
   requestUser?: RequestUserFn,
 ): Promise<AgentBridge> {
   const args = ['acp', '--approval', 'review']
+  if (opts.crewcoderMode) args.push('--mode', normalizeCrewCoderMode(opts.crewcoderMode))
   const selectedModel = splitModel(opts.model)
   const env: Record<string, string> = { ...(opts.env ?? {}) }
   if (selectedModel.provider) env.CREWCODER_PROVIDER = selectedModel.provider

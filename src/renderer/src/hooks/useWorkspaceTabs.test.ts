@@ -88,6 +88,29 @@ describe('useWorkspaceTabs plugin lifecycle', () => {
     hook.unmount()
   })
 
+  it('resolves the remembered or default tab for local and remote workspace ids', () => {
+    vi.unstubAllGlobals()
+    installStorage({
+      [STORAGE_KEY]: JSON.stringify({
+        wsTabs: {
+          local: [{ id: 'local-chat', kind: 'chat', label: 'Local', live: false }],
+          remote: [
+            { id: 'remote-chat', kind: 'chat', label: 'Remote', live: false },
+            { id: 'remote-terminal', kind: 'terminal', label: 'Terminal', live: false },
+          ],
+        },
+        activeByWs: { local: 'local-chat', remote: 'remote-terminal' },
+        splitMap: {},
+      }),
+    })
+    const hook = renderHook(useWorkspaceTabs, { activeWs: 'local', workspaceName: 'Local' })
+
+    expect(hook.result.current.getActiveTabIdForWorkspace('remote')).toBe('remote-terminal')
+    expect(hook.result.current.getActiveTabIdForWorkspace('new-remote')).toBe('new-remote-chat')
+
+    hook.unmount()
+  })
+
   it('allows multiple non-singleton plugin tab instances', () => {
     const hook = renderHook(useWorkspaceTabs, { activeWs: 'ws1', workspaceName: 'Workspace One' })
     const tab = pluginTab({ singleton: false })
@@ -149,6 +172,91 @@ describe('useWorkspaceTabs plugin lifecycle', () => {
 
     expect(hook.result.current.tabs.filter(t => t.kind === 'plugin' && t.pluginRegistrationId === 'dogfood:main')).toHaveLength(1)
 
+    hook.unmount()
+  })
+})
+
+describe('useWorkspaceTabs session splits', () => {
+  beforeEach(() => {
+    installStorage()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('reuses the owner chat tab when dropping a session onto a terminal tab', () => {
+    const hook = renderHook(useWorkspaceTabs, { activeWs: 'ws1', workspaceName: 'Workspace One' })
+    let termId = ''
+    act(() => {
+      termId = hook.result.current.openTab('terminal') ?? ''
+    })
+    const result = { current: null as { viewTabId: string; activateOwner: boolean } | null }
+    act(() => {
+      result.current = hook.result.current.splitAnchorWithSession(
+        termId,
+        { sessionId: 'ws1-chat', ownerTabId: 'ws1-chat', label: 'Chat' },
+        'ws1-chat',
+      )
+    })
+    expect(result.current).toEqual({ viewTabId: 'ws1-chat', activateOwner: true })
+    expect(hook.result.current.splitTabIds).toEqual([termId, 'ws1-chat'])
+    hook.unmount()
+  })
+
+  it('mints a viewport tab when dropping another session onto its owner pane', () => {
+    const hook = renderHook(useWorkspaceTabs, { activeWs: 'ws1', workspaceName: 'Workspace One' })
+    const result = { current: null as { viewTabId: string; activateOwner: boolean } | null }
+    act(() => {
+      result.current = hook.result.current.splitAnchorWithSession(
+        'ws1-chat',
+        { sessionId: 'ws1-chat::s2', ownerTabId: 'ws1-chat', label: 'Thread two' },
+        'ws1-chat',
+      )
+    })
+    expect(result.current?.activateOwner).toBe(false)
+    expect(result.current?.viewTabId).not.toBe('ws1-chat')
+    const view = hook.result.current.tabs.find(tab => tab.id === result.current?.viewTabId)
+    expect(view?.sessionOwnerTabId).toBe('ws1-chat')
+    expect(view?.pinnedSessionId).toBe('ws1-chat::s2')
+    expect(view?.label).toBe('Thread two')
+    expect(hook.result.current.splitTabIds).toEqual(['ws1-chat', result.current?.viewTabId])
+    hook.unmount()
+  })
+
+  it('closing one split tab keeps the remaining split tabs and does not dissolve the group until one remains', () => {
+    const hook = renderHook(useWorkspaceTabs, { activeWs: 'ws1', workspaceName: 'Workspace One' })
+    let termId = ''
+    let browserId = ''
+    act(() => {
+      termId = hook.result.current.openTab('terminal') ?? ''
+      browserId = hook.result.current.openTab('browser') ?? ''
+    })
+    act(() => {
+      hook.result.current.setActiveTabId('ws1-chat')
+    })
+    act(() => {
+      hook.result.current.setSplitTab(termId)
+    })
+    act(() => {
+      hook.result.current.setSplitTab(browserId)
+    })
+    expect(hook.result.current.splitTabIds).toEqual(['ws1-chat', termId, browserId])
+
+    act(() => {
+      hook.result.current.closeTab(termId)
+    })
+    expect(hook.result.current.splitTabIds).toEqual(['ws1-chat', browserId])
+    expect(hook.result.current.tabs.some(tab => tab.id === termId)).toBe(false)
+    expect(hook.result.current.tabs.some(tab => tab.id === 'ws1-chat')).toBe(true)
+    expect(hook.result.current.tabs.some(tab => tab.id === browserId)).toBe(true)
+
+    act(() => {
+      hook.result.current.closeTab(browserId)
+    })
+    expect(hook.result.current.splitTabIds).toEqual([])
+    expect(hook.result.current.activeTabId).toBe('ws1-chat')
+    expect(hook.result.current.tabs.some(tab => tab.id === 'ws1-chat')).toBe(true)
     hook.unmount()
   })
 })

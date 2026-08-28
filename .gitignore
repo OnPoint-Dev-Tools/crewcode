@@ -43,3 +43,11 @@ docs-website/.astro/
 social-media-post.md
 Work/
 promo-video
+packaging/arch/pkg/
+packaging/arch/src/
+packaging/arch/*.deb
+packaging/arch/*.pkg.tar.*
+tester/
+test-workspace/
+.commandcode/
+examples/VPS_SETUP.md

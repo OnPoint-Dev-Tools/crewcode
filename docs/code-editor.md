@@ -5,9 +5,11 @@ CrewCode's code editor uses a fork of CodeMirror 6 for the active editing surfac
 ## Current foundation
 
 - `src/renderer/src/components/editor/CodeEditor.tsx` owns the surrounding product UI: tabs, file tree, save/format actions, disk-change conflict handling, plugin editor actions, and search-result jumps.
+- Git Sidebar changed-file rows open the active worktree's patch in the editor's existing `PierreDiff` review surface. The Settings-selected default branch is the comparison ref when configured; closing the review returns to the prior editor state without changing the checked-out branch.
 - `src/renderer/src/components/editor/CrewCodeMirrorEditor.tsx` owns the live editing surface.
 - CodeMirror is intentionally kept below `CodeEditor` so high-frequency typing, selection, autocomplete, and scroll state do not force broad React/App re-renders.
 - Source documents, including Markdown opened in the code editor, soft-wrap long lines by default. Wrapping is visual only: it never inserts newlines or changes line-number semantics.
+- At phone widths (`≤768px`), the editor canvas owns the page. Open tabs remain horizontally scrollable, path-bar actions stay reachable as touch targets, and status metadata scrolls instead of widening the viewport. The file tree starts closed and opens as a dismissible right-side overlay; selecting a file closes it. Problems and references use the editor width rather than squeezing the code canvas.
 - Direct `@codemirror/*` dependencies are declared in `package.json` as local `file:` dependencies. npm links them to the package sources under `packages/crew-codemirror`, so locally built changes are used by CrewCode at runtime.
 
 ## Local CodeMirror development

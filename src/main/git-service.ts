@@ -43,6 +43,37 @@ export class GitService {
     } catch (error) { return { error: this.message(error) } }
   }
 
+  async changesVsRef(cwd: string, ref: string) {
+    if (!validRef(ref)) return { error: 'invalid comparison branch' }
+    try {
+      const stdout = (await this.run(cwd, ['diff', '--name-status', ref])).stdout
+      const files: Array<{ path: string; status: string; staged: boolean }> = []
+      for (const line of stdout.split('\n')) {
+        if (!line.trim()) continue
+        const parts = line.split('\t')
+        const code = (parts[0] ?? '').trim()
+        const path = parts.length >= 3 ? parts[parts.length - 1] : (parts[1] ?? '')
+        if (path) files.push({ path, status: code[0] ?? 'M', staged: false })
+      }
+      const status = parseStatus((await this.run(cwd, ['status', '--porcelain=v1', '-b'])).stdout)
+      for (const file of status.untracked) {
+        if (!files.some(candidate => candidate.path === file.path)) files.push(file)
+      }
+      return { ok: true, files }
+    } catch (error) { return { error: this.message(error) } }
+  }
+
+  async diffVsRef(cwd: string, ref: string, path: string) {
+    if (!validRef(ref)) return { error: 'invalid comparison branch' }
+    try {
+      const prefix = ['--src-prefix=a/', '--dst-prefix=b/']
+      const stdout = (await this.run(cwd, ['diff', ...prefix, ref, '--', path])).stdout
+      if (stdout.trim()) return { ok: true, diff: stdout }
+      try { return { ok: true, diff: (await this.run(cwd, ['diff', ...prefix, '--no-index', '--', '/dev/null', path])).stdout } }
+      catch (error) { return { ok: true, diff: (error as { stdout?: string }).stdout ?? '' } }
+    } catch (error) { return { error: this.message(error) } }
+  }
+
   async log(cwd: string, rawLimit = 20) {
     const limit = Math.max(1, Math.min(100, Math.floor(rawLimit)))
     try { return { ok: true, commits: parseLog((await this.run(cwd, ['log', '--format=%H\x1f%an\x1f%ar\x1f%s', `-${limit}`])).stdout) } }

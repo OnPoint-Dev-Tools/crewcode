@@ -1,9 +1,11 @@
 import { ipcMain, webContents } from 'electron'
 import { PtyService, detectShells, type PtyCreateOpts, type PtyDaemon } from './pty-service'
+import { getYuHeardServer, startYuHeardServer } from './yuheard-server'
+import { pruneYuHeardWrappers } from './yuheard-wrapper'
 
 export type { PtyCreateOpts, PtyDaemon } from './pty-service'
 
-const service = new PtyService()
+const service = new PtyService(() => getYuHeardServer())
 const owners = new Map<string, number>()
 
 service.subscribe(event => {
@@ -18,6 +20,12 @@ service.subscribe(event => {
 
 /** Electron transport adapter for the reusable PTY service. */
 export function registerPtyIpc(): void {
+  // Start the YuHeard socket server with this PtyService as the registry.
+  // Lazy and idempotent; failure is non-fatal (the rest of the app works).
+  try {
+    startYuHeardServer(service)
+    pruneYuHeardWrappers()
+  } catch { /* non-fatal */ }
   ipcMain.handle('shells:detect', () => detectShells())
   ipcMain.handle('pty:create', (event, opts: PtyCreateOpts) => {
     owners.set(opts.paneId, event.sender.id)

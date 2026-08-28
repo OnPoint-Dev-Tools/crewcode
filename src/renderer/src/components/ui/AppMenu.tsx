@@ -23,6 +23,8 @@ export type AppMenuAction =
   | { kind: 'start-canvas' }
   | { kind: 'docs' }
   | { kind: 'updates' }
+  | { kind: 'toggle-menulet' }
+  | { kind: 'toggle-system-monitor' }
 
 interface AppMenuItem {
   id:        string
@@ -125,7 +127,7 @@ export function AppMenu({ activeKind, footStatus, onPick }: AppMenuProps) {
           {MENU.map(g => (
             <div key={g.label} className="appmenu-group">
               <div className="appmenu-sec">{g.label}</div>
-              {g.items.filter(it => !isWeb || (it.id !== 'plugins' && it.id !== 'updates')).map(it => (
+              {g.items.filter(it => !isWeb || it.id !== 'updates').map(it => (
                 <button
                   key={it.id}
                   type="button"

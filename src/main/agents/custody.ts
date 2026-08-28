@@ -38,6 +38,7 @@ export function authorityOf(opts: BridgeStartOpts): CustodyAuthority {
     provider: opts.provider,
     cwd: opts.cwd,
     mode: opts.mode,
+    crewcoderMode: opts.crewcoderMode,
     toolPolicy: opts.toolPolicy,
     externalDirectories: opts.externalDirectories,
     mcpServers: opts.mcpServers,

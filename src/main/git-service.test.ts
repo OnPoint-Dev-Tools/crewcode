@@ -30,6 +30,23 @@ describe('GitService', () => {
     expect(await service.remotes(root)).toMatchObject({ ok: true, isRepo: true, remotes: [] })
   })
 
+  it('lists committed and working changes against a validated comparison branch', async () => {
+    const root = repo()
+    const service = new GitService()
+    execFileSync('git', ['branch', 'base'], { cwd: root })
+    writeFileSync(join(root, 'README.md'), 'committed\n')
+    execFileSync('git', ['add', 'README.md'], { cwd: root })
+    execFileSync('git', ['commit', '-m', 'branch change'], { cwd: root })
+    writeFileSync(join(root, 'extra.txt'), 'untracked\n')
+
+    const changes = await service.changesVsRef(root, 'base')
+    expect(changes).toMatchObject({ ok: true })
+    expect(changes.files?.map(file => file.path)).toEqual(['README.md', 'extra.txt'])
+    expect((await service.diffVsRef(root, 'base', 'README.md')).diff).toContain('+committed')
+    expect(await service.changesVsRef(root, '--output=bad')).toEqual({ error: 'invalid comparison branch' })
+    expect(await service.diffVsRef(root, '../bad', 'README.md')).toEqual({ error: 'invalid comparison branch' })
+  })
+
   it('stages, unstages, commits, and validates branch names', async () => {
     const root = repo()
     const service = new GitService()

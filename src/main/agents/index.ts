@@ -1127,6 +1127,16 @@ export function registerAgentBridgeIpc(resolveAgentPath: AgentPathResolver): voi
         })
       }
       win?.webContents.send('bridge:event', eventToSend)
+      if (entry && event.type === 'closed') {
+        // A dead ACP child is not reusable. Leaving it registered makes the next
+        // composer submission hit its closed stdin and report the misleading
+        // "process not writable" error instead of taking the existing missing-
+        // bridge self-heal path. Guard identity so a late close from an older
+        // process cannot delete a replacement bridge with the same id.
+        queueMicrotask(() => {
+          if (bridges.get(event.bridgeId) === entry) bridges.delete(event.bridgeId)
+        })
+      }
     }
 
     try {
@@ -1415,6 +1425,68 @@ export function registerAgentBridgeIpc(resolveAgentPath: AgentPathResolver): voi
       }
     }
     return result
+  })
+
+  ipcMain.handle('bridge:handoff', async (_e, { bridgeId, sourceConversationKey, options }: { bridgeId: string; sourceConversationKey: string; options: HandoffPromptOptions }) => {
+    const entry = bridges.get(bridgeId)
+    if (!entry) return { ok: false, error: 'bridge not found' }
+    const refused = custodyRefusal(entry, bridgeId, 'handoff')
+    if (refused) return { ok: false, ...refused }
+    if (!entry.conversationKey || !sourceConversationKey) return { ok: false, error: 'handoff conversation scope is unavailable' }
+    if (entry.conversationKey === sourceConversationKey) return { ok: false, error: 'choose a different chat for context handoff' }
+
+    const sourceHistory = loadConversation(sourceConversationKey)
+    if (sourceHistory.length === 0) return { ok: false, error: 'no source conversation history available to hand off' }
+
+    const handoffTurnId = `${bridgeId}:handoff:${Date.now().toString(36)}`
+    entry.userInitiatedStop = false
+    entry.running = true
+    entry.lastActivityAt = Date.now()
+    custodyJournal().patch(bridgeId, {
+      status: 'running', turnId: handoffTurnId, turnStartedAt: Date.now(),
+      activePrompt: 'Prepare context handoff', authority: authorityOf(entry.opts),
+    })
+
+    try {
+      const summary = await summarizeHandoffWithDisposable(entry, sourceHistory, options)
+      if (!summary?.trim()) return { ok: false, error: 'handoff summary failed' }
+
+      // A used destination keeps its own local history. Append a clearly framed
+      // packet, then clear native resume state so the next prompt replays both
+      // that history and the incoming context into a fresh provider session.
+      const targetHistory = loadConversation(entry.conversationKey)
+      saveConversation(entry.conversationKey, [
+        ...targetHistory,
+        { role: 'user', content: `CrewCode context handoff from ${options.fromProvider ?? 'another provider'}. Continue with the imported context alongside this chat's existing history.` },
+        { role: 'assistant', content: summary.trim() },
+      ])
+      if (entry.sessionKey) clearSessionId(entry.sessionKey)
+      replayInjectedForThread.delete(replayMarker(entry.conversationKey, entry.provider))
+      entry.lastUsage = undefined
+      webContents.fromId(entry.webContentsId)?.send('bridge:event', {
+        type: 'handoff_summary',
+        bridgeId,
+        summary: summary.trim(),
+        fromProvider: options.fromProvider,
+        toProvider: options.toProvider ?? entry.provider,
+        reason: 'handoff',
+      } satisfies BridgeEvent)
+
+      const teardownEntry = entry
+      queueMicrotask(() => {
+        teardownEntry.bridge.stop().catch(() => {})
+        bridges.delete(bridgeId)
+        webContents.fromId(teardownEntry.webContentsId)?.send('bridge:event', { type: 'idle_stopped', bridgeId } satisfies BridgeEvent)
+      })
+      return { ok: true }
+    } finally {
+      entry.running = false
+      entry.lastActivityAt = Date.now()
+      const record = custodyJournal().get(bridgeId)
+      if (record?.status === 'running' && record.turnId === handoffTurnId) {
+        custodyJournal().patch(bridgeId, { status: 'idle', turnId: undefined, turnStartedAt: undefined, activePrompt: undefined })
+      }
+    }
   })
 
   ipcMain.handle('bridge:compact', async (_e, { bridgeId }: { bridgeId: string }) => {

@@ -43,7 +43,7 @@ describe('authorityOf', () => {
       toolPolicy: 'read-only', externalDirectories: ['/b', '/a'],
       mcpServers: [{ id: 'fs-1', name: 'fs', command: 'x' }],
     })).toEqual({
-      provider: 'claude', cwd: '/repo', mode: 'full', toolPolicy: 'read-only',
+      provider: 'claude', cwd: '/repo', mode: 'full', crewcoderMode: 'configured', toolPolicy: 'read-only',
       externalDirectories: ['/a', '/b'], mcpServers: ['fs'],
     })
   })

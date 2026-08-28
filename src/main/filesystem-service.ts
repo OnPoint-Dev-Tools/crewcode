@@ -55,6 +55,23 @@ export class FilesystemService {
     catch (error) { return { error: (error as Error).message } }
   }
 
+  async format(root: string, sub: string, text: string): Promise<{ ok?: boolean; text?: string; error?: string }> {
+    if (isRemoteRoot(root)) return { error: 'format unavailable on SSH workspaces' }
+    if (!root || !isAbsolute(root)) return { error: 'absolute root required' }
+    const target = join(root, sub)
+    if (!safeUnder(root, target)) return { error: 'path escapes root' }
+    const localName = process.platform === 'win32' ? 'prettier.cmd' : 'prettier'
+    const local = join(root, 'node_modules', '.bin', localName)
+    const command = existsSync(local) ? local : 'prettier'
+    return new Promise(resolve => {
+      const child = execFile(command, ['--stdin-filepath', basename(target)], { cwd: root, maxBuffer: 4 * 1024 * 1024, windowsHide: true }, (error, stdout, stderr) => {
+        if (error) resolve({ error: stderr?.trim() || ((error as NodeJS.ErrnoException).code === 'ENOENT' ? 'prettier not found' : error.message) })
+        else resolve({ ok: true, text: stdout })
+      })
+      child.stdin?.end(text)
+    })
+  }
+
   writeFile(root: string, sub: string, text: string): ReturnType<typeof remoteWriteFile> | { ok?: boolean; error?: string } {
     if (isRemoteRoot(root)) return remoteWriteFile(root, sub, text)
     if (!root || !isAbsolute(root)) return { error: 'absolute root required' }

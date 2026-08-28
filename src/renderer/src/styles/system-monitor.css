@@ -335,3 +335,18 @@ body.light .sysmon-trigger:hover { background: rgba(0,0,0,0.08); }
   background: var(--destructive);
   color: #fff;
 }
+
+@media (max-width: 768px) {
+  .sysmon-trigger { display: none; }
+  .sysmon {
+    top: 48px;
+    left: 8px;
+    right: 8px;
+    width: auto;
+    max-height: calc(100dvh - 100px - env(safe-area-inset-bottom));
+    border-radius: 12px;
+  }
+  .sysmon::before { display: none; }
+  .sysmon-row { min-height: 42px; }
+  .sysmon-row .kill { width: 30px; height: 30px; }
+}

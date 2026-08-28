@@ -4,6 +4,7 @@ import { useMessagesStore } from '../../stores/chat-messages-store'
 import { useMissionData, type MissionData, type UseMissionDataOpts } from './useMissionData'
 import { MissionControl } from './MissionControl'
 import { Menulet, MenuletTrigger } from './Menulet'
+import { ActivityFeed } from './MCComponents'
 import type { AgentUserResponse, Message } from '../../types'
 import type { RegisteredPluginMissionWidget } from '../../../../shared/plugin-types'
 
@@ -122,7 +123,7 @@ interface MissionPluginProps {
 }
 
 /** Mission Control tab body — reads mission data from context, not App. */
-export function MissionControlHost({ onOpenAgent, onPauseAgent, onResumeAgent, onSpawnAgent, onRespondRequest, pluginMissionWidgets = [], onPluginMissionWidget }: McHandlers & MissionPluginProps) {
+export function MissionControlHost({ onOpenAgent, onPauseAgent, onResumeAgent, onSpawnAgent, onRespondRequest, pluginMissionWidgets = [], onPluginMissionWidget, onOpenActivity }: McHandlers & MissionPluginProps & { onOpenActivity?: () => void }) {
   const { agents, projects, feed } = useMissionDataValue()
   return (
     <MissionControl
@@ -136,6 +137,7 @@ export function MissionControlHost({ onOpenAgent, onPauseAgent, onResumeAgent, o
       onRespondRequest={onRespondRequest}
       pluginMissionWidgets={pluginMissionWidgets}
       onPluginMissionWidget={onPluginMissionWidget}
+      onOpenActivity={onOpenActivity}
     />
   )
 }
@@ -145,6 +147,17 @@ interface MenuletHostProps extends McHandlers {
   onToggle:    () => void
   onClose:     () => void
   onOpenHub:   () => void
+}
+
+/**
+ * Standalone activity feed for the mobile Mission Control sheet. Lives inside
+ * the `MissionDataProvider` so it can read the same `feed` and `projects`
+ * slice that the page consumes; the parent just drops it into a `MobileShell`
+ * sheet via `useMobileShell().sheets['mission-activity']`.
+ */
+export function MissionActivitySheetHost() {
+  const { feed, projects } = useMissionDataValue()
+  return <ActivityFeed feed={feed} projects={projects} />
 }
 
 /** Menulet trigger + popover — reads live agent counts from context, not App. */

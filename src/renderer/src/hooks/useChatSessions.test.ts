@@ -27,6 +27,30 @@ describe('chat session mode migration', () => {
 
     expect(migratePersistedSessions(sessions).tab?.[0]?.mode).toBe('build')
   })
+
+  it('normalizes an invalid persisted CrewCoder mode independently', () => {
+    const sessions = {
+      tab: [{
+        id: 'tab', tabId: 'tab', label: 'Session', agentId: 'crewcoder', model: '',
+        mode: 'plan' as const, crewcoderMode: 'auto' as never, effort: 'high' as const, mcpServerIds: [],
+      }],
+    }
+
+    const migrated = migratePersistedSessions(sessions)
+    expect(migrated.tab[0].mode).toBe('build')
+    expect(migrated.tab[0].crewcoderMode).toBe('general')
+  })
+
+  it('preserves normal execution modes when CrewCoder uses its configured default', () => {
+    const sessions = {
+      tab: [{
+        id: 'tab', tabId: 'tab', label: 'Session', agentId: 'crewcoder', model: '',
+        mode: 'plan' as const, effort: 'high' as const, mcpServerIds: [],
+      }],
+    }
+
+    expect(migratePersistedSessions(sessions).tab[0].mode).toBe('plan')
+  })
 })
 
 describe('chat session effort migration', () => {
@@ -129,6 +153,33 @@ describe('chat session skill isolation', () => {
 
     const copy = hook.result.current.getSessions('chat-a').find(session => session.id !== 'chat-a')
     expect(copy?.modePromptsEnabled).toBe(false)
+    hook.unmount()
+  })
+})
+
+describe('new chat default branch', () => {
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  it('captures the current default branch only on newly created sessions', () => {
+    const data = new Map<string, string>()
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => data.get(key) ?? null,
+      setItem: (key: string, value: string) => { data.set(key, value) },
+    })
+    let initialBranch = 'dev'
+    const hook = renderHook(() => useChatSessions({
+      agentId: 'codex', model: '', mode: 'build', effort: 'medium', initialBranch,
+    }), undefined)
+
+    act(() => { hook.result.current.ensureTab('chat-a', 'Project') })
+    expect(hook.result.current.getActiveSession('chat-a')?.initialBranch).toBe('dev')
+
+    initialBranch = 'release'
+    hook.rerender(undefined)
+    act(() => { hook.result.current.add('chat-a', 'Second') })
+    const sessions = hook.result.current.getSessions('chat-a')
+    expect(sessions[0]?.initialBranch).toBe('dev')
+    expect(sessions[1]?.initialBranch).toBe('release')
     hook.unmount()
   })
 })
@@ -287,6 +338,35 @@ describe('chat session archiving', () => {
     act(() => { archived = hook.result.current.remove('chat-a', 'chat-a::s2') })
     expect(archived.removed).toBe(true)
     expect(hook.result.current.getAllSessions('chat-a')).toHaveLength(1)
+    hook.unmount()
+  })
+
+  it('restores an exact remote transcript id without aliasing its messages', () => {
+    const hook = host()
+    act(() => {
+      hook.result.current.restoreRemote({
+        id: 'project-chat::s4',
+        tabId: 'project-chat',
+        label: 'Mobile dashboard',
+        agentId: 'claude',
+      })
+    })
+
+    expect(hook.result.current.getActiveId('project-chat')).toBe('project-chat::s4')
+    expect(hook.result.current.getAllSessions('project-chat')).toEqual([
+      expect.objectContaining({
+        id: 'project-chat::s4',
+        tabId: 'project-chat',
+        label: 'Mobile dashboard',
+        agentId: 'claude',
+      }),
+    ])
+    let conflict: unknown = 'not called'
+    act(() => {
+      conflict = hook.result.current.restoreRemote({ id: 'project-chat::s4', tabId: 'other-chat', label: 'Duplicate' })
+    })
+    expect(conflict).toBeNull()
+    expect(hook.result.current.getAllSessions('project-chat')).toHaveLength(1)
     hook.unmount()
   })
 })

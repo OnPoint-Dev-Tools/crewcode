@@ -1,4 +1,5 @@
-import { mkdtempSync, mkdirSync, readFileSync, realpathSync } from 'fs'
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, symlinkSync } from 'fs'
+import { createHash } from 'crypto'
 import { join } from 'path'
 import { tmpdir as osTmpdir } from 'os'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -130,6 +131,30 @@ describe('remote access server', () => {
       method: 'POST', headers: { authorization: `Bearer ${sessionToken}` }, body: 'no',
     })
     expect(forbidden.status).toBe(403)
+
+    const tunneled = Buffer.from('encrypted relay attachment')
+    const beginBody = await (await rpc('begin-tunnel', 'attachments.begin', { root, name: '../../tunneled.txt', size: tunneled.byteLength })).json() as { result: { uploadId: string } }
+    const uploadId = beginBody.result.uploadId
+    expect(await (await rpc('chunk-tunnel', 'attachments.chunk', { uploadId, sequence: 0, data: tunneled.toString('base64') })).json())
+      .toMatchObject({ ok: true, result: { received: tunneled.byteLength } })
+    const digest = createHash('sha256').update(tunneled).digest('hex')
+    const finished = await (await rpc('finish-tunnel', 'attachments.finish', { uploadId, sha256: digest })).json() as { result: { rel: string } }
+    expect(finished.result.rel).toMatch(/^\.crewcode\/attachments\//)
+    expect(finished.result.rel).toMatch(/tunneled\.txt$/)
+    expect(readFileSync(join(root, finished.result.rel), 'utf8')).toBe('encrypted relay attachment')
+
+    if (process.platform !== 'win32') {
+      const symlinkRoot = mkdtempSync(join(tmpdir(), 'crewcode-rpc-attachment-link-'))
+      const outside = mkdtempSync(join(tmpdir(), 'crewcode-rpc-attachment-outside-'))
+      symlinkSync(outside, join(symlinkRoot, '.crewcode'))
+      await rpc('add-symlink-root', 'workspaces.add', { path: symlinkRoot })
+      const escaped = await rpc('begin-symlink-escape', 'attachments.begin', { root: symlinkRoot, name: 'escape.txt', size: 1 })
+      expect(escaped.status).toBe(403)
+    }
+
+    const badBegin = await (await rpc('begin-bad-digest', 'attachments.begin', { root, name: 'bad.txt', size: 1 })).json() as { result: { uploadId: string } }
+    await rpc('chunk-bad-digest', 'attachments.chunk', { uploadId: badBegin.result.uploadId, sequence: 0, data: Buffer.from('x').toString('base64') })
+    expect((await rpc('finish-bad-digest', 'attachments.finish', { uploadId: badBegin.result.uploadId, sha256: '0'.repeat(64) })).status).toBe(500)
   })
 
   it('forbids agent startup outside registered workspaces', async () => {
@@ -148,5 +173,67 @@ describe('remote access server', () => {
     const response = await fetch(`${server.url}/api/v1/rpc`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${sessionToken}` }, body: JSON.stringify({ protocolVersion: 1, id: 'forbidden', method: 'fs.readFile', params: { root: '/', sub: 'etc/passwd' } }) })
     expect(response.status).toBe(403)
     expect(await response.json()).toMatchObject({ ok: false, error: { code: 'FORBIDDEN' } })
+  })
+
+  it('lists sanitized sessions and revokes them through authenticated RPC', async () => {
+    const server = await start()
+    const pair = await fetch(`${server.url}/api/v1/pair`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: server.pairingToken }) })
+    const { sessionToken } = await pair.json() as { sessionToken: string }
+    const sessionId = sessionToken.slice(0, sessionToken.indexOf('.'))
+    const rpc = (id: string, method: string, params: Record<string, unknown>) => fetch(`${server.url}/api/v1/rpc`, {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${sessionToken}` },
+      body: JSON.stringify({ protocolVersion: 1, id, method, params }),
+    })
+
+    const listed = await rpc('sessions', 'auth.sessions', {})
+    const listedBody = await listed.json()
+    expect(listedBody).toMatchObject({ ok: true, result: [{ id: sessionId, status: 'active' }] })
+    expect(JSON.stringify(listedBody)).not.toContain(sessionToken)
+    expect(await (await rpc('revoke', 'auth.revoke', { sessionId })).json()).toMatchObject({ ok: true, result: { revoked: true } })
+    expect((await rpc('after-revoke', 'workspaces.list', {})).status).toBe(401)
+  })
+
+  it('restores device sessions when the server restarts with the same data directory', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'crewcode-remote-persist-'))
+    running = await startRemoteAccessServer({ dataDir, allowedWorkspaceRoots: [tmpdir()] })
+    const pair = await fetch(`${running.url}/api/v1/pair`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: running.pairingToken }) })
+    const { sessionToken } = await pair.json() as { sessionToken: string }
+    await running.close()
+    running = await startRemoteAccessServer({ dataDir, allowedWorkspaceRoots: [tmpdir()] })
+
+    const response = await fetch(`${running.url}/api/v1/rpc`, {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${sessionToken}` },
+      body: JSON.stringify({ protocolVersion: 1, id: 'restored', method: 'workspaces.list', params: {} }),
+    })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ ok: true, id: 'restored' })
+  })
+
+  it('rejects cross-origin browser API requests while allowing exact same-origin requests', async () => {
+    const server = await start()
+    const rejected = await fetch(`${server.url}/api/v1/pair`, {
+      method: 'POST', headers: { 'content-type': 'application/json', origin: 'https://evil.example' },
+      body: JSON.stringify({ token: server.pairingToken }),
+    })
+    expect(rejected.status).toBe(403)
+
+    const accepted = await fetch(`${server.url}/api/v1/pair`, {
+      method: 'POST', headers: { 'content-type': 'application/json', origin: server.url },
+      body: JSON.stringify({ token: server.pairingToken }),
+    })
+    expect(accepted.status).toBe(200)
+  })
+
+  it('rate limits repeated pairing attempts by peer address', async () => {
+    const server = await start()
+    const statuses: number[] = []
+    for (let index = 0; index < 11; index += 1) {
+      const response = await fetch(`${server.url}/api/v1/pair`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: 'invalid.token' }),
+      })
+      statuses.push(response.status)
+    }
+    expect(statuses.slice(0, 10)).toEqual(Array(10).fill(401))
+    expect(statuses[10]).toBe(429)
   })
 })

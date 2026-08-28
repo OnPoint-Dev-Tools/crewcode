@@ -30,6 +30,7 @@ interface ChatHeaderProps {
   onOpenCanvas?:   () => void
   onOpenTerminal?: () => void
   onOpenBrowser?:  () => void
+  onHandoff?:     () => void
   agentLabel?:     string
   modelLabel?:     string
   voiceControl?:   VoiceControlSurface
@@ -57,6 +58,7 @@ interface HeaderAction {
   badge?:  string | number
   /** Plugin actions sit in their own group, separated from the built-in tools. */
   group:   'plugin' | 'tool'
+  disabled?: boolean
 }
 
 // Below this header width the tool pills collapse into a single dropdown so a
@@ -85,7 +87,7 @@ async function copyText(text: string): Promise<void> {
 
 export function ChatHeader({
   repo, branch, path, view, setView,
-  github, dirtyCount = 0, worktreeBranch, isGitRepo = true, gitOpen, onToggleGit, changesOpen, onToggleChanges, changesCount, onStartCrew, onOpenCanvas, onOpenTerminal, onOpenBrowser,
+  github, dirtyCount = 0, worktreeBranch, isGitRepo = true, gitOpen, onToggleGit, changesOpen, onToggleChanges, changesCount, onStartCrew, onOpenCanvas, onOpenTerminal, onOpenBrowser, onHandoff,
   agentLabel, modelLabel, delegationEnabled, onToggleDelegation,
   modePromptsEnabled, modePromptsLocked = false, onToggleModePrompts,
   voiceControl,
@@ -93,7 +95,8 @@ export function ChatHeader({
 }: ChatHeaderProps) {
   const { state: settings, set: setSetting } = useSettings()
   const [pathCopied, setPathCopied] = React.useState(false)
-  const [collapsed, setCollapsed] = React.useState(false)
+  const [collapsed, setCollapsed] = React.useState(() => typeof window !== 'undefined' && window.innerWidth < COLLAPSE_WIDTH)
+  const [mobileLayout, setMobileLayout] = React.useState(() => typeof window !== 'undefined' && window.innerWidth <= 768)
   const [menuOpen, setMenuOpen] = React.useState(false)
   const copyResetRef = React.useRef<number | null>(null)
   const headerRef = React.useRef<HTMLDivElement>(null)
@@ -133,6 +136,13 @@ export function ChatHeader({
     return () => ro.disconnect()
   }, [])
 
+  React.useEffect(() => {
+    const update = () => setMobileLayout(window.innerWidth <= 768)
+    update()
+    window.addEventListener('resize', update)
+    return () => window.removeEventListener('resize', update)
+  }, [])
+
   // Close the dropdown on outside click / Escape.
   React.useEffect(() => {
     if (!menuOpen) return
@@ -161,6 +171,18 @@ export function ChatHeader({
       badge:   item.text,
       group:   'plugin',
     })),
+    ...(mobileLayout && onToggleModePrompts ? [{
+      key: 'mode-prompt', group: 'tool', icon: 'bot', label: 'Mode prompt',
+      title: modePromptsLocked
+        ? `Mode prompt ${modePromptsEnabled ? 'was enabled' : 'was disabled'} when this session started`
+        : modePromptsEnabled ? 'Turn off the CrewCode mode prompt' : 'Turn on the CrewCode mode prompt',
+      onClick: onToggleModePrompts, active: modePromptsEnabled, disabled: modePromptsLocked,
+    } as HeaderAction] : []),
+    ...(mobileLayout && onToggleDelegation ? [{
+      key: 'delegation', group: 'tool', icon: 'crew', label: 'Delegate',
+      title: delegationEnabled ? 'Turn agent delegation off' : 'Allow this agent to delegate work',
+      onClick: onToggleDelegation, active: delegationEnabled,
+    } as HeaderAction] : []),
     {
       key: 'verbose-logs', group: 'tool',
       icon: settings.hideVerboseAgentLogs ? 'eyeOff' : 'eye',
@@ -169,15 +191,16 @@ export function ChatHeader({
       onClick: () => setSetting('hideVerboseAgentLogs', !settings.hideVerboseAgentLogs),
       active: settings.hideVerboseAgentLogs,
     },
-    { key: 'canvas',  group: 'tool', icon: 'workbench',     label: 'Workbench Mode',   title: 'Open Workbench Mode for chats and terminals', onClick: onOpenCanvas },
-    { key: 'terminal', group: 'tool', icon: 'terminal', label: 'Terminal', title: 'Open a terminal in this worktree', onClick: onOpenTerminal },
-    { key: 'browser',  group: 'tool', icon: 'globe',    label: 'Browser',  title: 'Open the in-app browser',          onClick: onOpenBrowser },
+    { key: 'canvas',  group: 'tool', icon: 'workbench', label: 'Workbench Mode', title: 'Open Workbench Mode for chats and terminals', onClick: onOpenCanvas },
+    ...(!mobileLayout ? [{ key: 'terminal', group: 'tool', icon: 'terminal', label: 'Terminal', title: 'Open a terminal in this worktree', onClick: onOpenTerminal } as HeaderAction] : []),
+    { key: 'browser', group: 'tool', icon: 'globe', label: 'Browser', title: 'Open the in-app browser', onClick: onOpenBrowser },
+    ...(onHandoff ? [{ key: 'handoff', group: 'tool', icon: 'refresh', label: 'Handoff', title: 'Hand off this context to another chat', onClick: onHandoff } as HeaderAction] : []),
     ...(onStartCrew ? [{ key: 'crew', group: 'tool', icon: 'crew', label: 'Crew', title: 'Start a crew session', onClick: onStartCrew } as HeaderAction] : []),
-     {
+    ...(!mobileLayout ? [{
       key: 'git', group: 'tool', icon: 'gitBranch', label: 'Git',
       title: gitOpen ? 'Close git sidebar' : 'Open git sidebar',
       onClick: onToggleGit, active: gitOpen,
-    },
+    } as HeaderAction] : []),
     ...(onToggleChanges ? [{
       key: 'changes', group: 'tool', icon: 'changes', label: 'Changes',
       title: changesOpen ? 'Close changes drawer' : 'Review uncommitted changes',
@@ -299,7 +322,7 @@ export function ChatHeader({
           <div className="act-menu-wrap" ref={menuRef}>
             <button
               type="button"
-              className={`act-pill ${menuOpen || anyActive ? 'on' : ''}`}
+              className={`act-pill mobile-chat-actions-trigger ${menuOpen || anyActive ? 'on' : ''}`}
               title="Worktree actions"
               aria-haspopup="menu"
               aria-expanded={menuOpen}
@@ -323,6 +346,7 @@ export function ChatHeader({
                         className={`tab-menu-item ${a.active ? 'on' : ''}`}
                         role="menuitem"
                         title={a.title}
+                        disabled={a.disabled}
                         onClick={() => { setMenuOpen(false); a.onClick?.() }}
                       >
                         <Icon name={a.icon} size={14} />

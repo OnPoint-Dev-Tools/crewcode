@@ -3,7 +3,7 @@ import TestRenderer, { act } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { NotificationsProvider } from './useNotifications'
-import { useBridgeRegistry } from './useBridgeRegistry'
+import { bridgeRuntimeId, useBridgeRegistry } from './useBridgeRegistry'
 import { bridgeActivity, useBridgeActivityStore } from '../stores/bridge-activity-store'
 
 // The activity store is a module singleton — reset it so state can't leak.
@@ -15,11 +15,11 @@ function deferred<T>() {
   return { promise, resolve }
 }
 
-function renderRegistry() {
+function renderRegistry(setMessagesForTab = vi.fn()) {
   const result = { current: undefined as unknown as ReturnType<typeof useBridgeRegistry> }
 
   function Probe(): null {
-    result.current = useBridgeRegistry({ setMessagesForTab: vi.fn() })
+    result.current = useBridgeRegistry({ setMessagesForTab })
     return null
   }
 
@@ -36,10 +36,66 @@ function renderRegistry() {
   }
 }
 
+describe('bridge runtime identity', () => {
+  it('keeps remote ids stable across browser runtimes without weakening desktop uniqueness', () => {
+    expect(bridgeRuntimeId('thread', 'claude', true, 1)).toBe(bridgeRuntimeId('thread', 'claude', true, 2))
+    expect(bridgeRuntimeId('thread', 'claude', false, 1)).not.toBe(bridgeRuntimeId('thread', 'claude', false, 2))
+  })
+})
+
 describe('useBridgeRegistry navigation keepalive', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
+  })
+
+  it('routes provider events emitted before React commits bridge map state', async () => {
+    let emitEvent!: (ev: unknown) => void
+    const setMessagesForTab = vi.fn((_tabId: string, updater: (messages: unknown[]) => unknown[]) => updater([]))
+    vi.stubGlobal('window', {
+      electronAPI: {
+        onBridgeEvent: vi.fn((cb: (ev: unknown) => void) => { emitEvent = cb; return vi.fn() }),
+        bridgeStart: vi.fn(async (opts: { bridgeId: string }) => {
+          emitEvent({ type: 'turn_start', bridgeId: opts.bridgeId, turnId: 'fast-turn' })
+          emitEvent({ type: 'text_delta', bridgeId: opts.bridgeId, turnId: 'fast-turn', delta: 'fast reply' })
+          emitEvent({ type: 'turn_end', bridgeId: opts.bridgeId, turnId: 'fast-turn' })
+          return { ok: true }
+        }),
+        bridgeStop: vi.fn(),
+        bridgeSetMode: vi.fn(),
+      },
+    })
+
+    const hook = renderRegistry(setMessagesForTab)
+    await act(async () => {
+      await hook.result.current.ensureBridge('sess-fast', 'codex', 'codex', '/repo', undefined, 'medium', 'build')
+    })
+
+    expect(setMessagesForTab).toHaveBeenCalled()
+    expect(setMessagesForTab.mock.calls.every(call => call[0] === 'sess-fast')).toBe(true)
+    hook.unmount()
+  })
+
+  it('deduplicates the same recovered Brain history event', async () => {
+    let emitEvent!: (ev: unknown) => void
+    let messages: unknown[] = []
+    const setMessagesForTab = vi.fn((_tabId: string, updater: (current: unknown[]) => unknown[]) => { messages = updater(messages) })
+    vi.stubGlobal('window', {
+      electronAPI: {
+        onBridgeEvent: vi.fn((cb: (ev: unknown) => void) => { emitEvent = cb; return vi.fn() }),
+        bridgeStart: vi.fn(async () => ({ ok: true })),
+        bridgeStop: vi.fn(),
+        bridgeSetMode: vi.fn(),
+      },
+    })
+    const hook = renderRegistry(setMessagesForTab)
+    await act(async () => { await hook.result.current.ensureBridge('sess-history', 'codex', 'codex', '/repo') })
+    const bridgeId = hook.result.current.getBridgeId('sess-history', 'codex')!
+    const event = { type: 'history_agent', bridgeId, turnId: 'recovered-1', text: 'finished remotely' }
+
+    act(() => { emitEvent(event); emitEvent(event) })
+    expect(messages).toHaveLength(1)
+    hook.unmount()
   })
 
   it('does not stop a bridge that is still starting unless explicitly forced', async () => {
@@ -63,6 +119,7 @@ describe('useBridgeRegistry navigation keepalive', () => {
 
     act(() => hook.result.current.releaseTab('sess-1'))
     expect(bridgeStop).not.toHaveBeenCalled()
+    expect(hook.result.current.isBridgeRunning('sess-1', 'pi')).toBe(true)
 
     await act(async () => {
       start.resolve({ ok: true })
@@ -75,17 +132,74 @@ describe('useBridgeRegistry navigation keepalive', () => {
     hook.unmount()
   })
 
+  it('returns rejected browser prompt RPCs as semantic failures', async () => {
+    vi.stubGlobal('window', {
+      electronAPI: {
+        onBridgeEvent: vi.fn(() => vi.fn()),
+        bridgeStart: vi.fn(async () => ({ ok: true })),
+        bridgePrompt: vi.fn(async () => { throw new Error('Brain session does not own this terminal or agent resource') }),
+        bridgeStop: vi.fn(),
+        bridgeSetMode: vi.fn(),
+      },
+    })
+
+    const hook = renderRegistry()
+    await act(async () => {
+      await hook.result.current.ensureBridge('sess-1', 'codex', 'codex', '/repo')
+    })
+    const bridgeId = hook.result.current.getBridgeId('sess-1', 'codex')!
+    await expect(hook.result.current.prompt(bridgeId, 'hello')).resolves.toEqual({
+      ok: false,
+      error: 'Brain session does not own this terminal or agent resource',
+    })
+    hook.unmount()
+  })
+
+  it('keeps an accepted browser prompt stoppable until a terminal bridge event arrives', async () => {
+    let emitEvent!: (ev: unknown) => void
+    vi.stubGlobal('window', {
+      electronAPI: {
+        onBridgeEvent: vi.fn((cb: (ev: unknown) => void) => { emitEvent = cb; return vi.fn() }),
+        bridgeStart: vi.fn(async () => ({ ok: true })),
+        // Browser RPC acknowledges prompt acceptance before provider execution
+        // has necessarily finished.
+        bridgePrompt: vi.fn(async () => ({ ok: true })),
+        bridgeStop: vi.fn(),
+        bridgeSetMode: vi.fn(),
+      },
+    })
+
+    const hook = renderRegistry()
+    await act(async () => {
+      await hook.result.current.ensureBridge('sess-1', 'claude', 'claude', '/repo', undefined, 'medium', 'build')
+    })
+    const bridgeId = hook.result.current.getBridgeId('sess-1', 'claude')!
+
+    await act(async () => {
+      await hook.result.current.prompt(bridgeId, 'keep working')
+    })
+    expect(hook.result.current.isBridgeRunning('sess-1', 'claude')).toBe(true)
+    expect(useBridgeActivityStore.getState().runningByScope['sess-1']).toBe(true)
+
+    act(() => emitEvent({ type: 'turn_end', bridgeId, turnId: 'turn-1' }))
+    expect(hook.result.current.isBridgeRunning('sess-1', 'claude')).toBe(false)
+    expect(useBridgeActivityStore.getState().runningByScope['sess-1']).toBeUndefined()
+
+    hook.unmount()
+  })
+
   it('keeps the bridge marked running after a queued follow-up resolves early', async () => {
     // A follow-up sent mid-turn resolves immediately ({ok:true} from the
     // provider queue) while the first prompt's IPC is still pending. The
     // running flag must not be cleared by the follow-up's resolution, or the
     // composer flips idle mid-turn and the next send goes out unqueued.
     const firstTurn = deferred<{ ok: boolean }>()
+    let emitEvent!: (ev: unknown) => void
     const bridgePrompt = vi.fn((_id: string, _text: string, options?: { streamingBehavior?: string }) =>
       options?.streamingBehavior === 'followUp' ? Promise.resolve({ ok: true }) : firstTurn.promise)
     vi.stubGlobal('window', {
       electronAPI: {
-        onBridgeEvent: vi.fn(() => vi.fn()),
+        onBridgeEvent: vi.fn((cb: (ev: unknown) => void) => { emitEvent = cb; return vi.fn() }),
         bridgeStart: vi.fn(async () => ({ ok: true })),
         bridgeStop: vi.fn(),
         bridgeSetMode: vi.fn(),
@@ -115,6 +229,10 @@ describe('useBridgeRegistry navigation keepalive', () => {
       firstTurn.resolve({ ok: true })
       await firstP
     })
+    // Prompt promise settlement is only an acknowledgement; the terminal event
+    // remains authoritative for whether the request can still be stopped.
+    expect(hook.result.current.isBridgeRunning('sess-1', 'claude')).toBe(true)
+    act(() => emitEvent({ type: 'turn_end', bridgeId, turnId: 'turn-1' }))
     expect(hook.result.current.isBridgeRunning('sess-1', 'claude')).toBe(false)
 
     hook.unmount()

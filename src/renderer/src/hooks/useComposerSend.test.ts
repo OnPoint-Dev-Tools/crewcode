@@ -74,6 +74,18 @@ describe('useComposerSend session continuity', () => {
     h.unmount()
   })
 
+  it('respawns the same session when its selected worktree path changes', () => {
+    const opts = makeOpts()
+    const h = renderHook(useComposerSend, opts)
+
+    h.rerender(makeOpts({ bridges: opts.bridges, effectivePath: '/repo-worktrees/feature' }))
+
+    expect(opts.bridges.dropBridge).toHaveBeenCalledOnce()
+    expect(opts.bridges.dropBridge).toHaveBeenCalledWith('sess-1', 'pi')
+
+    h.unmount()
+  })
+
   it('respawns on launch-flag changes but keeps mode changes in the same live session', () => {
     const opts = makeOpts()
     const h = renderHook(useComposerSend, opts)
@@ -94,6 +106,23 @@ describe('useComposerSend session continuity', () => {
     expect(opts.bridges.dropBridge).toHaveBeenCalledTimes(2)
     expect(opts.bridges.dropBridge).toHaveBeenLastCalledWith('sess-1', 'pi')
 
+    h.unmount()
+  })
+
+  it('respawns CrewCoder when its agent profile changes', () => {
+    const crewcoder = { ...agent, id: 'crewcoder', name: 'CrewCoder' }
+    const opts = makeOpts({ agents: [crewcoder], activeAgentId: 'crewcoder', crewcoderMode: 'general' })
+    const h = renderHook(useComposerSend, opts)
+
+    h.rerender(makeOpts({
+      bridges: opts.bridges,
+      agents: [crewcoder],
+      activeAgentId: 'crewcoder',
+      crewcoderMode: 'plugin',
+    }))
+
+    expect(opts.bridges.dropBridge).toHaveBeenCalledOnce()
+    expect(opts.bridges.dropBridge).toHaveBeenCalledWith('sess-1', 'crewcoder')
     h.unmount()
   })
 })

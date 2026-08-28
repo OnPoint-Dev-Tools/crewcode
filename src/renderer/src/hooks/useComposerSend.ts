@@ -7,6 +7,7 @@ import type { McpServerConfig } from './useSettings'
 import { DEFAULT_MODE_PROMPTS, sendChatSessionPrompt, type ModePromptConfig } from './chat-session-send'
 import { buildReportsBlock } from './delegation-report'
 import { delegationInbox } from '../stores/delegation-inbox-store'
+import type { CrewCoderMode } from '../../../shared/crewcoder-types'
 
 interface BridgesLike {
   ensureBridge: (
@@ -22,6 +23,7 @@ interface BridgesLike {
     mcpServers?: McpServerConfig[],
     freshSession?: boolean,
     externalDirectories?: string[],
+    crewcoderMode?: CrewCoderMode,
   ) => Promise<{ bridgeId: string } | { error: string }>
   prompt: (bridgeId: string, text: string, options?: ChatPromptOptions) => Promise<{ ok: boolean; error?: string }>
   compact?: (bridgeId: string) => Promise<{ ok: boolean; error?: string; unsupported?: boolean }>
@@ -29,8 +31,9 @@ interface BridgesLike {
 }
 
 interface PtyLike {
-  addAgent: (wsId: string, tabId: string, agentId: string, name: string, cwd: string, shell?: string | null) => { paneId: string; live?: boolean }
+  addAgent: (wsId: string, tabId: string, agentId: string, name: string, cwd: string, shell?: string | null) => { paneId: string; live?: boolean; cwd?: string }
   write: (paneId: string, text: string) => void
+  close?: (paneId: string) => void
 }
 
 export interface UseComposerSendOpts {
@@ -45,10 +48,11 @@ export interface UseComposerSendOpts {
   model: string
   effort: EffortLevel
   mode: ModeLevel
+  crewcoderMode?: CrewCoderMode
   effectivePath: string
   bridges: BridgesLike
   pty: PtyLike
-  activeAgentPane: { paneId: string; live?: boolean } | null
+  activeAgentPane: { paneId: string; live?: boolean; cwd?: string } | null
 
   /** Skills currently enabled in the library (any kind, all agents). */
   enabledSkills: Skill[]
@@ -84,7 +88,7 @@ export interface UseComposerSendOpts {
 export function useComposerSend(opts: UseComposerSendOpts) {
   const {
     activeWs, activeTabId, sessActive, composer, setComposer, setMessages,
-    agents, activeAgentId, model, effort, mode, effectivePath, bridges, pty, activeAgentPane,
+    agents, activeAgentId, model, effort, mode, crewcoderMode: rawCrewCoderMode, effectivePath, bridges, pty, activeAgentPane,
     enabledSkills, skillsDeliveredTo, markSkillsDelivered, lastDeliveredMode, markModeDelivered,
     modePromptsEnabled = true, modePrompts = DEFAULT_MODE_PROMPTS,
     sessionHasExistingMessages = false,
@@ -94,6 +98,7 @@ export function useComposerSend(opts: UseComposerSendOpts) {
     getAttachments, getMcpServers,
     workspaceName, workspaceBranch, externalDirectories,
   } = opts
+  const crewcoderMode = rawCrewCoderMode
 
   const pendingHandoffRef = useRef<Record<string, { fromProvider: string; toProvider: string }>>({})
 
@@ -132,6 +137,20 @@ export function useComposerSend(opts: UseComposerSendOpts) {
   // Mode is per-turn behavior. Do not respawn the bridge here: the next send
   // updates the live bridge's mode and injects a mode-change instruction.
 
+  // A session's selected worktree is part of its runtime identity. Reusing a
+  // bridge launched in a sibling/previous cwd would make the UI say one branch
+  // while tools still edit another checkout.
+  const prevPathRef = useRef({ sessActive, activeAgentId, effectivePath })
+  useEffect(() => {
+    const prev = prevPathRef.current
+    const sameRuntime = prev.sessActive === sessActive && prev.activeAgentId === activeAgentId
+    prevPathRef.current = { sessActive, activeAgentId, effectivePath }
+    if (sessActive && sameRuntime && prev.effectivePath !== effectivePath) {
+      bridges.dropBridge(sessActive, activeAgentId)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectivePath, sessActive, activeAgentId])
+
   // Effort is just a launch flag; respawn the bridge but keep provider context.
   const prevEffortRef = useRef({ sessActive, activeAgentId, effort })
   useEffect(() => {
@@ -141,6 +160,19 @@ export function useComposerSend(opts: UseComposerSendOpts) {
     if (sessActive && sameRuntime && prev.effort !== effort) bridges.dropBridge(sessActive, activeAgentId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effort, sessActive, activeAgentId])
+
+  // CrewCoder mode is a process launch flag (`crewcoder acp --mode`), so a
+  // changed profile restarts only that provider bridge and keeps its session.
+  const prevCrewCoderModeRef = useRef({ sessActive, activeAgentId, crewcoderMode })
+  useEffect(() => {
+    const prev = prevCrewCoderModeRef.current
+    const sameRuntime = prev.sessActive === sessActive && prev.activeAgentId === activeAgentId
+    prevCrewCoderModeRef.current = { sessActive, activeAgentId, crewcoderMode }
+    if (activeAgentId === 'crewcoder' && sessActive && sameRuntime && prev.crewcoderMode !== crewcoderMode) {
+      bridges.dropBridge(sessActive, activeAgentId)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [crewcoderMode, sessActive, activeAgentId])
 
   const sendText = useCallback(async (
     text: string,
@@ -171,6 +203,7 @@ export function useComposerSend(opts: UseComposerSendOpts) {
       activeAgentId,
       model,
       effort,
+      crewcoderMode,
       mode,
       effectivePath,
       bridges,
@@ -193,7 +226,7 @@ export function useComposerSend(opts: UseComposerSendOpts) {
     if (handoff) delete pendingHandoffRef.current[sessActive]
   }, [
     activeWs, activeTabId, sessActive, setMessages, agents, activeAgentId,
-    model, effort, mode, effectivePath, bridges, pty, activeAgentPane,
+    model, effort, mode, crewcoderMode, effectivePath, bridges, pty, activeAgentPane,
     enabledSkills, skillsDeliveredTo, markSkillsDelivered, lastDeliveredMode, markModeDelivered,
     modePromptsEnabled, modePrompts, sessionHasExistingMessages,
     delegationPreamble, delegationDeliveredTo, markDelegationDelivered,
@@ -245,6 +278,12 @@ export function useComposerSend(opts: UseComposerSendOpts) {
         return
       }
       let pane = activeAgentPane
+      // Terminal providers cannot change cwd in place. Retire an agent pane
+      // launched for the old worktree before forwarding the next command.
+      if (pane?.live && pane.cwd && pane.cwd !== effectivePath) {
+        pty.close?.(pane.paneId)
+        pane = null
+      }
       if (!pane || !pane.live) pane = pty.addAgent(activeWs, activeTabId, agent.id, agent.name, effectivePath, agent.path)
       setMessages(m => [...m, { kind: 'system', time, tone: 'info', text: `${agent.name} compaction requested. Continue after the provider reports completion.` }])
       pty.write(pane.paneId, '/compact\n')

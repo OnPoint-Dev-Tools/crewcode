@@ -87,21 +87,7 @@ export function extractFilePathsFromToolArgs(toolName: string, args: unknown): s
   const a = args as Record<string, unknown>
   if (!isFileEditTool(toolName, a)) return []
 
-  const paths: string[] = []
-  const add = (p: string | null): void => {
-    if (p && !paths.includes(p)) paths.push(p)
-  }
-
-  // Some bridges package a multi-file patch as `{ changes: [{ path, diff }] }`.
-  if (Array.isArray(a.changes)) {
-    for (const change of a.changes) {
-      if (!change || typeof change !== 'object') continue
-      add(pathField(change as Record<string, unknown>))
-    }
-  }
-
-  add(pathField(a))
-  return paths
+  return collectTouchedPaths(a)
 }
 
 export function pathField(obj: Record<string, unknown>): string | null {
@@ -202,6 +188,23 @@ export interface ProviderPatchChange {
   patch: string
 }
 
+/** Split a git multi-file patch into Pierre-compatible single-file patches. */
+function splitGitPatchByFile(raw: string): ProviderPatchChange[] {
+  const starts: number[] = []
+  const matcher = /^diff --git a\/(.+) b\/(.+)$/gm
+  let match: RegExpExecArray | null
+  while ((match = matcher.exec(raw)) !== null) starts.push(match.index)
+  if (starts.length <= 1) return []
+
+  return starts.flatMap((start, index) => {
+    const patch = raw.slice(start, starts[index + 1] ?? raw.length).trimEnd()
+    const header = /^diff --git a\/(.+) b\/(.+)$/m.exec(patch)
+    const path = header?.[2]
+    if (!path || !/^@@ .* @@/m.test(patch)) return []
+    return [{ path, patch: normalizePatchForPierre(path, patch) }]
+  })
+}
+
 /**
  * A real unified diff has at least one `@@ ... @@` hunk header or a
  * `diff --git` line. Several tools surface a human-readable, line-numbered
@@ -287,6 +290,29 @@ function patchFromProviderChange(path: string, kindType: string, diff: string): 
 // Nested containers providers wrap their tool payload in. We descend these so a
 // diff at `result.details.diff` is found, not just a top-level `result.diff`.
 const NESTED_PAYLOAD_KEYS = ['details', 'result', 'output', 'data', 'state']
+const PATH_COLLECTION_KEYS = ['changes', 'edits', 'files', 'operations', 'patches']
+
+/** Paths encoded inside apply-patch or unified-diff text instead of fields. */
+export function extractPathsFromPatchText(raw: string): string[] {
+  const paths: string[] = []
+  const add = (path: string | undefined): void => {
+    const normalized = path?.trim().replace(/^['"]|['"]$/g, '')
+    if (!normalized || normalized === '/dev/null' || paths.includes(normalized)) return
+    paths.push(normalized)
+  }
+
+  for (const line of raw.split('\n')) {
+    const envelope = /^\*\*\* (?:Add|Update|Delete) File: (.+)$/.exec(line)
+    if (envelope) { add(envelope[1]); continue }
+    const moved = /^\*\*\* Move to: (.+)$/.exec(line)
+    if (moved) { add(moved[1]); continue }
+    const git = /^diff --git a\/(.+) b\/(.+)$/.exec(line)
+    if (git) { add(git[2]); continue }
+    const header = /^(?:--- a\/|\+\+\+ b\/)(.+)$/.exec(line)
+    if (header) add(header[1])
+  }
+  return paths
+}
 
 /**
  * Pull precomputed patch payloads out of provider args/results, descending into
@@ -301,14 +327,23 @@ export function extractProviderPatchChanges(...payloads: unknown[]): ProviderPat
   // `args.path` but the diff in `result.details.diff`. When a diff is found
   // with no local/inherited path, fall back to any path seen across payloads.
   const fallbackPath = collectTouchedPaths(...payloads)[0] ?? null
-  const add = (path: string | null, kindType: string, diff: string | undefined): void => {
-    const p = path ?? fallbackPath
-    if (!p || !diff) return
-    const patch = patchFromProviderChange(p, kindType, diff)
+  const addOne = (path: string, kindType: string, diff: string): void => {
+    const patch = patchFromProviderChange(path, kindType, diff)
     if (!patch) return
-    const existing = out.findIndex(c => c.path === p)
-    if (existing === -1) out.push({ path: p, patch })
-    else out[existing] = { path: p, patch }
+    const existing = out.findIndex(c => c.path === path)
+    if (existing === -1) out.push({ path, patch })
+    else out[existing] = { path, patch }
+  }
+  const add = (path: string | null, kindType: string, diff: string | undefined): void => {
+    if (!diff) return
+    const split = splitGitPatchByFile(diff)
+    if (split.length > 0) {
+      for (const change of split) addOne(change.path, 'modify', change.patch)
+      return
+    }
+    const p = path ?? fallbackPath
+    if (!p) return
+    addOne(p, kindType, diff)
   }
 
   // Each queue item carries the nearest ancestor path so a diff nested under
@@ -375,10 +410,16 @@ export function collectTouchedPaths(...payloads: unknown[]): string[] {
     if (!src || seen.has(src)) continue
     seen.add(src)
     add(pathField(src))
-    if (Array.isArray(src.changes)) {
-      for (const change of src.changes) {
-        const c = asRecord(change)
-        if (c) add(pathField(c))
+    for (const key of ['patch', 'diff']) {
+      const raw = asString(src[key])
+      if (raw) for (const path of extractPathsFromPatchText(raw)) add(path)
+    }
+    for (const key of PATH_COLLECTION_KEYS) {
+      const collection = src[key]
+      if (Array.isArray(collection)) {
+        for (const item of collection) queue.push(item)
+      } else if (collection && typeof collection === 'object') {
+        queue.push(collection)
       }
     }
     for (const key of NESTED_PAYLOAD_KEYS) {

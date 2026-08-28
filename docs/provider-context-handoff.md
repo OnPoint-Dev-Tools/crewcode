@@ -1,0 +1,11 @@
+# Provider context handoff
+
+CrewCode exposes context handoff from the Solo Chat header and through `/handoff`.
+
+The handoff card separates destinations into **New chat** and **Used chats** tabs. Opening **Used chats** loads the same live chat catalogue shown in the current workspace's **Sessions** list, across all of that workspace's chat tabs, while excluding the source chat. New destinations allow provider, model, and reasoning effort selection. Existing destinations keep their already-selected provider, model, effort, visible transcript, owning tab, and selected worktree. Starting either a new-chat or used-chat transfer closes the card immediately and reveals the destination through the normal workspace-session navigation path; progress and failures remain visible on the destination's handoff meter.
+
+A handoff is not provider-native session migration. CrewCode starts a disposable session using the destination provider, generates a bounded summary of the source conversation, and appends that packet to the destination's local replay history. The destination provider's native resume id is cleared so its next prompt starts fresh and receives both its prior local history and the imported handoff packet. The destination transcript displays a progress meter and the generated handoff summary.
+
+If summarization fails, the destination meter is marked failed and CrewCode does not report success.
+
+Remote browser handoff uses the same behavior without copying replay history into browser storage. Each browser chat has a Brain-local `web:<session>` conversation shard. The web adapter removes the renderer's desktop-only `thread:` prefix, and the authenticated Brain RPC boundary restores the `web:` namespace before reading the source. The destination bridge must belong to the authenticated Hub owner and remain under the Brain's explicit `agent` grant. The Brain performs disposable summarization, appends the packet to the destination shard, clears its native resume id, and emits `handoff_summary` followed by `idle_stopped`. The next native-provider prompt injects the combined destination history once; stateless HTTP providers read that shard directly. A running destination refuses handoff so its execution authority and context cannot change underneath an active turn.

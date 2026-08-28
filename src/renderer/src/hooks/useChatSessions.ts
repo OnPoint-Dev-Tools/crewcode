@@ -13,6 +13,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import type { Session, ModeLevel } from '../types'
 import { normalizeModeLevel } from '../app-constants'
 import type { EffortLevel } from '../components/composer/EffortPicker'
+import { normalizeCrewCoderMode } from '../../../shared/crewcoder-types'
 
 type SessionsByTab = Record<string, Session[]>
 type ActiveByTab   = Record<string, string>
@@ -25,6 +26,15 @@ export interface SessionDefaults {
   model:   string
   mode:    ModeLevel
   effort:  EffortLevel
+  /** Branch to provision/select when this new chat session is first created. */
+  initialBranch?: string
+}
+
+export interface RestoredRemoteSession {
+  id: string
+  tabId: string
+  label: string
+  agentId?: string
 }
 
 /** What the delegation API supplies when an agent spawns a thread. */
@@ -77,6 +87,7 @@ function freshSession(tabId: string, n: number, d: SessionDefaults, projectName?
     mcpServerIds: [],
     enabledSkillIds: [],
     modePromptsEnabled: true,
+    initialBranch: d.initialBranch?.trim() || undefined,
   }
 }
 
@@ -121,7 +132,10 @@ export function migratePersistedSessions(sessionsByTab: Record<string, Persisted
       // Sessions created before provider-native effort used Pi's "minimal" id.
       effort: effort === 'minimal' ? 'low' : effort,
       // Sessions saved before the rename carry mode 'yolo'.
-      mode: normalizeModeLevel(session.mode),
+      mode: session.agentId === 'crewcoder' && session.crewcoderMode !== undefined
+        ? 'build'
+        : normalizeModeLevel(session.mode),
+      ...(session.crewcoderMode === undefined ? {} : { crewcoderMode: normalizeCrewCoderMode(session.crewcoderMode) }),
       enabledSkillIds: session.enabledSkillIds ?? [],
       modePromptsEnabled: session.modePromptsEnabled ?? true,
     })),
@@ -225,6 +239,32 @@ export function useChatSessions(defaults: SessionDefaults) {
     return sess
   }, [sessionsByTab])
 
+  /** Re-materialize one exact Brain-known transcript scope on a fresh browser. */
+  const restoreRemote = useCallback((descriptor: RestoredRemoteSession): Session | null => {
+    const id = descriptor.id.trim()
+    const tabId = descriptor.tabId.trim()
+    if (!id || !tabId || id.length > 512 || tabId.length > 512) return null
+    const all = idAllocationRef.current
+    const existing = Object.values(all).flat().find(session => session.id === id)
+    if (existing) {
+      if (existing.tabId !== tabId) return null
+      if (!existing.archived) setActiveByTab(prev => ({ ...prev, [existing.tabId]: existing.id }))
+      return existing
+    }
+    const ordinal = Number(id.match(/::s(\d+)$/)?.[1] ?? 1)
+    const restored: Session = {
+      ...freshSession(tabId, Number.isSafeInteger(ordinal) && ordinal > 0 ? ordinal : 1, defaultsRef.current),
+      id,
+      tabId,
+      label: descriptor.label.trim().slice(0, 80) || 'Recovered thread',
+      agentId: descriptor.agentId?.trim().slice(0, 80) || defaultsRef.current.agentId,
+    }
+    idAllocationRef.current = { ...all, [tabId]: [...(all[tabId] ?? []), restored] }
+    setSessionsByTab(prev => ({ ...prev, [tabId]: [...(prev[tabId] ?? []), restored] }))
+    setActiveByTab(prev => ({ ...prev, [tabId]: id }))
+    return restored
+  }, [])
+
   // Duplicate an existing session in a tab — copies agent/model/mode/effort
   // so the new thread starts in the same configuration. The new session
   // becomes the active one. Returns null when the source session is missing.
@@ -240,6 +280,7 @@ export function useChatSessions(defaults: SessionDefaults) {
       model:   src.model,
       mode:    src.mode,
       effort:  src.effort,
+      ...(src.crewcoderMode ? { crewcoderMode: src.crewcoderMode } : {}),
       mcpServerIds: [...(src.mcpServerIds ?? [])],
       enabledSkillIds: [...(src.enabledSkillIds ?? [])],
       modePromptsEnabled: src.modePromptsEnabled ?? true,
@@ -270,6 +311,8 @@ export function useChatSessions(defaults: SessionDefaults) {
       agentId: spawn.agentId ?? defaultsRef.current.agentId,
       model:   spawn.model ?? defaultsRef.current.model,
       mode:    normalizeModeLevel(spawn.mode),
+      // Delegated threads manage their own base/worktree contract.
+      initialBranch: undefined,
       origin:  'delegated',
       delegatedBy: spawn.parentSessionId,
       delegatedAt: Date.now(),
@@ -290,7 +333,7 @@ export function useChatSessions(defaults: SessionDefaults) {
     setActiveByTab(prev => ({ ...prev, [tabId]: sessionId }))
   }, [])
 
-  const update = useCallback((tabId: string, sessionId: string, patch: Partial<Pick<Session, 'agentId' | 'model' | 'mode' | 'effort' | 'label' | 'mcpServerIds' | 'enabledSkillIds' | 'modePromptsEnabled' | 'delegationEnabled' | 'delegationClosedAt' | 'pinned' | 'externalDirectories'>>) => {
+  const update = useCallback((tabId: string, sessionId: string, patch: Partial<Pick<Session, 'agentId' | 'model' | 'mode' | 'crewcoderMode' | 'effort' | 'label' | 'mcpServerIds' | 'enabledSkillIds' | 'modePromptsEnabled' | 'delegationEnabled' | 'delegationClosedAt' | 'pinned' | 'externalDirectories' | 'initialBranch'>>) => {
     if (!tabId) return
     setSessionsByTab(prev => {
       const list = prev[tabId] ?? []
@@ -412,6 +455,6 @@ export function useChatSessions(defaults: SessionDefaults) {
   return useMemo(() => ({
     sessionsByTab, activeByTab,
     getSessions, getAllSessions, getActiveId, getActiveSession,
-    ensureTab, add, addDelegated, duplicate, activate, update, setArchived, backfillArchivedAt, remove, releaseTab, pruneTabs,
-  }), [sessionsByTab, activeByTab, getSessions, getAllSessions, getActiveId, getActiveSession, ensureTab, add, addDelegated, duplicate, activate, update, setArchived, backfillArchivedAt, remove, releaseTab, pruneTabs])
+    ensureTab, add, restoreRemote, addDelegated, duplicate, activate, update, setArchived, backfillArchivedAt, remove, releaseTab, pruneTabs,
+  }), [sessionsByTab, activeByTab, getSessions, getAllSessions, getActiveId, getActiveSession, ensureTab, add, restoreRemote, addDelegated, duplicate, activate, update, setArchived, backfillArchivedAt, remove, releaseTab, pruneTabs])
 }

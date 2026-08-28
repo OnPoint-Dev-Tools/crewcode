@@ -38,6 +38,7 @@ import { useMessagesStore } from '../stores/chat-messages-store'
 import type { CrewSession } from '../orchestrator/crew-session'
 import type { AgentInfo, AgentProviderId, BridgeEvent, Message } from '../types'
 import type { EffortLevel } from '../components/composer/EffortPicker'
+import { createTurnActivity, settleCurrentTurnActivity } from '../components/thread/turn-activity'
 
 /** How many delegate→reply→synthesize cycles auto-run before pausing for input. */
 export const MAX_SUPERVISOR_ROUNDS = 4
@@ -260,6 +261,7 @@ export function useCrewSupervisor(opts: UseCrewSupervisorOpts) {
     // `busy` before the first yield closes the race: the second feedSupervisor
     // sees busy=true, buffers its reply, and drains when this turn ends.
     coordRef.current.busy = true
+    postToSupervisor(s, createTurnActivity(promptText, nowTime()))
 
     const r = await bridges.ensureBridge(
       supTab, agent.id, agent.id as AgentProviderId,
@@ -268,6 +270,7 @@ export function useCrewSupervisor(opts: UseCrewSupervisorOpts) {
     )
     if ('error' in r) {
       coordRef.current.busy = false
+      setMessagesForTab(supTab, messages => settleCurrentTurnActivity(messages, 'interrupted'))
       postToSupervisor(s, { kind: 'system', tone: 'error', time: nowTime(), text: r.error })
       crew.bindSupervisor(activeTabRef.current, { status: 'error' })
       return
@@ -285,6 +288,7 @@ export function useCrewSupervisor(opts: UseCrewSupervisorOpts) {
     const res = await bridges.prompt(r.bridgeId, text)
     if (!res.ok) {
       coordRef.current.busy = false
+      setMessagesForTab(supTab, messages => settleCurrentTurnActivity(messages, 'interrupted'))
       postToSupervisor(s, { kind: 'system', tone: 'error', time: nowTime(), text: res.error ?? 'supervisor prompt failed' })
       crew.bindSupervisor(activeTabRef.current, { status: 'error' })
     }

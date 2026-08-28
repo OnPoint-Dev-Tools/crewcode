@@ -14,6 +14,12 @@ export interface TranscriptBatchEntry {
   messages: unknown[]
 }
 
+export interface RecentTranscriptSummary {
+  scopeId: string
+  updatedAt: number
+  firstUserText: string | null
+}
+
 const FILE_PREFIX = 'transcript.'
 
 function normalizeMessages(value: unknown): TranscriptMessage[] {
@@ -55,6 +61,31 @@ export class TranscriptService {
   mtimes(): Record<string, number> {
     if (!this.mtimeByScope) this.loadAll()
     return { ...(this.mtimeByScope ?? {}) }
+  }
+
+  /** Small metadata-only view for mobile dashboards; never returns transcript bodies. */
+  recent(limit = 5): RecentTranscriptSummary[] {
+    const boundedLimit = Math.max(0, Math.min(20, Math.floor(limit)))
+    if (boundedLimit === 0) return []
+    const summaries: RecentTranscriptSummary[] = []
+    for (const name of this.entries()) {
+      try {
+        const fullPath = join(this.directory, name)
+        const parsed = JSON.parse(readFileSync(fullPath, 'utf8')) as TranscriptFile
+        if (!parsed || typeof parsed.scopeId !== 'string') continue
+        const messages = normalizeMessages(parsed.messages)
+        const firstUser = messages.find(message => message.kind === 'user' || message.role === 'user')
+        const text = typeof firstUser?.text === 'string'
+          ? firstUser.text
+          : typeof firstUser?.content === 'string' ? firstUser.content : ''
+        summaries.push({
+          scopeId: parsed.scopeId,
+          updatedAt: statSync(fullPath).mtimeMs,
+          firstUserText: text.trim() ? text.trim().slice(0, 240) : null,
+        })
+      } catch { /* skip corrupt shards */ }
+    }
+    return summaries.sort((left, right) => right.updatedAt - left.updatedAt).slice(0, boundedLimit)
   }
 
   save(scopeId: string, messages: unknown): { ok?: true; error?: string } {

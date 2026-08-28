@@ -14,7 +14,8 @@
    },
    "bin": {
       "crewcode": "bin/crewcode-server.mjs",
-      "crewcode-server": "bin/crewcode-server.mjs"
+      "crewcode-server": "bin/crewcode-server.mjs",
+      "yuheard": "bin/yuheard.mjs"
    },
    "main": "out/main/index.js",
    "repository": {
@@ -150,7 +151,7 @@
       "fix-node-pty-permissions": "node scripts/fix-node-pty-permissions.mjs",
       "postinstall": "npm run fix-node-pty-permissions",
       "install-electron": "node node_modules/electron/install.js",
-      "sync-plugin-api": "node scripts/sync-plugin-api-helper.mjs",
+      "sync-plugin-api": "node packages/crewcode-plugin-api/scripts/sync-vendored.mjs",
       "crewcode": "node packages/crewcode-plugin-cli/bin/crewcode.mjs",
       "codemirror:install": "node packages/crew-codemirror/bin/cm.js install",
       "codemirror:build": "node packages/crew-codemirror/bin/cm.js build",
@@ -161,21 +162,24 @@
       "test:watch": "vitest"
    },
    "devDependencies": {
+      "@tailwindcss/vite": "^4.3.3",
       "@types/node": "^22.0.0",
       "@types/pdfkit": "^0.17.6",
+      "@types/qrcode": "^1.5.6",
       "@types/react": "^18.3.0",
       "@types/react-dom": "^18.3.0",
       "@types/react-test-renderer": "^18.3.1",
       "@types/ssh2": "^1.15.5",
       "@types/turndown": "^5.0.6",
       "@types/ws": "^8.18.1",
-      "@vitejs/plugin-react": "^4.3.0",
+      "@vitejs/plugin-react": "^5.2.0",
       "electron": "^42.3.0",
       "electron-builder": "^26.15.2",
       "electron-devtools-installer": "^4.0.0",
       "electron-vite": "^5.0.0",
       "react-test-renderer": "^18.3.1",
-      "vitest": "^2.1.9"
+      "tailwindcss": "^4.3.3",
+      "vitest": "^4.1.11"
    },
    "dependencies": {
       "@anthropic-ai/claude-agent-sdk": "^0.3.179",
@@ -207,7 +211,6 @@
       "@simplewebauthn/server": "^13.3.2",
       "@types/diff": "^7.0.2",
       "@types/pidusage": "^2.0.5",
-      "@xterm/addon-canvas": "^0.7.0",
       "@xterm/addon-fit": "^0.11.0",
       "@xterm/addon-webgl": "^0.19.0",
       "@xterm/xterm": "^6.0.0",
@@ -220,6 +223,7 @@
       "pdfkit": "^0.19.1",
       "pidtree": "^0.6.0",
       "pidusage": "^4.0.1",
+      "qrcode": "^1.5.4",
       "react": "^18.3.0",
       "react-dom": "^18.3.0",
       "react-grab": "^0.1.37",

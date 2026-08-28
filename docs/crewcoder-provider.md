@@ -2,8 +2,9 @@
 
 CrewCoder is a first-class CrewCode chat and Crew provider implemented by
 `src/main/agents/crewcoder-bridge.ts`. CrewCode is the ACP **client**: it spawns
-`crewcoder acp --approval review` and translates newline-delimited JSON-RPC 2.0
-onto the shared `AgentBridge` event stream. CrewCoder remains the ACP agent.
+`crewcoder acp --approval review`, optionally adding a selected CrewCoder
+`--mode`, and translates newline-delimited JSON-RPC 2.0 onto the shared
+`AgentBridge` event stream. CrewCoder remains the ACP agent.
 
 CrewCoder-specific usage metadata, permission semantics, reasoning,
 and tool-call ordering must not change Hermes behavior.
@@ -22,6 +23,36 @@ CrewCode detects `crewcoder` on `PATH`. Settings → Agents can override the
 binary path. The provider picker shows one **CrewCoder** provider; its model
 picker spans CrewCoder's configured backends using `provider:model` ids such as
 `codex:gpt-5.6-sol` and `opencode:claude-sonnet-4-6`.
+
+When CrewCoder is installed and selected as the active provider, the desktop
+model-row reveal also shows a **crew** mode picker. It offers CrewCoder's
+`general`, `crewcoder`, `plugin`, and `extension` profiles plus **Configured
+default**. The selection is session-scoped and survives app restarts and chat
+duplication. Configured default omits `--mode`, preserving the user's CrewCoder
+configuration and compatibility with older installs. Choosing a concrete
+profile restarts only the CrewCoder ACP process and resumes the same native
+session under the selected profile. The picker closes and stays disabled while
+a turn is running so authority cannot change underneath live execution. It
+stays absent for unavailable or inactive providers and from the phone layout,
+where the desktop model-row reveal itself is intentionally hidden.
+
+A concrete CrewCoder profile also owns the agent's behavioral mode, so CrewCode
+locks its separate execution policy to **Build** and disables the
+Ask/Plan/Build/Full control. Build remains active underneath as the approval
+gate: writes still require CrewCode's permission overlay instead of becoming
+implicitly Full Access. The phone model menu disables its Mode row for the same
+session. Returning to **Configured default** re-enables the execution-mode
+control; the session remains on Build until the user chooses another policy.
+
+The `crewcoder` profile adds a runtime inspect → clarify → plan → approve
+sequence inside CrewCoder. CrewCode does not enforce that gate; it projects
+`crewcoder_clarify` and `crewcoder_propose_plan` into the agent activity overlay
+and sends `/approve-plan` as a user prompt when the user clicks **approve plan**
+or picks the CrewCoder slash command. That prompt is not `/approve` and does
+not settle a `session/request_permission` card. After plan approval, CrewCode
+Build permission prompts still apply to mutating tools. Revising a proposed
+plan is a normal composer message; CrewCoder treats that as a new
+`awaiting_plan` cycle rather than approval.
 
 ## ACP lifecycle
 
@@ -77,7 +108,9 @@ failure.
 CrewCoder ACP respects CrewCoder's persisted `autoCompact` setting. CrewCode does not force
 compaction or retry context-window failures. Automatic and provider-neutral safety compaction are
 reported live through `_crewcoder/compaction_update`, allowing CrewCode to show the compaction meter
-while CrewCoder summarizes in the background. When automatic compaction is off, the user explicitly
+while CrewCoder summarizes in the background. If the ACP child exits, CrewCode removes that dead
+bridge registration; the next composer submission uses normal missing-bridge recovery rather than
+attempting to write to closed stdin and surfacing `crewcoder acp: process not writable`. When automatic compaction is off, the user explicitly
 runs `/compact` before continuing; this policy does not affect Pi or other providers.
 
 A prompt has a ten-minute **inactivity** watchdog rather than a wall-clock turn
@@ -91,6 +124,41 @@ a second prompt can never overlap the abandoned CrewCoder turn.
 Usage prefers `_meta["crewcoder/usage"]`: `lastInputTokens` is the live
 `contextTokens` value and `contextWindow` is the context limit. Top-level usage
 is only the compatibility fallback.
+
+ACP `tool_call` updates carry a category `kind` (`read`, `edit`, `think`, …), a
+human `title`, and authoritative CrewCoder tool identity in
+`_meta["crewcoder/tool"].name`. The bridge records that metadata as `toolName`
+even when ACP also fills a generic `name`/`kind` such as `think`;
+bare identifier titles remain a compatibility fallback for older CrewCoder ACP
+streams.
+
+## Todo activity
+
+CrewCode owns a generic turn-lifecycle activity row, so its overlay does not
+depend on CrewCoder calling task tools. CrewCoder has no Claude-style
+`TodoWrite` snapshot tool. The matching native layer is `crew-tasks`, which is
+disabled until `crewcoder task on` (or `/task on` in the CrewCoder TUI). When
+enabled, every Task* result includes a session `todos` snapshot on ACP `rawOutput`
+(`content` / `status` / `activeForm`) so the overlay lights up the same way as
+Claude and Pi. The bridge preserves the exact Task* name from CrewCoder's ACP
+metadata. Older incremental-only turns still reconstruct from `TaskCreate` /
+`TaskUpdate` / `TaskDelete` arguments and result metadata. A new user message
+clears the prior native list immediately; Task* evidence from the new turn
+temporarily enriches the CrewCode-owned lifecycle while execution is active.
+CrewCode does not enable `crew-tasks` on ACP spawn and never fabricates Task*
+results. A `TaskList` result is eligible only when the call
+explicitly used `sessionOnly: true`; project-wide lists can contain unfinished
+tasks owned by unrelated CrewCoder sessions and are not chat activity.
+
+The renderer preserves the complete `rawOutput.task` record alongside the
+authoritative `rawOutput.todos` snapshot instead of reducing CrewCoder tasks to
+three display fields. This includes stable task id, session-local display
+number, subject/description, owner/session/project identity, metadata,
+dependency edges, and creation/update timestamps. Snapshot updates change the
+list and status without discarding those details. CrewCode's `TodoItem` and the
+optional task payload on `TaskSummaryItem` render the same active-form,
+blocked-pending, completed, owner, and display-number semantics as the
+CrewCoder TUI, including active → pending → completed ordering.
 
 ## Mode and permission enforcement
 
@@ -110,7 +178,12 @@ tool; those remembered decisions would bypass a later live composer-mode change.
 Once-only choices preserve the invariant that current mode is always authoritative.
 
 CrewCode `ModeLevel` (`ask`, `plan`, `build`, `full`) must never be passed to
-CrewCoder's unrelated `--mode` option (`general`, `plugin`, `extension`).
+CrewCoder's separate agent-profile `--mode` option (`general`, `crewcoder`,
+`plugin`, `extension`). The selected `Session.crewcoderMode` is the only value
+allowed onto that launch flag. It is process-scoped, whereas CrewCode execution
+mode remains the permission policy described above. A concrete CrewCoder
+profile fixes that policy to Build; it must never inherit a hidden prior Ask,
+Plan, or Full Access value.
 
 ## Filesystem and SSH behavior
 
@@ -151,10 +224,12 @@ registry entries yet; `session/new` and `session/load` send an empty MCP list.
 ```bash
 rtk vitest run src/main/agents/crewcoder-bridge.test.ts
 rtk vitest run src/main/agents/compaction-meter.test.ts
+rtk vitest run src/renderer/src/components/thread/crewcoder-plan-gate.test.ts
 rtk npm run typecheck
 ```
 
 Manual checks should cover model discovery, streamed text/reasoning, one row per
 tool id, Build permission prompts held longer than ten minutes, Ask rejection,
-Full auto-accept, inactivity cancellation, native resume, usage, and an SSH text
-read/write round trip.
+Full auto-accept, inactivity cancellation, native resume, usage, an SSH text
+read/write round trip, and CrewCoder-mode clarify then propose-plan overlay
+approval via `/approve-plan`.

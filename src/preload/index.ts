@@ -102,6 +102,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     shell?: string
     argv?:  string[]
     env?:   Record<string, string>
+    agentId?: string | null
+    autoWrap?: boolean
+    wrapAgentIds?: string[]
+    yuheard?: boolean
   }) => ipcRenderer.invoke('pty:create', opts),
 
   ptyWrite: (paneId: string, data: string): void =>
@@ -144,6 +148,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     externalDirectories?: string[]
     model?:      string
     mode?:       'ask' | 'plan' | 'build' | 'full'
+    crewcoderMode?: import('../shared/crewcoder-types').CrewCoderMode
     toolPolicy?: 'default' | 'read-only'
     thinking?:   'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
     apiKey?:     string
@@ -167,6 +172,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   bridgeCompact: (bridgeId: string) =>
     ipcRenderer.invoke('bridge:compact', { bridgeId }),
+
+  bridgeHandoff: (bridgeId: string, sourceConversationKey: string, options: {
+    fromProvider?: string
+    toProvider?: string
+    model?: string
+    mode?: 'ask' | 'plan' | 'build' | 'full'
+    workspace?: { name?: string; path?: string; branch?: string }
+  }) => ipcRenderer.invoke('bridge:handoff', { bridgeId, sourceConversationKey, options }),
 
   // Cancel a locally queued follow-up (claude) before the bridge sends it.
   bridgeRemoveFollowUp: (bridgeId: string, followUpId: string) =>
@@ -348,6 +361,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const listener = (_e: unknown, event: { scopeId: string }) => cb(event)
     ipcRenderer.on('notify:click', listener)
     return () => ipcRenderer.removeListener('notify:click', listener)
+  },
+
+  // ─── YuHeard terminal agent alerts ────────────────────────────
+  // Server pushes state transitions; renderer plays sound + optional
+  // OS notify. The socket path is exposed so settings can show it.
+  yuheardStatus: () =>
+    ipcRenderer.invoke('yuheard:status') as Promise<{ socket: string | null; running: boolean }>,
+  onYuheardState: (cb: (event: { paneId: string; state: 'running' | 'complete'; message: string | null; source: string; at: number }) => void) => {
+    const listener = (_e: unknown, event: { paneId: string; state: 'running' | 'complete'; message: string | null; source: string; at: number }) => cb(event)
+    ipcRenderer.on('yuheard:state', listener)
+    return () => ipcRenderer.removeListener('yuheard:state', listener)
   },
 
   clipboardWriteText: (text: string) =>

@@ -72,6 +72,10 @@ export interface Tab {
   url?:       string    // initial URL for browser tabs
   browserSessionMode?: BrowserSessionMode
   splitCloneOf?: string // split-pane clones stay grouped with their source tab
+  /** Owner chat/writer tab for a session viewport used in window splits. */
+  sessionOwnerTabId?: string
+  /** Session shown by a viewport tab; does not steal the owner's active session. */
+  pinnedSessionId?: string
   pluginId?: string
   pluginTabId?: string
   pluginRegistrationId?: string
@@ -213,6 +217,23 @@ export interface ToolCallMessage {
   fileChanges?: TurnFileChange[]
 }
 
+export type CrewCodeActivityStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled' | 'interrupted'
+
+/**
+ * CrewCode-owned execution lifecycle for one user turn. This is distinct from
+ * provider tool telemetry: it records only states CrewCode directly observed.
+ */
+export interface CrewCodeActivityMessage {
+  kind:          'activity'
+  time:          string
+  activityRunId: string
+  runtimeId:     string
+  text:          string
+  status:        CrewCodeActivityStatus
+  activeForm?:   string
+  turnId?:       string
+}
+
 export interface WorkLogMessage {
   kind: 'worklog'
   count: number
@@ -282,6 +303,7 @@ export type Message =
   | AgentMessage
   | ThinkingMessage
   | ToolCallMessage
+  | CrewCodeActivityMessage
   | WorkLogMessage
   | SystemMessage
   | CompactionMessage
@@ -364,6 +386,8 @@ export interface Session {
   agentId: string
   model:   string
   mode:    ModeLevel
+  /** CrewCoder agent profile; independent from CrewCode execution permissions. */
+  crewcoderMode?: import('../../../shared/crewcoder-types').CrewCoderMode
   effort:  'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
   // Ids of MCP servers (from Settings → MCP) this session opts into. Empty by
   // default — MCP is never auto-attached. May be absent on sessions persisted
@@ -375,6 +399,9 @@ export interface Session {
   // Whether CrewCode injects the selected mode's advisory prompt when this
   // session first sends. Provider-native permission policy is independent.
   modePromptsEnabled?: boolean
+  // One-shot branch provisioning request captured from Settings when a new chat
+  // is created. App clears it after selecting/creating the matching worktree.
+  initialBranch?: string
   // Local roots granted to this session in addition to its workspace.
   externalDirectories?: string[]
   // Pinned sessions sort before unpinned peers in their existing drawer group.
@@ -598,6 +625,12 @@ export interface PtyCreateOpts {
   shell?: string
   argv?:  string[]
   env?:   Record<string, string>
+  /** YuHeard metadata. Mirrors the main-side `PtyCreateOpts` extras. */
+  agentId?: string | null
+  autoWrap?: boolean
+  wrapAgentIds?: string[]
+  /** When false, this pane is a chat/crew sidecar and must not join YuHeard. */
+  yuheard?: boolean
 }
 
 export interface PtyDataEvent { paneId: string; data: string }
@@ -696,6 +729,7 @@ declare global {
         externalDirectories?: string[]
         model?:      string
         mode?:       'ask' | 'plan' | 'build' | 'full'
+        crewcoderMode?: import('../../../shared/crewcoder-types').CrewCoderMode
         toolPolicy?: 'default' | 'read-only'
         thinking?:   'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
         apiKey?:     string
@@ -711,6 +745,7 @@ declare global {
       }) => Promise<{ ok?: boolean; error?: string; custodyHalt?: CustodyHaltPayload }>
       bridgePrompt: (bridgeId: string, text: string, options?: ChatPromptOptions) => Promise<{ ok: boolean; error?: string }>
       bridgeCompact: (bridgeId: string) => Promise<{ ok: boolean; error?: string; unsupported?: boolean }>
+      bridgeHandoff: (bridgeId: string, sourceConversationKey: string, options: HandoffPromptOptions) => Promise<{ ok: boolean; error?: string }>
       bridgeRemoveFollowUp: (bridgeId: string, followUpId: string) => Promise<{ ok: boolean; error?: string }>
       bridgeRespondUserRequest: (response: AgentUserResponse) => Promise<{ ok?: boolean; error?: string }>
       bridgeSetMode: (bridgeId: string, mode: ModeLevel) => void
@@ -808,6 +843,10 @@ declare global {
       onKeybindsChanged: (cb: (event: { ok: boolean; data?: Record<string, string[]> | null }) => void) => () => void
       notify: (payload: { title: string; body: string; scopeId?: string; silent?: boolean }) => Promise<{ ok: boolean; error?: string }>
       onNotificationClick: (cb: (event: { scopeId: string }) => void) => () => void
+
+      // YuHeard terminal agent alerts
+      yuheardStatus: () => Promise<{ socket: string | null; running: boolean }>
+      onYuheardState: (cb: (event: { paneId: string; state: 'running' | 'complete'; message: string | null; source: string; at: number }) => void) => () => void
       clipboardWriteText: (text: string) => Promise<{ ok: boolean; error?: string }>
       clipboardReadText: () => Promise<{ ok: boolean; text?: string; error?: string }>
       clipboardWriteImageDataUrl: (dataUrl: string) => Promise<{ ok: boolean; error?: string }>

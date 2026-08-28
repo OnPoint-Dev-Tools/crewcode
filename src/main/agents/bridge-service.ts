@@ -8,8 +8,8 @@ import { createGrokBridge } from './grok-bridge'
 import { createOllamaBridge } from './ollama-bridge'
 import { createOpenrouterBridge } from './openrouter-bridge'
 import { getAgentKey } from './agent-keys'
-import { getSessionId, setSessionId } from './sessionStore'
-import { loadConversation, saveConversation } from './conversation-store'
+import { clearSessionId, getSessionId, setSessionId } from './sessionStore'
+import { clearConversation, loadConversation, saveConversation, type StoredMessage } from './conversation-store'
 import { isRemoteRoot } from '../remote/ssh-target'
 import { TurnPermissionGrantStore } from './turn-permission-grants'
 import { decideModeChange } from './custody-invariants'
@@ -21,11 +21,18 @@ import {
   type AgentUserResponse,
   type BridgeEvent,
   type BridgeStartOpts,
+  type HandoffPromptOptions,
   type PromptOptions,
   type RequestUserFn,
 } from './bridge-types'
 
 export type AgentPathResolver = (provider: string) => string | null
+export type AgentBridgeFactory = (
+  path: string,
+  opts: BridgeStartOpts,
+  emit: (event: BridgeEvent) => void,
+  requestUser: RequestUserFn,
+) => Promise<AgentBridge>
 
 const REMOTE_AGENT_PROVIDERS = new Set<BridgeStartOpts['provider']>([
   'pi', 'opencode', 'codex', 'claude', 'hermes', 'crewcoder', 'grok', 'ollama', 'openrouter',
@@ -33,6 +40,7 @@ const REMOTE_AGENT_PROVIDERS = new Set<BridgeStartOpts['provider']>([
 
 interface BridgeEntry {
   bridge: AgentBridge
+  providerPath: string
   opts: BridgeStartOpts
   pendingPrompts: string[]
   promptByTurn: Record<string, string>
@@ -41,6 +49,36 @@ interface BridgeEntry {
   // underneath it. See docs/execution-custody.md.
   running: boolean
   pendingMode?: BridgeStartOpts['mode']
+  injectHistoryOnNextPrompt: boolean
+}
+
+const DISPOSABLE_SUMMARY_TRANSCRIPT_CHARS = 48_000
+const DISPOSABLE_SUMMARY_TIMEOUT_MS = 120_000
+
+function formatStoredHistory(history: StoredMessage[]): string {
+  return history.map(message => `${message.role === 'user' ? 'User' : 'Assistant'}: ${message.content}`).join('\n\n')
+}
+
+function boundedHistoryText(history: StoredMessage[], maxChars: number): string {
+  const full = formatStoredHistory(history)
+  if (full.length <= maxChars) return full
+
+  const recent: string[] = []
+  let used = 0
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const message = history[index]
+    const line = `${message.role === 'user' ? 'User' : 'Assistant'}: ${message.content}`
+    const cost = line.length + 2
+    if (recent.length > 0 && used + cost > maxChars) break
+    recent.unshift(line)
+    used += cost
+  }
+  const omitted = Math.max(0, history.length - recent.length)
+  return `Earlier transcript compacted by CrewCode before AI summarization: ${omitted} older message${omitted === 1 ? '' : 's'} omitted.\n\nRecent transcript:\n${recent.join('\n\n')}`
+}
+
+function historyAsPrompt(history: StoredMessage[]): string {
+  return `<system>\nThis CrewCode thread has prior conversation history. Continue from it; do not treat the next user message as a fresh chat.\n</system>\n\n<conversation_history>\n${formatStoredHistory(history)}\n</conversation_history>\n\n`
 }
 
 /**
@@ -58,7 +96,10 @@ export class AgentBridgeService {
   }>()
   private readonly turnPermissionGrants = new TurnPermissionGrantStore()
 
-  constructor(private readonly resolvePath: AgentPathResolver) {}
+  constructor(
+    private readonly resolvePath: AgentPathResolver,
+    private readonly createOverride?: AgentBridgeFactory,
+  ) {}
 
   subscribe(listener: (event: BridgeEvent) => void): () => void {
     this.listeners.add(listener)
@@ -68,6 +109,21 @@ export class AgentBridgeService {
   async start(rawOpts: BridgeStartOpts): Promise<{ ok?: boolean; error?: string }> {
     if (!rawOpts.bridgeId || !rawOpts.cwd) return { error: 'bridgeId and cwd are required' }
     if (!REMOTE_AGENT_PROVIDERS.has(rawOpts.provider)) return { error: 'agent provider is not available over remote access' }
+    const existing = this.bridges.get(rawOpts.bridgeId)
+    if (existing && !rawOpts.freshSession) {
+      // Remote clients use stable bridge ids so they can reassert attachment
+      // after a browser reconnect. A duplicate start must not stop an active
+      // provider turn. Refuse contradictory immutable configuration instead of
+      // changing execution authority underneath the existing bridge.
+      const sameExecution = existing.opts.provider === rawOpts.provider
+        && existing.opts.cwd === rawOpts.cwd
+        && existing.opts.model === rawOpts.model
+        && existing.opts.crewcoderMode === rawOpts.crewcoderMode
+        && existing.opts.conversationKey === rawOpts.conversationKey
+      return sameExecution
+        ? { ok: true }
+        : { error: 'bridge already exists with different execution configuration; stop it before restarting' }
+    }
     await this.stop(rawOpts.bridgeId)
     const remote = isRemoteRoot(rawOpts.cwd)
     const path = HTTP_ONLY_PROVIDERS.has(rawOpts.provider)
@@ -122,7 +178,17 @@ export class AgentBridgeService {
     const requestUser: RequestUserFn = request => this.requestUser(opts.bridgeId, request)
     try {
       const bridge = await this.create(path, opts, emit, requestUser)
-      this.bridges.set(opts.bridgeId, { bridge, opts, pendingPrompts: [], promptByTurn: {}, responseByTurn: {}, running: false })
+      const hasLocalHistory = !!opts.conversationKey && loadConversation(opts.conversationKey).length > 0
+      this.bridges.set(opts.bridgeId, {
+        bridge,
+        providerPath: path,
+        opts,
+        pendingPrompts: [],
+        promptByTurn: {},
+        responseByTurn: {},
+        running: false,
+        injectHistoryOnNextPrompt: !resumeSessionId && hasLocalHistory && !HTTP_ONLY_PROVIDERS.has(opts.provider),
+      })
       return { ok: true }
     } catch (error) {
       return { error: (error as Error).message }
@@ -141,10 +207,15 @@ export class AgentBridgeService {
         }
         if (!queueingFollowUp) entry.running = true
         entry.pendingPrompts.push(text)
-        const result = await entry.bridge.prompt(text, options)
+        const history = entry.opts.conversationKey ? loadConversation(entry.opts.conversationKey) : []
+        const shouldInjectHistory = entry.injectHistoryOnNextPrompt && history.length > 0
+        const wireText = shouldInjectHistory ? historyAsPrompt(history) + text : text
+        if (shouldInjectHistory) entry.injectHistoryOnNextPrompt = false
+        const result = await entry.bridge.prompt(wireText, options)
         if (!result.ok) {
           const index = entry.pendingPrompts.indexOf(text)
           if (index >= 0) entry.pendingPrompts.splice(index, 1)
+          if (shouldInjectHistory) entry.injectHistoryOnNextPrompt = true
           if (!queueingFollowUp) entry.running = false
         }
         return result
@@ -154,6 +225,46 @@ export class AgentBridgeService {
     const entry = this.bridges.get(bridgeId)
     if (!entry) return Promise.resolve({ ok: false, error: 'bridge not found' })
     return entry.bridge.compact?.() ?? Promise.resolve({ ok: false, unsupported: true, error: 'provider does not support compaction' })
+  }
+
+  async handoff(bridgeId: string, sourceConversationKey: string, options: HandoffPromptOptions): Promise<{ ok: boolean; error?: string }> {
+    const entry = this.bridges.get(bridgeId)
+    if (!entry) return { ok: false, error: 'bridge not found' }
+    if (entry.running) return { ok: false, error: 'cannot hand off context while the destination thread is running' }
+    if (!entry.opts.conversationKey || !sourceConversationKey) return { ok: false, error: 'handoff conversation scope is unavailable' }
+    if (entry.opts.conversationKey === sourceConversationKey) return { ok: false, error: 'choose a different chat for context handoff' }
+
+    const sourceHistory = loadConversation(sourceConversationKey)
+    if (sourceHistory.length === 0) return { ok: false, error: 'no source conversation history available to hand off' }
+
+    entry.running = true
+    try {
+      const summary = await this.summarizeHandoff(entry, sourceHistory, options)
+      if (!summary) return { ok: false, error: 'handoff summary failed' }
+
+      const targetHistory = loadConversation(entry.opts.conversationKey)
+      saveConversation(entry.opts.conversationKey, [
+        ...targetHistory,
+        { role: 'user', content: `CrewCode context handoff from ${options.fromProvider ?? 'another provider'}. Continue with the imported context alongside this chat's existing history.` },
+        { role: 'assistant', content: summary },
+      ])
+      clearSessionId(entry.opts.conversationKey)
+      for (const listener of this.listeners) listener({
+        type: 'handoff_summary',
+        bridgeId,
+        summary,
+        fromProvider: options.fromProvider,
+        toProvider: options.toProvider ?? entry.opts.provider,
+        reason: 'handoff',
+      })
+
+      await entry.bridge.stop().catch(() => {})
+      this.bridges.delete(bridgeId)
+      for (const listener of this.listeners) listener({ type: 'idle_stopped', bridgeId })
+      return { ok: true }
+    } finally {
+      entry.running = false
+    }
   }
 
   removeFollowUp(bridgeId: string, followUpId: string): Promise<{ ok: boolean; error?: string }> {
@@ -233,6 +344,15 @@ export class AgentBridgeService {
     return { ok: true }
   }
 
+  async stopWhere(predicate: (entry: { bridgeId: string; cwd: string; running: boolean }) => boolean): Promise<string[]> {
+    const stopped: string[] = []
+    for (const [bridgeId, entry] of [...this.bridges]) {
+      if (!predicate({ bridgeId, cwd: entry.opts.cwd, running: entry.running })) continue
+      await this.stop(bridgeId); stopped.push(bridgeId)
+    }
+    return stopped
+  }
+
   async stopAll(): Promise<void> {
     for (const bridgeId of [...this.bridges.keys()]) this.cancelPendingRequests(bridgeId)
     await Promise.all([...this.bridges.values()].map(entry => entry.bridge.stop().catch(() => {})))
@@ -274,6 +394,7 @@ export class AgentBridgeService {
   }
 
   private async create(path: string, opts: BridgeStartOpts, emit: (event: BridgeEvent) => void, requestUser: RequestUserFn): Promise<AgentBridge> {
+    if (this.createOverride) return this.createOverride(path, opts, emit, requestUser)
     if (opts.provider === 'pi') return createPiBridge(path, opts, emit, requestUser)
     if (opts.provider === 'codex') return createCodexBridge(path, opts, emit, requestUser)
     if (opts.provider === 'claude') return createClaudeBridge(path, opts, emit, requestUser)
@@ -283,5 +404,51 @@ export class AgentBridgeService {
     if (opts.provider === 'ollama') return createOllamaBridge(path, opts, emit)
     if (opts.provider === 'openrouter') return createOpenrouterBridge(path, opts, emit)
     return createOpencodeBridge(path, opts, emit, requestUser)
+  }
+
+  private async summarizeHandoff(entry: BridgeEntry, history: StoredMessage[], options: HandoffPromptOptions): Promise<string | null> {
+    const tempBridgeId = `${entry.opts.bridgeId}-handoff-${Date.now().toString(36)}`
+    const tempConversationKey = `disposable-handoff:${tempBridgeId}`
+    let summary = ''
+    let settled = false
+    let resolveDone!: (value: boolean) => void
+    const done = new Promise<boolean>(resolve => { resolveDone = resolve })
+    const settle = (ok: boolean): void => {
+      if (settled) return
+      settled = true
+      resolveDone(ok)
+    }
+    const tempOpts: BridgeStartOpts = {
+      ...entry.opts,
+      bridgeId: tempBridgeId,
+      resumeSessionId: undefined,
+      conversationKey: tempConversationKey,
+      suppressProviderHistoryReplay: true,
+      ephemeral: true,
+    }
+    const emit = (event: BridgeEvent): void => {
+      if (event.type === 'text_delta') summary += event.delta
+      else if (event.type === 'turn_end') settle(true)
+      else if (event.type === 'error') settle(false)
+      else if (event.type === 'closed') settle(summary.trim().length > 0)
+    }
+    const requestUser: RequestUserFn = async () => ({ requestId: `${tempBridgeId}-cancel`, bridgeId: tempBridgeId, action: 'cancel' })
+    let bridge: AgentBridge | null = null
+    let timeout: ReturnType<typeof setTimeout> | null = null
+    try {
+      bridge = await this.create(entry.providerPath, tempOpts, emit, requestUser)
+      const transcript = boundedHistoryText(history, DISPOSABLE_SUMMARY_TRANSCRIPT_CHARS)
+      const prompt = `You are preparing a provider handoff summary for CrewCode. Summarize the following bounded transcript so a fresh agent session can continue without the raw transcript. Preserve goals, decisions, constraints, files/paths mentioned, completed work, open questions, and next steps. If the transcript says older messages were omitted, explicitly account for that limitation. Do not use tools. Respond only with the summary.\n\n<workspace_context>\n${options.workspace?.name ? `- Workspace: ${options.workspace.name}\n` : ''}${options.workspace?.path ? `- Path: ${options.workspace.path}\n` : ''}${options.workspace?.branch ? `- Branch: ${options.workspace.branch}\n` : ''}</workspace_context>\n\n<conversation_transcript>\n${transcript}\n</conversation_transcript>`
+      timeout = setTimeout(() => settle(false), DISPOSABLE_SUMMARY_TIMEOUT_MS)
+      const accepted = await bridge.prompt(prompt)
+      if (!accepted.ok || !await done || !summary.trim()) return null
+      return summary.trim()
+    } catch {
+      return null
+    } finally {
+      if (timeout) clearTimeout(timeout)
+      await bridge?.stop().catch(() => {})
+      clearConversation(tempConversationKey)
+    }
   }
 }

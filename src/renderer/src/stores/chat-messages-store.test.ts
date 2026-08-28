@@ -283,6 +283,25 @@ describe('chat-messages-store persistence', () => {
     })
   })
 
+  it('retries authoritative hydration after a browser runtime is installed', async () => {
+    vi.useRealTimers()
+    installLocalStorage()
+    installLifecycleGlobals() // App modules load before browser RPC is installed.
+    const { hydrateMessagesFromBackend, useMessagesStore } = await loadStore()
+    expect(useMessagesStore.getState().messagesByTab['remote-session']).toBeUndefined()
+
+    const api = installElectronApi({
+      'remote-session': [{ kind: 'agent', blocks: [], text: 'finished while browser was away', time: '5:02 PM' }],
+    })
+    ;(window as unknown as { electronAPI?: ElectronApiStub }).electronAPI = api
+    await hydrateMessagesFromBackend()
+
+    expect(api.transcriptsLoadAll).toHaveBeenCalledTimes(1)
+    expect(useMessagesStore.getState().messagesByTab['remote-session']?.[0]).toMatchObject({
+      text: 'finished while browser was away',
+    })
+  })
+
   it('hydration never clobbers an in-memory scope that is already longer', async () => {
     vi.useRealTimers()
     installLocalStorage()

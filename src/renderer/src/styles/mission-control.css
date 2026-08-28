@@ -989,6 +989,22 @@ body.light .menulet-trigger:hover { background: rgba(0,0,0,0.08); }
 
 /* Responsive — collapse the side feed below 1200px.
    At narrow widths we stack: main on top (scrolls), feed below with a height cap. */
+@media (max-width: 768px) {
+  .menulet-trigger { display: none; }
+  .menulet {
+    top: 48px;
+    left: 8px;
+    right: 8px;
+    width: auto;
+    max-height: calc(100dvh - 100px - env(safe-area-inset-bottom));
+    border-radius: 12px;
+  }
+  .menulet::before { display: none; }
+  .menulet-row .actions { display: flex; }
+  .menulet-row .right-meta { display: none; }
+  .menulet-block-reply input { font-size: 16px; }
+}
+
 @media (max-width: 1200px) {
   .mc {
     display: flex;
@@ -1004,6 +1020,129 @@ body.light .menulet-trigger:hover { background: rgba(0,0,0,0.08); }
   .mc-side {
     grid-row: auto;
     flex: 0 0 auto;
-    max-height: 280px;
+    max-height: 320px;
   }
+}
+
+/* =============================================================
+   Phone (≤768px) — Mission Control.
+   Mirrors `useMobileLayout()`. The activity feed is moved out of
+   layout into a MobileShell sheet (see App.tsx mission-activity
+   sheet and MissionActivitySheetHost), so `.mc-side` is hidden
+   here. An "Activity" pill in the toolbar reveals the sheet.
+   ============================================================= */
+@media (max-width: 768px) {
+  .mc-hero { gap: 10px; }
+  .mc-title { font-size: 22px; letter-spacing: -0.012em; }
+  .mc-eyebrow { font-size: 12px; }
+  .mc-title .ct { font-size: 11.5px; }
+
+  /* Stat strip: 6 cols → 3 cols so cells have ~120px each. */
+  .mc-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .mc-stat-label { font-size: 9.5px; letter-spacing: 0.06em; }
+  .mc-stat-val { font-size: 18px; }
+
+  .mc-toolbar {
+    /* Two-row layout: filter segments on the first row, all action controls
+       pushed to the right of the second row. The `column-gap` matches
+       the previous `gap: 8px` between adjacent controls. */
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 6px;
+    padding: 10px 12px 12px;
+  }
+  .mc-seg {
+    flex: 1 1 auto;
+    flex-wrap: wrap;
+    min-width: 0;
+  }
+  .mc-seg button { min-height: 32px; padding: 4px 8px; }
+  /* The spacer between filter and actions collapses so the action row can
+     own its own line and right-align independently. */
+  .mc-toolbar > .grow { display: none; }
+  .mc-toolbar-label { display: none; }
+  .mc-icobtn { width: 36px; height: 36px; }
+  .mc-icobtn:active { background: var(--accent); color: var(--foreground); }
+  .mc-select { min-height: 36px; }
+  .mc-spawn { min-height: 36px; padding: 7px 12px; }
+  .mc-spawn:active { filter: brightness(1.08); }
+  /* Right-align the action row. We use a `flex` basis so the group
+     wraps to a new line on narrow phones and sits flush right. */
+  .mc-toolbar-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+    flex: 1 1 100%;
+    margin-left: 0;
+  }
+  .mc-activity-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-family: var(--font-family-mono); font-size: 11px; font-weight: 600;
+    color: var(--foreground);
+    background: var(--card); border: 1px solid var(--border);
+    padding: 7px 11px; border-radius: 8px; cursor: pointer;
+    min-height: 36px;
+  }
+  .mc-activity-btn .ct {
+    font-family: var(--font-family-mono); font-size: 10px;
+    color: var(--muted-foreground);
+    background: var(--accent);
+    padding: 0 5px; border-radius: 999px;
+  }
+  .mc-activity-btn:active { background: var(--accent); }
+
+  /* Hide the inline side feed on phones; it lives in the sheet now. */
+  .mc-side { display: none; }
+
+  /* Agent grid floor drops so cards fit on a 360px viewport. */
+  .mc-grid { grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr)); gap: 8px; }
+
+  /* Banner row collapses: icon + body on row 1, reply input jumps to row 2. */
+  .mc-banner-row {
+    grid-template-columns: 28px minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    gap: 8px 10px;
+  }
+  .mc-banner-icon { grid-column: 1; grid-row: 1; width: 28px; height: 28px; }
+  .mc-banner-body { grid-column: 2; grid-row: 1; }
+  .mc-banner-reply {
+    grid-column: 1 / -1; grid-row: 2;
+    display: flex; gap: 8px; align-items: center;
+  }
+  .mc-banner-reply input {
+    flex: 1; font-size: 16px; /* iOS no-zoom */
+    background: var(--background); border: 1px solid var(--border);
+    border-radius: 7px; padding: 7px 10px; color: var(--foreground);
+    font-family: var(--font-family-sans);
+  }
+  .mc-banner-jump { width: 36px; height: 36px; }
+
+  /* Agent cards: more breathing room, larger action buttons. */
+  .mc-card { padding: 10px; }
+  .mc-card-h { gap: 8px; }
+  .mc-card-actions button { width: 36px; height: 36px; }
+  .mc-card-actions button:active { background: var(--accent); }
+  .mc-card-statline, .mc-statline { flex-wrap: wrap; gap: 4px; }
+  .mc-card-f { flex-wrap: wrap; gap: 8px; }
+  .mc-mini-stats { flex-wrap: wrap; gap: 6px; }
+  .mc-btn-sm { min-height: 32px; padding: 6px 10px; }
+
+  .mc-group-h { flex-wrap: wrap; gap: 4px 8px; }
+  .mc-group-name { font-size: 12px; }
+}
+
+@media (max-width: 480px) {
+  /* Stat strip reflows to 2-col on very narrow phones. */
+  .mc-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .mc-stat-val { font-size: 16px; }
+}
+
+@media (max-width: 768px) and (prefers-reduced-motion: reduce) {
+  .mc-card-actions button,
+  .mc-icobtn,
+  .mc-spawn,
+  .mc-activity-btn,
+  .mc-banner-jump { transition: none; }
 }

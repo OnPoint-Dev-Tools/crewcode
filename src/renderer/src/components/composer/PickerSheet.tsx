@@ -31,12 +31,14 @@ interface PickerSheetProps {
   selectedIds?: string[]
   emptyLabel?: string                   // shown in place of "no matches"
   className?: string                    // optional picker-specific sizing/styling
+  /** Keep the sheet mounted after a row pick (used by navigable mobile menus). */
+  closeOnPick?: boolean
 }
 
 export function PickerSheet({
   open, onClose, anchor, header, searchPlaceholder, query, onQuery,
   items, activeId, onPick, defaultIcon, width = 260, placement = 'auto',
-  multiSelect = false, selectedIds, emptyLabel, className,
+  multiSelect = false, selectedIds, emptyLabel, className, closeOnPick = !multiSelect,
 }: PickerSheetProps) {
   const ref = useRef<HTMLDivElement>(null)
 
@@ -85,7 +87,14 @@ export function PickerSheet({
   // filter, contain) or clips with overflow — e.g. the crew config panel's
   // animated lane cards and overflow:hidden frame.
   return createPortal(
-    <div className={`picker-sheet${className ? ` ${className}` : ''}`} ref={ref} style={style} role="listbox">
+    <>
+      <button
+        type="button"
+        className="picker-sheet-backdrop"
+        aria-label="Close picker"
+        onClick={onClose}
+      />
+      <div className={`picker-sheet${className ? ` ${className}` : ''}`} ref={ref} style={style} role="listbox">
       {searchPlaceholder !== undefined && (
         <div className="picker-search">
           <Icon name="x" size={11} style={{ transform: 'rotate(45deg)', opacity: 0.4 }} />
@@ -106,7 +115,7 @@ export function PickerSheet({
             <button
               key={item.id}
               className={`picker-row ${active ? 'on' : ''} ${item.disabled ? 'disabled' : ''}`}
-              onClick={() => { if (!item.disabled) { onPick(item.id); if (!multiSelect) onClose() } }}
+              onClick={() => { if (!item.disabled) { onPick(item.id); if (closeOnPick) onClose() } }}
               disabled={item.disabled}
               role="option"
               aria-selected={active}
@@ -128,7 +137,8 @@ export function PickerSheet({
           )
         })}
       </div>
-    </div>,
+    </div>
+    </>,
     document.body,
   )
 }

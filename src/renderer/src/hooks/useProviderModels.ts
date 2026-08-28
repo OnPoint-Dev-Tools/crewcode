@@ -46,6 +46,13 @@ export const FALLBACK_CATALOG: Record<string, DetectedModel[]> = {
   crewcoder: [
     { id: '', label: 'default (CrewCoder config)', provider: 'crewcoder' },
   ],
+  grok: [
+    { id: '', label: 'default (Grok config)', provider: 'grok' },
+    { id: 'grok-4.5', label: 'Grok 4.5', provider: 'xai', contextWindow: 500_000 },
+  ],
+  hermes: [
+    { id: '', label: 'default (Hermes config)', provider: 'hermes' },
+  ],
   claude: [
     { id: '',                       label: 'default (CLI default)', provider: 'anthropic' },
    //  { id: 'fable',                  label: 'Fable (latest)',        provider: 'anthropic' },
@@ -151,7 +158,11 @@ export function useProviderModels(provider: string, enabled = true, refreshKey: 
 
   const list = useMemo<DetectedModel[]>(() => {
     if (DYNAMIC_PROVIDERS.has(provider)) {
-      if (detected === null) return []
+      // Keep the curated catalog visible while remote/CLI discovery is in
+      // flight. Browser RPC is asynchronous, and returning [] here made every
+      // dynamic provider look model-less until its request completed; Codex was
+      // the only provider unaffected because its catalog is static.
+      if (detected === null) return FALLBACK_CATALOG[provider] ?? []
       if (detected.length > 0) {
         // Ollama / OpenRouter require an explicit model (no server-side default),
         // so don't offer the empty "default" sentinel — only the detected list.

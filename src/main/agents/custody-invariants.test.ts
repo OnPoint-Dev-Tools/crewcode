@@ -15,7 +15,7 @@ const base = { provider: 'claude', cwd: '/repo', mode: 'build' as const }
 describe('normalizeAuthority', () => {
   it('defaults the unset fields instead of leaving authority undefined', () => {
     expect(normalizeAuthority(base)).toEqual({
-      provider: 'claude', cwd: '/repo', mode: 'build', toolPolicy: 'default',
+      provider: 'claude', cwd: '/repo', mode: 'build', crewcoderMode: 'configured', toolPolicy: 'default',
       externalDirectories: [], mcpServers: [],
     })
   })

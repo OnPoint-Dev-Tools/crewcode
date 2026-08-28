@@ -7,6 +7,9 @@
 > Run, supervise, and review multiple AI coding agents across git worktrees without losing control of your repo.
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
+[![Website](https://img.shields.io/badge/Website-crewcode.logixhub.icu-0b7285.svg)](https://crewcode.logixhub.icu)
+[![X](https://img.shields.io/badge/X-@OnPointTools-000000.svg)](https://x.com/OnPointTools)
+[![YouTube](https://img.shields.io/badge/YouTube-@CjWisdom-FF0000.svg)](https://www.youtube.com/@CjWisdom)
 
 </div>
 

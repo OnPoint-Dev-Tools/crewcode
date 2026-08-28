@@ -26,9 +26,9 @@ const PLAN_DISALLOWED_TOOLS = [...READ_ONLY_DISALLOWED_TOOLS, 'ExitPlanMode']
 
 export async function getClaudeCompactionSettings(cwd: string): Promise<Settings | undefined> {
   try {
-    // Read only the resolved scalar from Claude Code's user/global settings.
-    // The query itself still excludes the user source so global skills/plugins
-    // cannot inflate CrewCode's system prompt.
+    // Read only the resolved scalar from Claude Code's user/global settings so
+    // CrewCode can overlay auto-compaction without replacing the rest of the
+    // user's settings payload.
     const resolved = await resolveSettings({ cwd, settingSources: ['user'] })
     const enabled = resolved.effective.autoCompactEnabled
     return typeof enabled === 'boolean' ? { autoCompactEnabled: enabled } : undefined
@@ -893,16 +893,13 @@ export async function createClaudeBridge(
             canUseTool,
             abortController,
             env,
-            // Load only the repo's own settings/CLAUDE.md (`'project'`), never the
-            // user's global ~/.claude. Without this the SDK pulls every discovered
-            // global skill's name+description into the system prompt — tens of
-            // thousands of tokens before the first message. `skills: []` enables
-            // zero skills, so even project-level skills inject nothing; CrewCode
-            // applies its own .crewcode skill bodies on demand instead.
-            settingSources: ['project'],
-            skills: [],
-            // Preserve the user's Claude CLI auto-compaction preference without
-            // loading global skills/plugins into this SDK query.
+            // Do not pass `skills` or `settingSources`. Omitting them uses
+            // Claude CLI defaults (user + project + local settings, native
+            // skill discovery). `skills: []` would hide the library; empty
+            // `settingSources` would drop CLAUDE.md. CrewCode's own .crewcode
+            // skill bodies remain a separate on-demand injection.
+            // Overlay only the resolved auto-compaction scalar; do not replace
+            // the rest of the user's Claude settings payload.
             ...(compactionSettings ? { settings: compactionSettings } : {}),
             // Claude defaults to adaptive thinking, so "off" must disable it
             // explicitly; named levels map directly to the SDK effort contract.

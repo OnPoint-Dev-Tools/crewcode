@@ -7,6 +7,7 @@ import type {
   MCAgent, MCProject, FeedEvent, FeedKind,
   AgentKind, AgentStatus, AgentMode, Filter, Grouping,
 } from './missionTypes'
+import { deriveMissionStats } from './mission-stats'
 
 // ── small shared bits ──────────────────────────────────────────────────────
 
@@ -47,40 +48,33 @@ export const fmtCost   = (n: number): string => `$${n.toFixed(2)}`
 // ── top stat strip ─────────────────────────────────────────────────────────
 
 export function StatStrip({ agents }: { agents: MCAgent[] }) {
-  const count = (s: AgentStatus): number => agents.filter(a => a.status === s).length
-  const total = agents.length
-  const blocked = count('blocked')
-  const running = count('running')
-  const idle    = count('idle')
-  const done    = count('done')
-  const worktrees = new Set(agents.map(a => `${a.projectId}/${a.worktree}`)).size
-  const tokens = agents.reduce((s, a) => s + a.tokens, 0)
+  const stats = deriveMissionStats(agents)
 
   return (
     <div className="mc-stats">
       <div className="mc-stat">
         <span className="mc-stat-label">agents</span>
-        <span className="mc-stat-val">{total}</span>
+        <span className="mc-stat-val">{stats.agents}</span>
       </div>
-      <div className={`mc-stat ${blocked ? 'attn' : ''}`}>
+      <div className={`mc-stat ${stats.blocked ? 'attn' : ''}`}>
         <span className="mc-stat-label"><span className="dot warning" />blocked</span>
-        <span className="mc-stat-val">{blocked}</span>
+        <span className="mc-stat-val">{stats.blocked}</span>
       </div>
       <div className="mc-stat">
         <span className="mc-stat-label"><span className="dot success" />running</span>
-        <span className="mc-stat-val">{running}</span>
+        <span className="mc-stat-val">{stats.running}</span>
       </div>
       <div className="mc-stat">
         <span className="mc-stat-label"><span className="dot" />idle</span>
-        <span className="mc-stat-val">{idle}</span>
+        <span className="mc-stat-val">{stats.idle}</span>
       </div>
       <div className="mc-stat">
         <span className="mc-stat-label"><span className="dot success" />done</span>
-        <span className="mc-stat-val">{done}</span>
+        <span className="mc-stat-val">{stats.done}</span>
       </div>
       <div className="mc-stat">
         <span className="mc-stat-label">worktrees</span>
-        <span className="mc-stat-val">{worktrees}·<span className="unit">{fmtTokens(tokens)} tokens</span></span>
+        <span className="mc-stat-val">{stats.worktrees}·<span className="unit">{fmtTokens(stats.tokens)} tokens</span></span>
       </div>
     </div>
   )
@@ -155,15 +149,18 @@ const GROUPINGS: { id: Grouping; label: string }[] = [
 ]
 
 interface ToolbarProps {
-  filter:      Filter
-  setFilter:   (f: Filter) => void
-  grouping:    Grouping
-  setGrouping: (g: Grouping) => void
-  agents:      MCAgent[]
-  onSpawn?:    () => void
+  filter:        Filter
+  setFilter:     (f: Filter) => void
+  grouping:      Grouping
+  setGrouping:   (g: Grouping) => void
+  agents:        MCAgent[]
+  onSpawn?:      () => void
+  /** Phone-only — opens the activity feed sheet. Rendered as a pill on mobile. */
+  onOpenActivity?: () => void
+  activityCount?:  number
 }
 
-export function Toolbar({ filter, setFilter, grouping, setGrouping, agents, onSpawn }: ToolbarProps) {
+export function Toolbar({ filter, setFilter, grouping, setGrouping, agents, onSpawn, onOpenActivity, activityCount }: ToolbarProps) {
   const counts: Record<string, number> = TOOLBAR_FILTERS.reduce((acc, f) => {
     acc[f.id] = f.id === 'all' ? agents.length : agents.filter(a => a.status === f.id).length
     return acc
@@ -178,27 +175,33 @@ export function Toolbar({ filter, setFilter, grouping, setGrouping, agents, onSp
           </button>
         ))}
       </div>
-      <div className="grow" />
-      <span className="mc-toolbar-label">group by</span>
-      <div style={{ position: 'relative' }}>
-        <button className="mc-select" onClick={() => setOpenGroup(o => !o)}>
-          {GROUPINGS.find(g => g.id === grouping)?.label}
-          <Icon name="chevDown" size={11} />
-        </button>
-        {openGroup && (
-          <div className="tab-menu" style={{ left: 'auto', right: 0, top: 'calc(100% + 4px)', minWidth: 160 }}>
-            {GROUPINGS.map(g => (
-              <button key={g.id} className="tab-menu-item"
-                onClick={() => { setGrouping(g.id); setOpenGroup(false) }}>
-                {g.label}
-              </button>
-            ))}
-          </div>
+      <div className="mc-toolbar-actions">
+        {onOpenActivity && (
+          <button className="mc-activity-btn" onClick={onOpenActivity} aria-label="open activity feed">
+            <Icon name="bell" size={12} /> activity
+            {activityCount !== undefined && <span className="ct">{activityCount}</span>}
+          </button>
         )}
+        <span className="mc-toolbar-label">group by</span>
+        <div style={{ position: 'relative' }}>
+          <button className="mc-select" onClick={() => setOpenGroup(o => !o)}>
+            {GROUPINGS.find(g => g.id === grouping)?.label}
+            <Icon name="chevDown" size={11} />
+          </button>
+          {openGroup && (
+            <div className="tab-menu" style={{ left: 'auto', right: 0, top: 'calc(100% + 4px)', minWidth: 160 }}>
+              {GROUPINGS.map(g => (
+                <button key={g.id} className="tab-menu-item"
+                  onClick={() => { setGrouping(g.id); setOpenGroup(false) }}>
+                  {g.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <button className="mc-icobtn" title="refresh"><Icon name="refresh" size={13} /></button>
+        <button className="mc-spawn" onClick={() => onSpawn?.()}><Icon name="plus" size={13} />spawn agent</button>
       </div>
-      <button className="mc-icobtn" title="filter"><Icon name="sliders" size={13} /></button>
-      <button className="mc-icobtn" title="refresh"><Icon name="refresh" size={13} /></button>
-      <button className="mc-spawn" onClick={() => onSpawn?.()}><Icon name="plus" size={13} />spawn agent</button>
     </div>
   )
 }

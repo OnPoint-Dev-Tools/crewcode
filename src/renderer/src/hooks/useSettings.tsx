@@ -48,6 +48,9 @@ export type ShortcutOverrides = Record<string, Record<string, string[]>>
 export interface SettingsState {
   zoom: number
   defaultMode: DefaultMode
+  // Workspace-scoped branch defaults for newly-created chat sessions. Empty or
+  // missing entries use the workspace's primary checkout.
+  defaultBranchByWorkspace: Record<string, string>
   // Prompt text is configurable, but enablement is stored per chat session and
   // provider-native permission enforcement never depends on these strings.
   modePrompts: ModePromptConfig
@@ -111,6 +114,11 @@ export interface SettingsState {
   // Native OS notifications can use the platform sound, a restrained CrewCode
   // tone, or remain silent. Custom tones are synthesized without bundled media.
   notificationSound: NotificationSoundId
+  // YuHeard: terminal-only agent-done alerts. Plays a knock sound (and
+  // optionally an OS notification) when an agent in a CrewCode PtyPane
+  // finishes a turn. Chat completions keep using notificationSound above.
+  yuheardEnabled: boolean
+  yuheardAutoWrap: boolean
   // Hide internal reasoning/tool/work-log rows in chat surfaces, leaving the
   // conversation focused on user prompts and final agent replies.
   hideVerboseAgentLogs: boolean
@@ -161,6 +169,7 @@ export interface SettingsState {
 export const DEFAULT_SETTINGS: SettingsState = {
   zoom: 100,
   defaultMode: 'build',
+  defaultBranchByWorkspace: {},
   modePrompts: { ...DEFAULT_MODE_PROMPTS },
   onLaunch: 'last session',
   showTweaksPanel: true,
@@ -199,6 +208,8 @@ export const DEFAULT_SETTINGS: SettingsState = {
   onboardingCompleted: false,
   nativeNotifications: true,
   notificationSound: 'system',
+  yuheardEnabled: true,
+  yuheardAutoWrap: true,
   hideVerboseAgentLogs: false,
   showTodoActivity: true,
   alwaysCommitUnsigned: false,
@@ -288,6 +299,7 @@ function loadInitial(): SettingsState {
       sshConns: parsed.sshConns ?? [],
       agentPathOverrides: parsed.agentPathOverrides ?? {},
       pluginWorkspaceEnabled: parsed.pluginWorkspaceEnabled ?? {},
+      defaultBranchByWorkspace: parsed.defaultBranchByWorkspace ?? {},
       mcpServers: parsed.mcpServers ?? [],
       channel: migrateChannel(parsed.channel),
       updatePolicy: migrateUpdatePolicy(parsed),
@@ -396,6 +408,13 @@ export function useSettings(): SettingsCtx {
   const ctx = useContext(Ctx)
   if (!ctx) throw new Error('useSettings must be used within <SettingsProvider>')
   return ctx
+}
+
+/** Read the current settings from localStorage without subscribing.
+ *  Use this from imperative callbacks (socket listeners, IPC handlers)
+ *  where you need the live value but cannot use the React hook. */
+export function getCurrentSettings(): SettingsState {
+  return loadInitial()
 }
 
 // Resolve per-surface typography against the global mono fallback. Empty

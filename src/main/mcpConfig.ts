@@ -1,9 +1,6 @@
 import { ipcMain, shell, BrowserWindow } from 'electron'
-import { existsSync, mkdirSync, readFileSync, writeFileSync, watch, type FSWatcher } from 'fs'
-import { join } from 'path'
-import os from 'os'
-import { parseMcpConfig, type ParsedMcpConfig } from './mcp-config-parse'
-import type { McpFileSnapshot } from '../shared/mcp-types'
+import { existsSync, mkdirSync, writeFileSync, watch, type FSWatcher } from 'fs'
+import { crewcodeMcpDir, mcpConfigPath, readMcpConfig } from './mcp-config-service'
 
 /**
  * ~/.crewcode/mcp.json is a user-editable MCP server registry. Settings reads it
@@ -11,14 +8,6 @@ import type { McpFileSnapshot } from '../shared/mcp-types'
  * servers. Editing the file is the only way to change these entries — CrewCode
  * watches the file and broadcasts changes so Settings refreshes live.
  */
-
-function crewcodeDir(): string {
-  return join(os.homedir(), '.crewcode')
-}
-
-function mcpConfigPath(): string {
-  return join(crewcodeDir(), 'mcp.json')
-}
 
 const TEMPLATE = `{
   "mcpServers": {
@@ -31,26 +20,11 @@ const TEMPLATE = `{
 `
 
 function ensureConfigFile(): string {
-  const dir = crewcodeDir()
+  const dir = crewcodeMcpDir()
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
   const file = mcpConfigPath()
   if (!existsSync(file)) writeFileSync(file, TEMPLATE)
   return file
-}
-
-export function readMcpConfig(): McpFileSnapshot {
-  const path = mcpConfigPath()
-  if (!existsSync(path)) {
-    return { path, exists: false, servers: [], errors: [] }
-  }
-  let parsed: ParsedMcpConfig
-  try {
-    const raw = readFileSync(path, 'utf8')
-    parsed = parseMcpConfig(JSON.parse(raw))
-  } catch (err) {
-    return { path, exists: true, servers: [], errors: [`mcp.json: ${(err as Error).message}`] }
-  }
-  return { path, exists: true, servers: parsed.servers, errors: parsed.errors }
 }
 
 let mcpWatcher: FSWatcher | null = null
@@ -64,7 +38,7 @@ function broadcastMcpChanged(): void {
 
 function startMcpWatcher(): void {
   if (mcpWatcher) return
-  const dir = crewcodeDir()
+  const dir = crewcodeMcpDir()
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
   try {
     // Watch the directory (not the file) so create/delete/rename of mcp.json is

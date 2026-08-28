@@ -8,6 +8,7 @@ import { ActiveSkillsStrip } from '../promptBuilder/ActiveSkillsStrip'
 import { AgentActivityOverlay } from '../thread/AgentActivityOverlay'
 import { CustodyHaltBanner } from './CustodyHaltBanner'
 import { latestTodoActivity } from '../thread/todo-from-toolcall'
+import { CREWCODER_APPROVE_PLAN_PROMPT, latestCrewCoderPlanGate } from '../thread/crewcoder-plan-gate'
 import { useIsDark } from '../../hooks/useIsDark'
 import logoDark from '../../assets/icon-logo-dark.png'
 import logoLight from '../../assets/icon-logo-light.png'
@@ -19,6 +20,8 @@ import type { Mode } from '../composer/ModeSegment'
 import type { EffortLevel } from '../composer/EffortPicker'
 import type { McpServerConfig } from '../../hooks/useSettings'
 import type { VoiceControlSurface } from '../../../../shared/voice-types'
+import type { TurnChangeTarget } from '../thread/turn-changes-data'
+import type { CrewCoderMode } from '../../../../shared/crewcoder-types'
 
 type ThreadView = 'chat' | 'code' | 'md'
 
@@ -57,6 +60,7 @@ export interface SoloChatViewProps {
   onStartCrew: () => void
   onOpenCanvas?: () => void
   onOpenTerminal?: () => void
+  onHandoff?: () => void
   // Composer
   composerMode: Mode
   setComposerMode: (m: Mode) => void
@@ -83,6 +87,8 @@ export interface SoloChatViewProps {
   setModel: (m: string) => void
   effort: EffortLevel
   setEffort: (e: EffortLevel) => void
+  crewcoderMode?: CrewCoderMode
+  setCrewCoderMode: (mode: CrewCoderMode | undefined) => void
   // MCP — registry + this session's opt-in selection. Picker hidden when disabled.
   mcpEnabled?: boolean
   mcpServers?: McpServerConfig[]
@@ -91,6 +97,8 @@ export interface SoloChatViewProps {
   shortcutOverrides: any
   /** Switch to the code view and reveal the given file in the editor. */
   onOpenFile?: (path: string) => void
+  /** Open one turn/file directly in the turn changes drawer. */
+  onOpenTurnChange?: (target: TurnChangeTarget) => void
   /** File to focus when the code view mounts (relative to workspace root). */
   editorInitialFile?: string | null
   /** Right-click on the thread area — used to open the chat context menu. */
@@ -141,11 +149,11 @@ export function SoloChatView(props: SoloChatViewProps) {
     pendingGitDiff, setPendingGitDiff,
     hideHeader = false,
     agentLabel, modelLabel, voiceControl,
-    gitOpen, setGitOpen, github, dirtyCount = 0, changesOpen, changesCount, toggleChangesOpen, onStartCrew, onOpenCanvas, onOpenTerminal,
+    gitOpen, setGitOpen, github, dirtyCount = 0, changesOpen, changesCount, toggleChangesOpen, onStartCrew, onOpenCanvas, onOpenTerminal, onHandoff,
     composerMode, setComposerMode, composer, setComposer, onSend, onRunCommand, onQueueFollowUp, queuedFollowUps = [], onRemoveQueuedFollowUp, isRunning, loadingStatus = null, onStop, agentRequest, custodyHalt, onReauthorizeCustody, onAgentRequestResponse,
-    agents, activeAgentId, setActiveAgentId, model, setModel, effort, setEffort,
+    agents, activeAgentId, setActiveAgentId, model, setModel, effort, setEffort, crewcoderMode, setCrewCoderMode,
     mcpEnabled, mcpServers, selectedMcpIds, onToggleMcp,
-    shortcutOverrides, onOpenFile, editorInitialFile, onThreadContextMenu, onOpenPrompts, onOpenBrowser,
+    shortcutOverrides, onOpenFile, onOpenTurnChange, editorInitialFile, onThreadContextMenu, onOpenPrompts, onOpenBrowser,
     delegationEnabled, onToggleDelegation,
     modePromptsEnabled, modePromptsLocked, onToggleModePrompts,
     pluginChatHeaderItems = [], onPluginChatHeaderItem,
@@ -207,6 +215,7 @@ export function SoloChatView(props: SoloChatViewProps) {
   }, [messages, scrollToThreadBottom, threadView, updateBottomState])
 
   const todoActivity = useMemo(() => latestTodoActivity(messages), [messages])
+  const planGate = useMemo(() => latestCrewCoderPlanGate(messages), [messages])
   const sentMessageHistory = useMemo(() => (
     messages
       .flatMap(message => {
@@ -258,6 +267,8 @@ export function SoloChatView(props: SoloChatViewProps) {
       onSelectModel={setModel}
       effort={effort}
       onSelectEffort={setEffort}
+      crewcoderMode={crewcoderMode}
+      onSelectCrewCoderMode={setCrewCoderMode}
       mcpEnabled={mcpEnabled}
       mcpServers={mcpServers}
       selectedMcpIds={selectedMcpIds}
@@ -304,6 +315,7 @@ export function SoloChatView(props: SoloChatViewProps) {
       onOpenCanvas={onOpenCanvas}
       onOpenTerminal={onOpenTerminal}
       onOpenBrowser={onOpenBrowser}
+      onHandoff={onHandoff}
       delegationEnabled={delegationEnabled}
       onToggleDelegation={onToggleDelegation}
       modePromptsEnabled={modePromptsEnabled}
@@ -350,7 +362,7 @@ export function SoloChatView(props: SoloChatViewProps) {
             {threadView === 'chat' && (
               messages.length === 0
                 ? <div className="thread-empty">start typing below to begin a chat in <b>{workspace.name}</b></div>
-                : <Messages messages={messages} workspacePath={effectivePath} isRunning={isRunning} loadingStatus={loadingStatus} onOpenFile={onOpenFile} onOpenLink={openThreadLink} scrollParent={threadEl} />
+                : <Messages messages={messages} workspacePath={effectivePath} isRunning={isRunning} loadingStatus={loadingStatus} onOpenFile={onOpenFile} onOpenTurnChange={onOpenTurnChange} onOpenLink={openThreadLink} scrollParent={threadEl} />
             )}
             {threadView === 'md' && <MarkdownEditor root={workspace.path} persistKey={sessionKey} />}
           </div>
@@ -373,13 +385,15 @@ export function SoloChatView(props: SoloChatViewProps) {
           {custodyHalt && onReauthorizeCustody && (
             <CustodyHaltBanner halt={custodyHalt} onReauthorize={onReauthorizeCustody} />
           )}
-          {(agentRequest || todoActivity) && (
+          {(agentRequest || todoActivity || planGate) && (
             <div className="composer-activity-shell">
               <AgentActivityOverlay
                 todos={todoActivity?.todos ?? []}
                 isStreaming={todoActivity?.isStreaming ?? !!agentRequest}
                 request={agentRequest ?? undefined}
                 onRespond={onAgentRequestResponse}
+                planGate={planGate}
+                onApprovePlan={() => onRunCommand?.(CREWCODER_APPROVE_PLAN_PROMPT)}
               />
             </div>
           )}

@@ -1,8 +1,9 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Icon } from '../ui/Icon'
 import { PierreDiff } from '../diff/PierreDiff'
-import { extractProviderPatchChanges, normalizePatchForPierre, pathField } from '../../hooks/turn-file-edit-detect'
-import type { Message, ToolCallMessage, TurnFileChange } from '../../types'
+import { collectTurnChangeEntries } from './turn-changes-data'
+import type { TurnChangeTarget } from './turn-changes-data'
+import type { Message } from '../../types'
 
 const WIDTH_KEY          = 'crewcode:turnChangesDrawerWidth'
 const LIST_WIDTH_KEY     = 'crewcode:turnChangesDrawerListWidth'
@@ -33,13 +34,7 @@ interface TurnChangesDrawerProps {
   open:     boolean
   messages: Message[]
   onClose:  () => void
-}
-
-interface TurnEntry {
-  turnId:  string
-  time:    string
-  userMsg: string | null
-  changes: TurnFileChange[]
+  target?:  TurnChangeTarget | null
 }
 
 interface AgentFinalMessageEntry {
@@ -47,31 +42,6 @@ interface AgentFinalMessageEntry {
   time:    string
   userMsg: string | null
   text:    string
-}
-
-function asRecord(v: unknown): Record<string, unknown> | null {
-  return v && typeof v === 'object' ? v as Record<string, unknown> : null
-}
-
-function asString(v: unknown): string | undefined {
-  return typeof v === 'string' ? v : undefined
-}
-
-function changesFromToolMessage(msg: ToolCallMessage): TurnFileChange[] {
-  const captured = msg.fileChanges ?? (msg.fileChange ? [msg.fileChange] : [])
-  if (captured.length > 0) return captured
-
-  const providerPatches = extractProviderPatchChanges(msg.metadata, msg.args, msg.result)
-  if (providerPatches.length > 0) {
-    return providerPatches.map(c => ({ path: c.path, beforeText: '', afterText: '', patch: c.patch }))
-  }
-
-  const args = asRecord(msg.args) ?? {}
-  const meta = msg.metadata ?? {}
-  const path = pathField(args)
-  const rawPatch = asString(meta.diff) ?? asString(args.patch) ?? asString(msg.result)
-  if (!path || !rawPatch || !/^diff --git |^--- |^@@ /m.test(rawPatch)) return []
-  return [{ path, beforeText: '', afterText: '', patch: normalizePatchForPierre(path, rawPatch) }]
 }
 
 function agentMessageText(msg: Extract<Message, { kind: 'agent' }>): string {
@@ -102,41 +72,8 @@ function truncateText(text: string, length: number): string {
  * disk and pop open any file's Pierre diff. The inline affordance under each
  * bubble handles the just-finished turn; this is the catalogue view.
  */
-export function TurnChangesDrawer({ open, messages, onClose }: TurnChangesDrawerProps) {
-  const turns = useMemo<TurnEntry[]>(() => {
-    const byTurn = new Map<string, TurnEntry>()
-    for (let i = 0; i < messages.length; i += 1) {
-      const msg = messages[i]
-      if (msg.kind !== 'toolcall') continue
-      const changes = changesFromToolMessage(msg)
-      if (changes.length === 0) continue
-      const t = msg.turnId
-      let entry = byTurn.get(t)
-      if (!entry) {
-        // Find the agent bubble for this turn to pull the time, and the user
-        // message right before it for context. Cheap because turns are short.
-        const agent = messages.find(m => m.kind === 'agent' && m.turnId === t)
-        const agentIdx = agent ? messages.indexOf(agent) : -1
-        const userPrev = agentIdx > 0
-          ? [...messages.slice(0, agentIdx)].reverse().find(m => m.kind === 'user')
-          : null
-        entry = {
-          turnId:  t,
-          time:    agent?.kind === 'agent' ? agent.time : msg.time,
-          userMsg: userPrev?.kind === 'user' ? userPrev.text : null,
-          changes: [],
-        }
-        byTurn.set(t, entry)
-      }
-      // Same path edited multiple times in one turn keeps only the latest snapshot.
-      for (const change of changes) {
-        const idx = entry.changes.findIndex(c => c.path === change.path)
-        if (idx === -1) entry.changes.push(change)
-        else            entry.changes[idx] = change
-      }
-    }
-    return [...byTurn.values()].reverse()
-  }, [messages])
+export function TurnChangesDrawer({ open, messages, onClose, target = null }: TurnChangesDrawerProps) {
+  const turns = useMemo(() => collectTurnChangeEntries(messages), [messages])
 
   const finalAgentMessages = useMemo<AgentFinalMessageEntry[]>(() => {
     const byTurn = new Map<string, AgentFinalMessageEntry>()
@@ -173,6 +110,16 @@ export function TurnChangesDrawer({ open, messages, onClose }: TurnChangesDrawer
   const draggingRef = useRef(false)
   const listDraggingRef = useRef(false)
   const drawerRef = useRef<HTMLDivElement>(null)
+
+  // A changed-file chip is a direct inspection route: focus its exact diff and
+  // close the summaries/list sidebar before paint so the diff gets full width.
+  useLayoutEffect(() => {
+    if (!open || !target) return
+    setActiveFinalMessageTurn(null)
+    setActiveTurn(target.turnId)
+    setActiveFile(target.filePath)
+    setSidebarOpen(false)
+  }, [open, target])
   const onHandleDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
     draggingRef.current = true
@@ -187,6 +134,9 @@ export function TurnChangesDrawer({ open, messages, onClose }: TurnChangesDrawer
   }, [])
   useEffect(() => {
     if (!open) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+    }
     const onMove = (e: MouseEvent) => {
       if (draggingRef.current) {
         const right = drawerRef.current?.getBoundingClientRect().right ?? window.innerWidth
@@ -219,13 +169,15 @@ export function TurnChangesDrawer({ open, messages, onClose }: TurnChangesDrawer
     }
     window.addEventListener('mousemove', onMove)
     window.addEventListener('mouseup',   onUp)
+    window.addEventListener('keydown',   onKeyDown)
     return () => {
       window.removeEventListener('mousemove', onMove)
       window.removeEventListener('mouseup',   onUp)
+      window.removeEventListener('keydown',   onKeyDown)
       document.body.style.cursor     = ''
       document.body.style.userSelect = ''
     }
-  }, [open])
+  }, [open, onClose])
 
   if (!open) return null
 
@@ -234,7 +186,7 @@ export function TurnChangesDrawer({ open, messages, onClose }: TurnChangesDrawer
   const change = turn?.changes.find(c => c.path === activeFile) ?? turn?.changes[0] ?? null
 
   return (
-    <div className="turn-drawer" style={{ width }} ref={drawerRef}>
+    <div className="turn-drawer" style={{ width }} ref={drawerRef} role="dialog" aria-label="Changes by turn">
       <div
         className="turn-drawer-resize"
         onMouseDown={onHandleDown}

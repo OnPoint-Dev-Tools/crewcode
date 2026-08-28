@@ -135,7 +135,7 @@ describe('Messages transcript ordering', () => {
     })
 
     expect(renderOrder(renderer.toJSON())).toEqual(['thinking', 'thinking', 'agent'])
-    expect(collectText(renderer.toJSON()).filter(text => text === 'THOUGHTS')).toHaveLength(2)
+    expect(collectText(renderer.toJSON()).filter(text => text === 'Thinking')).toHaveLength(2)
 
     TestRenderer.act(() => renderer.unmount())
   })
@@ -156,7 +156,7 @@ describe('Messages transcript ordering', () => {
     TestRenderer.act(() => renderer.unmount())
   })
 
-  it('keeps interleaved thinking and tool groups in stream order', () => {
+  it('consolidates interleaved tool runs immediately before the final response', () => {
     let renderer!: TestRenderer.ReactTestRenderer
     TestRenderer.act(() => {
       renderer = TestRenderer.create(createElement(Messages, { messages: transcript() }))
@@ -164,15 +164,72 @@ describe('Messages transcript ordering', () => {
 
     expect(renderOrder(renderer.toJSON())).toEqual([
       'thinking',
-      'worklog',
       'thinking',
       'worklog',
       'agent',
     ])
+    const text = collectText(renderer.toJSON()).join(' ').replace(/\s+/g, ' ')
+    expect(text).toContain('2 tool calls')
+    expect(text).toContain('renderer.ts')
+    expect(text).toContain('npm test')
 
     TestRenderer.act(() => {
       renderer.unmount()
     })
+  })
+
+  it('shows every changed file with real stats below the consolidated work log', () => {
+    const messages: Message[] = [
+      {
+        kind: 'toolcall',
+        time: '7:03 PM',
+        turnId: 'turn-files',
+        toolCallId: 'tool-files',
+        toolName: 'edit',
+        args: { path: 'src/alpha.ts' },
+        status: 'completed',
+        fileChanges: [
+          {
+            path: 'src/alpha.ts',
+            beforeText: 'old',
+            afterText: 'new\nnext',
+            patch: 'diff --git a/src/alpha.ts b/src/alpha.ts\n--- a/src/alpha.ts\n+++ b/src/alpha.ts\n@@ -1 +1,2 @@\n-old\n+new\n+next',
+          },
+          {
+            path: 'src/beta.css',
+            beforeText: '',
+            afterText: '.beta {}',
+            patch: 'diff --git a/src/beta.css b/src/beta.css\n--- a/src/beta.css\n+++ b/src/beta.css\n@@ -0,0 +1 @@\n+.beta {}',
+          },
+        ],
+      },
+      {
+        kind: 'agent',
+        time: '7:03 PM',
+        turnId: 'turn-files',
+        blocks: [],
+        text: 'Done',
+        streaming: false,
+      },
+    ]
+    const onOpenTurnChange = vi.fn()
+    let renderer!: TestRenderer.ReactTestRenderer
+    TestRenderer.act(() => {
+      renderer = TestRenderer.create(createElement(Messages, { messages, onOpenTurnChange }))
+    })
+
+    const strip = renderer.root.findByProps({ 'data-worklog-changed-files': true })
+    const text = collectText(renderer.toJSON()).join(' ').replace(/\s+/g, ' ')
+    expect(text).toMatch(/alpha\.ts\s+\+\s*2\s+-\s*1/)
+    expect(text).toMatch(/beta\.css\s+\+\s*1/)
+    expect(strip.findAllByType('button')).toHaveLength(2)
+
+    TestRenderer.act(() => {
+      strip.findByProps({ title: 'View turn diff for src/alpha.ts' }).props.onClick()
+    })
+    expect(onOpenTurnChange).toHaveBeenCalledWith({ turnId: 'turn-files', filePath: 'src/alpha.ts' })
+
+    TestRenderer.act(() => renderer.unmount())
   })
 
   it('never renders the raw tool-result JSON as a diff for preview-format edits', () => {

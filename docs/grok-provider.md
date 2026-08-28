@@ -95,6 +95,17 @@ non-edit tools including bash still auto-run — only *edits* are blocked. CrewC
 therefore maps plan to `dontAsk` and never relies on `session/set_mode` as a
 policy gate. This mirrors the existing rule for the Claude bridge.
 
+## Todo activity
+
+Grok's `todo_write` tool returns the **full** session list under
+`result.TodosUpdated.state.todos` (a keyed map). `TodosUpdated.todos` and merge
+arguments are only the subset just written; merge entries often have
+`content: null`. The overlay prefers the state map and folds running
+`merge: true` patches onto the current turn's list. Every user message clears
+the previous list. CrewCode's own observed turn lifecycle keeps activity visible
+when Grok does not call `todo_write`; a native snapshot provides richer detail
+only while that turn remains active.
+
 ## Usage lives on a vendor channel
 
 Grok carries several things on `_x.ai/session_notification` instead of
@@ -220,6 +231,12 @@ Mechanics:
 - `abort()` and `stop()` clear the whole queue (`reason: 'cleared'`) so a queued
   message never fires at a turn the user just cancelled.
 - A concurrent prompt *without* the follow-up flag is still rejected.
+
+`session/prompt` is fire-and-forget: `prompt()` returns `{ ok: true }` as soon as
+the turn is opened, then `endTurn()` fires when the JSON-RPC response settles.
+The workspace drawer Running list must not wait for that later `turn_end`. Bind
+the conversation scope before flipping `runningByBridge` so `runningByScope`
+lists the Grok chat while it is still thinking.
 
 ## Icon
 

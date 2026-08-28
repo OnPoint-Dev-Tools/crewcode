@@ -166,6 +166,7 @@ export function GitPage(props: GitSidebarProps) {
         <div className="git-page-main">
           <GitPageChanges
             repoPath={workspace.path}
+            comparisonRef={state.comparisonRef}
             changes={state.changes || []}
             hasUnpushed={state.ahead > 0}
             onStage={onStageFile}

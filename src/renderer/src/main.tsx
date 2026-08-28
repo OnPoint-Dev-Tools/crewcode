@@ -7,6 +7,7 @@ import { initializeCrewCodeRuntime } from './runtime/crewcode-client'
 import { WebConnectionScreen } from './runtime/WebConnectionScreen'
 import './styles/fonts'
 import './styles/colors_and_type.css'
+import './styles/tailwind.css'
 import './styles/styles.css'
 import './styles/add-project-modal.css'
 import './styles/settings.css'
@@ -55,6 +56,12 @@ function warmFonts(): void {
 }
 if ('requestIdleCallback' in window) (window as any).requestIdleCallback(warmFonts)
 else setTimeout(warmFonts, 1500)
+
+if ('serviceWorker' in navigator && !isElectronRuntime) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {})
+  })
+}
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

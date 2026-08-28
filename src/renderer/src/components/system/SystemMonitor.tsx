@@ -188,6 +188,8 @@ function buildGroups(
 // subtree, not the whole App.
 
 interface SystemMonitorMountProps {
+  open?:          boolean
+  onOpenChange?:  (open: boolean) => void
   terminals:      TerminalDaemon[]
   workspaces:     MonitorWorkspace[]
   onKillTerminal: (id: string) => void
@@ -198,9 +200,16 @@ interface SystemMonitorMountProps {
 // Memoized: App passes only stable props (useMemo/useCallback), so this bails
 // out of App's per-token re-renders and updates only on its own 2s stat ticks.
 export const SystemMonitorMount = memo(function SystemMonitorMount({
+  open: controlledOpen, onOpenChange,
   terminals, workspaces, onKillTerminal, onOpenTerminal, onOpenDaemon,
 }: SystemMonitorMountProps) {
-  const [open, setOpen] = useState(false)
+  const [internalOpen, setInternalOpen] = useState(false)
+  const open = controlledOpen ?? internalOpen
+  const setOpen = (next: boolean | ((current: boolean) => boolean)) => {
+    const value = typeof next === 'function' ? next(open) : next
+    if (controlledOpen === undefined) setInternalOpen(value)
+    onOpenChange?.(value)
+  }
   const monitor = useSystemStats(open)
   const active = terminals.length + (monitor.stats?.bridgeCount ?? 0)
 

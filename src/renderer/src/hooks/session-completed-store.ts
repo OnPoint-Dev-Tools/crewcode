@@ -1,7 +1,7 @@
 /**
  * Pure persistence logic for chat completion timestamps, split out from
- * useChatRecency so it can be unit-tested without a DOM/localStorage. The hook
- * owns the localStorage read/write; this module owns validation and bounding.
+ * useCompletedChats so it can be unit-tested without a DOM/localStorage. The
+ * hook owns localStorage read/write; this module owns validation and bounding.
  */
 
 export type CompletedMap = Record<string, number>

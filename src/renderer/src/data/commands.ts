@@ -11,8 +11,6 @@ const META: Partial<Record<ActionId, { icon: string; hint: string }>> = {
   'prev-tab':                { icon: 'chevLeft',  hint: '' },
   'settings-search':         { icon: 'search',    hint: 'focus settings search' },
   'prompt-picker':           { icon: 'fileText',  hint: 'browse saved prompts' },
-  'prev-chat':               { icon: 'chevLeft',  hint: 'previous recent chat' },
-  'next-chat':               { icon: 'chevRight', hint: 'next recent chat' },
   'send-message':            { icon: 'send',      hint: 'send chat message' },
   'cycle-mode':              { icon: 'bolt',      hint: 'ask → plan → build → full access' },
   'insert-context':          { icon: 'tag',       hint: '@ chip' },

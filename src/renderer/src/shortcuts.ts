@@ -35,8 +35,6 @@ export type ActionId =
   | 'fullscreen'
   | 'split-terminal-right'
   | 'split-terminal-down'
-  | 'prev-chat'
-  | 'next-chat'
   | 'open-vscode'
   | 'open-folder'
   | 'clone-repo'
@@ -74,18 +72,12 @@ export const SHORTCUTS: ShortcutDef[] = [
   // navigation
   { id: 'palette',          group: 'navigation', act: 'Open command palette',     keys: ['⌘','K'] },
   { id: 'workspaces',       group: 'navigation', act: 'Toggle workspaces drawer', keys: ['⌘','B'] },
-  { id: 'next-tab',         group: 'navigation', act: 'Next tab',                 keys: ['⌘','⇧',']'] },
-  { id: 'prev-tab',         group: 'navigation', act: 'Previous tab',             keys: ['⌘','⇧','['] },
+  { id: 'next-tab',         group: 'navigation', act: 'Next tab',                 keys: ['⌃','⇥'] },
+  { id: 'prev-tab',         group: 'navigation', act: 'Previous tab',             keys: ['⌃','⇧','⇥'] },
   { id: 'next-workspace',   group: 'navigation', act: 'Next workspace',           keys: ['⌃','⌥','⇥'] },
   { id: 'prev-workspace',   group: 'navigation', act: 'Previous workspace',       keys: ['⌃','⌥','⇧','⇥'] },
   { id: 'settings-search',  group: 'navigation', act: 'Focus settings search',    keys: ['⌘','/'] },
   { id: 'prompt-picker',    group: 'navigation', act: 'Open prompt picker',       keys: ['⌘','P'] },
-  // Ctrl+Tab / Ctrl+Shift+Tab cycle the most-recently-active chats (across
-  // workspaces). Stays consistent across Mac/Linux/Windows because ⌃ maps to
-  // ctrlKey in matchesChord.
-  { id: 'prev-chat',        group: 'navigation', act: 'Previous recent chat',     keys: ['⌃','⇧','⇥'] },
-  { id: 'next-chat',        group: 'navigation', act: 'Next recent chat',         keys: ['⌃','⇥'] },
-
   // composer
   { id: 'send-message',     group: 'composer', act: 'Send message',                      keys: ['⌘','↵'] },
   { id: 'cycle-mode',       group: 'composer', act: 'Cycle mode (ask/plan/build/full access)',  keys: ['⌃','M'] },

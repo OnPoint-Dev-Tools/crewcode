@@ -34,6 +34,7 @@ export interface CustodyAuthority {
   provider: string
   cwd: string
   mode: ModeLevel
+  crewcoderMode: string
   toolPolicy: string
   externalDirectories: string[]
   mcpServers: string[]
@@ -43,6 +44,7 @@ export interface CustodyAuthorityInput {
   provider: string
   cwd: string
   mode?: ModeLevel
+  crewcoderMode?: string
   toolPolicy?: string
   externalDirectories?: string[]
   mcpServers?: Array<{ name?: string } | string>
@@ -54,6 +56,7 @@ export function normalizeAuthority(input: CustodyAuthorityInput): CustodyAuthori
     provider: input.provider,
     cwd: input.cwd,
     mode: input.mode ?? 'build',
+    crewcoderMode: input.crewcoderMode ?? 'configured',
     toolPolicy: input.toolPolicy ?? 'default',
     externalDirectories: [...(input.externalDirectories ?? [])].sort(),
     mcpServers: (input.mcpServers ?? [])
@@ -75,7 +78,7 @@ function render(value: string | string[]): string {
 
 /** Field-by-field comparison. Empty result means the live authority still matches the record. */
 export function diffAuthority(recorded: CustodyAuthority, observed: CustodyAuthority): AuthorityDrift[] {
-  const fields: Array<keyof CustodyAuthority> = ['provider', 'cwd', 'mode', 'toolPolicy', 'externalDirectories', 'mcpServers']
+  const fields: Array<keyof CustodyAuthority> = ['provider', 'cwd', 'mode', 'crewcoderMode', 'toolPolicy', 'externalDirectories', 'mcpServers']
   const drift: AuthorityDrift[] = []
   for (const field of fields) {
     const before = render(recorded[field])
@@ -118,7 +121,7 @@ export function decideModeChange(current: ModeLevel | undefined, next: ModeLevel
  * inspection (status, journal reads) is deliberately not in this set — a halt
  * must never hide the evidence it was raised to preserve.
  */
-export type PrivilegedAction = 'prompt' | 'authorize' | 'respond' | 'compact' | 'setMode' | 'removeFollowUp'
+export type PrivilegedAction = 'prompt' | 'authorize' | 'respond' | 'compact' | 'handoff' | 'setMode' | 'removeFollowUp'
 
 export function refusalMessage(action: PrivilegedAction, halt: CustodyViolation): string {
   return `${action} refused: ${CUSTODY_INVARIANTS[halt.invariant].title.toLowerCase()} — ${halt.detail}. Reauthorize this thread to continue.`

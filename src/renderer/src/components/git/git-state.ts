@@ -18,6 +18,8 @@ export interface GitChange {
   path:   string   // full path from repo root
   name:   string   // basename for display
   dir:    string   // dirname + trailing slash
+  /** False for committed differences that exist only relative to the comparison branch. */
+  stageable?: boolean
   add?:   number
   del?:   number
 }
@@ -88,6 +90,8 @@ export interface GitState {
   isRepo?:         boolean   // false when the folder isn't a git repo yet
   hasRemote?:      boolean   // false when no git remote is configured
   hasUpstream?:    boolean   // false when the current branch has not been pushed/tracked
+  /** Settings-selected branch used as the review/comparison base. */
+  comparisonRef?:  string
 }
 
 export interface GitPublishOpts {

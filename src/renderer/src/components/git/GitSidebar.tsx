@@ -89,6 +89,7 @@ interface TopBarProps {
   onOpenTerminal?:   (path: string) => void
   onCheckoutBranch?: (ref: string) => void
   onCreateBranch?:   (name: string) => void
+  onClose?:          () => void
 }
 
 /** git/ssh remote → browsable https URL (git@host:org/repo.git → https://host/org/repo). */
@@ -103,7 +104,7 @@ function remoteWebUrl(remote: string): string | null {
 }
 
 function TopBar({ workspace, branches, ahead, behind, lastFetch, fetching, remoteUrl,
-                  onPush, onPull, onFetch, onSync, onCreatePR, onOpenTerminal, onCheckoutBranch, onCreateBranch }: TopBarProps) {
+                  onPush, onPull, onFetch, onSync, onCreatePR, onOpenTerminal, onCheckoutBranch, onCreateBranch, onClose }: TopBarProps) {
   const [picker, setPicker] = useState(false)
   const [q, setQ] = useState('')
   const [createBranchOpen, setCreateBranchOpen] = useState(false)
@@ -137,6 +138,7 @@ function TopBar({ workspace, branches, ahead, behind, lastFetch, fetching, remot
           <button className="gs-ibtn" title="Open in terminal" disabled={!onOpenTerminal} onClick={() => onOpenTerminal?.(workspace.path)}><Icon name="terminal" /></button>
           <button ref={moreRef} className="gs-ibtn" title="More git actions"
                   onClick={() => (menu ? setMenu(null) : openMenu())}><Icon name="more" /></button>
+          {onClose && <button className="gs-ibtn gs-mobile-close" title="Close Git sidebar" aria-label="Close Git sidebar" onClick={onClose}><Icon name="x" /></button>}
         </div>
       </div>
 
@@ -310,11 +312,13 @@ interface ChangesBodyProps {
   onUnstageAll?: (paths: string[]) => void
   onDiscard?:  (path: string) => void
   onOpenDiff?: (path: string, staged: boolean) => void
+  comparisonRef?: string
 }
 
-function ChangesBody({ changes, onStage, onUnstage, onStageAll, onUnstageAll, hasUnpushed, onOpenDiff }: ChangesBodyProps) {
+function ChangesBody({ changes, onStage, onUnstage, onStageAll, onUnstageAll, hasUnpushed, onOpenDiff, comparisonRef }: ChangesBodyProps) {
   const staged = changes.filter(c => c.staged)
   const unstaged = changes.filter(c => !c.staged)
+  const stageableUnstaged = unstaged.filter(c => c.stageable !== false)
 
   return (
     <>
@@ -352,8 +356,8 @@ function ChangesBody({ changes, onStage, onUnstage, onStageAll, onUnstageAll, ha
       {unstaged.length > 0 && (
         <>
           <div className="gs-section-head">
-            Changes · {unstaged.length}
-            <button className="stage-toggle" onClick={() => onStageAll ? onStageAll(unstaged.map(f => f.path)) : unstaged.forEach(f => onStage?.(f.path))}>stage all</button>
+            {comparisonRef ? `Changes vs ${comparisonRef}` : 'Changes'} · {unstaged.length}
+            {stageableUnstaged.length > 0 && <button className="stage-toggle" onClick={() => onStageAll ? onStageAll(stageableUnstaged.map(f => f.path)) : stageableUnstaged.forEach(f => onStage?.(f.path))}>stage all</button>}
           </div>
           <div className="gs-changes-list">
             {unstaged.map(f => (
@@ -369,11 +373,13 @@ function ChangesBody({ changes, onStage, onUnstage, onStageAll, onUnstageAll, ha
                   {f.add ? <span className="add">+{f.add}</span> : null}
                   {f.del ? <span className="del">−{f.del}</span> : null}
                 </span>
-                <button
-                  className="gs-file-action"
-                  title="stage"
-                  onClick={e => { e.stopPropagation(); onStage?.(f.path) }}
-                >+</button>
+                {f.stageable !== false && (
+                  <button
+                    className="gs-file-action"
+                    title="stage"
+                    onClick={e => { e.stopPropagation(); onStage?.(f.path) }}
+                  >+</button>
+                )}
               </div>
             ))}
           </div>
@@ -748,6 +754,8 @@ export interface GitSidebarProps extends GitSidebarHandlers {
   onOpenTerminal?: (path: string) => void
   pluginGitLenses?: RegisteredPluginGitLens[]
   onPluginGitLens?: (target: { pluginId: string; sidebarPanel?: string; tab?: string; command?: string }) => void
+  /** Mobile overlay close action. Omitted for the persistent desktop/sidebar page variants. */
+  onClose?: () => void
 }
 
 export function GitSidebar({
@@ -766,6 +774,7 @@ export function GitSidebar({
   onOpenTerminal,
   pluginGitLenses = [],
   onPluginGitLens,
+  onClose,
 }: GitSidebarProps) {
   const hasConflicts = (state.conflicts || []).length > 0
   // A remote can exist after a partial publish while the branch was never pushed.
@@ -809,7 +818,13 @@ export function GitSidebar({
   }, [state.banner])
 
   return (
-    <aside className="gs" style={{ ['--gs-width' as string]: `${width}px` } as React.CSSProperties}>
+    <aside
+      className="gs"
+      style={{ ['--gs-width' as string]: `${width}px` } as React.CSSProperties}
+      role={onClose ? 'dialog' : undefined}
+      aria-modal={onClose ? true : undefined}
+      aria-label={onClose ? 'Git sidebar' : undefined}
+    >
       {!hideTop && (
         <TopBar
           workspace={workspace}
@@ -827,6 +842,7 @@ export function GitSidebar({
           onOpenTerminal={onOpenTerminal}
           onCheckoutBranch={onCheckoutBranch}
           onCreateBranch={onCreateBranch}
+          onClose={onClose}
         />
       )}
 
@@ -928,7 +944,7 @@ export function GitSidebar({
         {!hideSections.changes && (
           <GsCard
             icon="gitCompare"
-            title="Changes"
+            title={state.comparisonRef ? `Changes vs ${state.comparisonRef}` : 'Changes'}
             count={(state.changes || []).length || null}
             open={open.changes}
             onToggle={() => toggle('changes')}
@@ -942,6 +958,7 @@ export function GitSidebar({
               onUnstageAll={onUnstageAll}
               onDiscard={onDiscardFile}
               onOpenDiff={onOpenFileDiff}
+              comparisonRef={state.comparisonRef}
             />
           </GsCard>
         )}

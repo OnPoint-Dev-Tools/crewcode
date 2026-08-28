@@ -1,6 +1,7 @@
-import type { ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Icon } from '../ui/Icon'
 import { useSettings } from '../../hooks/useSettings'
+import { useMobileLayout } from '../../hooks/useMobileLayout'
 
 export type CanvasPaneKind = 'chat' | 'terminal'
 
@@ -28,13 +29,43 @@ interface CanvasModeProps {
 
 export function CanvasMode({ workspaceName, openChatCount, openTerminalCount, panes, onNewChat, onNewTerminal, onClosePane }: CanvasModeProps) {
   const { state: settings, set: setSetting } = useSettings()
+  const { isMobile } = useMobileLayout()
+  const [fabOpen, setFabOpen] = useState(false)
+  // Per-pane overflow menu. `null` = closed; otherwise the open pane's id.
+  const [paneMenuId, setPaneMenuId] = useState<string | null>(null)
+  const paneMenuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!paneMenuId) return
+    const onDown = (e: MouseEvent | TouchEvent): void => {
+      if (paneMenuRef.current && !paneMenuRef.current.contains(e.target as Node)) {
+        setPaneMenuId(null)
+      }
+    }
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setPaneMenuId(null)
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('touchstart', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('touchstart', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [paneMenuId])
+
   return (
     <section className="canvas-mode" aria-label="Canvas Mode">
       <header className="canvas-mode-header">
         <div>
           <div className="canvas-mode-eyebrow"><Icon name="workbench" size={12} /> Workbench Mode</div>
         </div>
-        <span className="canvas-mode-cap">{openChatCount} chats · {openTerminalCount} terminals open</span>
+        <span className="canvas-mode-cap">
+          {isMobile
+            ? `${openChatCount + openTerminalCount} open`
+            : `${openChatCount} chats · ${openTerminalCount} terminals open`}
+        </span>
       </header>
 
       {panes.length === 0 ? (
@@ -102,14 +133,43 @@ export function CanvasMode({ workspaceName, openChatCount, openTerminalCount, pa
                       <span>{settings.hideVerboseAgentLogs ? 'replies' : 'logs'}</span>
                     </button>
                   )}
-                  <div className="canvas-mode-button" onClick={onNewChat}><Icon name="threads" size={13} /> Add chat</div>
-          <div className="canvas-mode-button" onClick={onNewTerminal}><Icon name="terminal" size={13} /> Add terminal</div>
-                  <button type="button" className="canvas-mode-pane-close" onClick={() => onClosePane?.(pane.id)} aria-label={`Close ${pane.title}`}>×</button>
                 </div>
-              </div>
-              <div className="canvas-mode-pane-body">{pane.content}</div>
-            </article>
-          ))}
+                <div className="canvas-mode-pane-body">{pane.content}</div>
+              </article>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Phone-only FAB: in the empty-hub case the start cards already expose
+          the Add buttons. Once the user has at least one pane, the only way
+          to add another is from inside that pane's title bar. On phones that
+          bar overflows, so we surface a sticky FAB with the same actions. */}
+      {isMobile && panes.length > 0 && (
+        <div className="canvas-mode-fab-wrap">
+          {fabOpen && (
+            <div className="canvas-mode-fab-menu" role="menu">
+              <button type="button" role="menuitem"
+                className="canvas-mode-fab-item"
+                onClick={() => { setFabOpen(false); onNewChat?.() }}>
+                <Icon name="threads" size={14} /> Add chat
+              </button>
+              <button type="button" role="menuitem"
+                className="canvas-mode-fab-item"
+                onClick={() => { setFabOpen(false); onNewTerminal?.() }}>
+                <Icon name="terminal" size={14} /> Add terminal
+              </button>
+            </div>
+          )}
+          <button
+            type="button"
+            className="canvas-mode-fab"
+            aria-label={fabOpen ? 'close add menu' : 'add chat or terminal'}
+            aria-expanded={fabOpen}
+            onClick={() => setFabOpen(o => !o)}
+          >
+            <Icon name={fabOpen ? 'x' : 'plus'} size={18} />
+          </button>
         </div>
       )}
     </section>

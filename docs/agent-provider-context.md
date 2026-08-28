@@ -24,20 +24,13 @@ CrewCoder restores sessions with ACP `session/load`. Its provider replay contain
 
 Claude normally avoids this fallback when a saved Claude session id exists, because its SDK `options.resume` path is preferred.
 
-## Claude SDK project guidance without global skill bloat
+## Claude SDK settings and native skills
 
-Claude bridge turns call the Agent SDK with:
+Claude bridge turns omit `skills` and `settingSources`. That is Claude CLI default behavior: user, project, and local settings load, and native skill discovery follows Claude — including `~/.claude`. Do not pass `skills: []` (hides the library) or `settingSources: []` (drops `CLAUDE.md` and other filesystem settings) unless CrewCode injects equivalent repo guidance itself.
 
-```ts
-settingSources: ['project']
-skills: []
-```
+CrewCode's own `.crewcode` skill flow stays separate: selected skill bodies are injected by the composer/session path only when the user applies them.
 
-This preserves the active repository's project guidance (`CLAUDE.md` / supported project settings loaded by Claude Code) while preventing the user's global `~/.claude` settings and discovered skill library from being injected into every turn.
-
-`skills: []` intentionally disables passive SDK skill injection, including project skills. CrewCode's own skill flow is separate: selected `.crewcode` skill bodies are injected by the composer/session path only when the user applies them, so they remain available without a standing context cost.
-
-Do not switch Claude to `settingSources: []` unless you also add a CrewCode-owned replacement for repository guidance injection. Total SDK isolation removes global bloat, but also drops repo instructions that agents need for safe changes.
+A large global skill library still costs context on every turn. Inspect `contextBreakdown` if occupancy spikes after this path is enabled.
 
 ## Claude context meter source of truth
 

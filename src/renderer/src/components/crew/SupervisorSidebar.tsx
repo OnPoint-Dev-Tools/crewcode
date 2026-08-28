@@ -4,6 +4,7 @@ import { Icon } from '../ui/Icon'
 import { Messages } from '../thread/Messages'
 import { AgentActivityOverlay } from '../thread/AgentActivityOverlay'
 import { latestTodoActivity } from '../thread/todo-from-toolcall'
+import { CREWCODER_APPROVE_PLAN_PROMPT, latestCrewCoderPlanGate } from '../thread/crewcoder-plan-gate'
 import { MentionPopover } from '../composer/MentionPopover'
 import { PROVIDER_IMAGES, providerImageClass } from '../composer/provider-meta'
 import { useSettings } from '../../hooks/useSettings'
@@ -80,6 +81,7 @@ export function SupervisorSidebar({
 
   const busy = supe.status === 'thinking' || supe.status === 'delegating'
   const todoActivity = useMemo(() => latestTodoActivity(messages), [messages])
+  const planGate = useMemo(() => latestCrewCoderPlanGate(messages), [messages])
 
   const updateScrollBottomButton = () => {
     const el = threadRef.current
@@ -219,13 +221,15 @@ export function SupervisorSidebar({
       </div>
 
       <div className="supervisor-composer">
-        {(agentRequest || todoActivity) && (
+        {(agentRequest || todoActivity || planGate) && (
           <div className="composer-activity-shell">
             <AgentActivityOverlay
               todos={todoActivity?.todos ?? []}
               isStreaming={todoActivity?.isStreaming ?? busy}
               request={agentRequest ?? undefined}
               onRespond={onAgentRequestResponse}
+              planGate={planGate}
+              onApprovePlan={() => onSend(CREWCODER_APPROVE_PLAN_PROMPT)}
             />
           </div>
         )}

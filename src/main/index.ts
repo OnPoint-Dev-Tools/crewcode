@@ -16,6 +16,7 @@ import { getAgentKey, setAgentKey, hasAgentKey } from './agents/agent-keys'
 import { listModels } from './agents/model-detect'
 import { registerUpdaterIpc } from './updater'
 import { registerGhIpc, killActiveGhLogin } from './gh'
+import { getGitHubStatus } from './github-service'
 import { registerSshIpc, resolveSshAgentAtStartup, killManagedSshAgent } from './ssh'
 import { registerRemoteIpc, disconnectAllRemotes } from './remote/remote-ipc'
 import { registerCustomCommandsIpc } from './customCommands'
@@ -41,6 +42,7 @@ function normalizeDelegationMode(value: unknown): ModeLevel {
 }
 import { RateLimitService, registerRateLimitIpc } from './rate-limits'
 import { registerNotificationIpc, setNotificationIcon } from './notify'
+import { getYuHeardServer } from './yuheard-server'
 import {
   createVoiceClientSecret,
   setVoiceProviderKey,
@@ -58,9 +60,33 @@ import {
   type VoiceTranscriptionRequest,
 } from '../shared/voice-types'
 import { localVoiceService } from './local-voice-service'
+import { packagedHeadlessArgs } from './packaged-cli-dispatch'
 
 const { app, BrowserWindow, clipboard, ipcMain, nativeImage, protocol, session, shell } = electron
 import { spawn } from 'child_process'
+
+// The packaged AppImage executable is also named `crewcode`. Dispatch recognized
+// server commands in the main process with all window initialization disabled:
+// `crewcode` remains desktop, while `crewcode hub|serve|brain|enroll` is headless.
+// Running here (rather than ELECTRON_RUN_AS_NODE) preserves compatibility for
+// shared backend modules that intentionally import Electron's app-path adapter.
+const packagedCliArgs = app.isPackaged ? packagedHeadlessArgs(process.argv) : null
+if (packagedCliArgs) {
+  const [command, ...args] = packagedCliArgs
+  const run = command === 'hub'
+    ? import('./hub').then(module => module.runHub(args))
+    : command === 'serve'
+      ? import('./headless').then(module => module.runHeadless(args))
+      : import('./hub-machine-enrollment').then(module => module.runBrainCommand(command as 'brain' | 'enroll', args))
+  void run.then(() => {
+    // Long-running Hub/direct servers return after binding and remain alive on
+    // their sockets. Help and enrollment are finite commands and should exit.
+    if (command === 'enroll' || args.includes('--help') || args.includes('-h')) app.exit(0)
+  }).catch(error => {
+    console.error((error as Error).message)
+    app.exit(1)
+  })
+}
 
 const isDev = process.env['NODE_ENV'] === 'development'
 
@@ -158,13 +184,13 @@ async function loadReactDevtools(): Promise<void> {
   console.warn('[devtools] React DevTools auto-install is disabled on Electron 42; use CREWCODE_REACT_DEVTOOLS=1 only after migrating to session.extensions.* APIs.')
 }
 
-if (isWaylandSession()) {
+if (!packagedCliArgs && isWaylandSession()) {
   // Chromium's Vulkan surface path can be unstable on Wayland/NVIDIA; keep
   // Wayland enabled while avoiding that compatibility path.
   app.commandLine.appendSwitch('disable-vulkan-surface')
 }
 
-app.whenReady().then(async () => {
+if (!packagedCliArgs) app.whenReady().then(async () => {
   registerPtyIpc()
   registerWorkspaceIpc()
   registerFsIpc()
@@ -379,6 +405,17 @@ function registrySnapshot() {
 }
 
 ipcMain.handle('agent:registry', () => registrySnapshot())
+
+// YuHeard status — exposed so the renderer can show the socket path in
+// settings and link to docs/yuheard.md. Returns `{ socket, running }`;
+// the socket path is null if the server failed to start.
+ipcMain.handle('yuheard:status', () => {
+  const server = getYuHeardServer()
+  return {
+    socket: server?.getSocketPath() ?? null,
+    running: !!server?.isRunning(),
+  }
+})
 
 ipcMain.handle('agent:setPath', (_e, id: string, path: string | null) => {
   if (!AGENT_DEFS.some(d => d.id === id)) return { ok: false, error: 'unknown agent id' }
@@ -619,68 +656,4 @@ ipcMain.handle('browser:extractHover', (_e, args) => browserGrabManager.extractH
 
 // ─── GitHub status ────────────────────────────────────────────────────────────
 
-interface GitHubPR {
-  number: number
-  title:  string
-  state:  'OPEN' | 'CLOSED' | 'MERGED'
-  branch: string
-  url:    string
-}
-
-interface GitHubRun {
-  id:         number
-  name:       string
-  status:     'queued' | 'in_progress' | 'completed'
-  conclusion: 'success' | 'failure' | 'cancelled' | 'skipped' | null
-  branch:     string
-}
-
-function parseGitHubRemote(url: string): { owner: string; repo: string } | null {
-  const match = url.match(/github\.com[:/]([^/]+)\/([^/.]+)(?:\.git)?/)
-  if (!match) return null
-  return { owner: match[1], repo: match[2] }
-}
-
-ipcMain.handle('github:status', (_e, repoPath: string) => {
-  const ghCheck = spawnSync('which', ['gh'], { encoding: 'utf8' })
-  if (!ghCheck.stdout?.trim()) return { error: 'gh CLI not found' }
-
-  const cwd = expandHome(repoPath)
-
-  const remoteResult = spawnSync('git', ['remote', 'get-url', 'origin'], { cwd, encoding: 'utf8' })
-  const remoteUrl    = remoteResult.stdout?.trim() ?? ''
-
-  if (!remoteUrl.includes('github.com')) return { error: 'not a GitHub repo' }
-
-  const parsed = parseGitHubRemote(remoteUrl)
-  if (!parsed) return { error: 'could not parse GitHub remote URL' }
-  const { owner, repo } = parsed
-
-  let prs: GitHubPR[] = []
-  const prResult = spawnSync('gh', ['pr', 'list', '--json', 'number,title,headRefName,state,url', '--limit', '20'], { cwd, encoding: 'utf8' })
-  if (prResult.status === 0 && prResult.stdout) {
-    try {
-      const raw = JSON.parse(prResult.stdout) as Array<{ number: number; title: string; headRefName: string; state: string; url: string }>
-      prs = raw.map(pr => ({ number: pr.number, title: pr.title, state: pr.state as GitHubPR['state'], branch: pr.headRefName, url: pr.url }))
-    } catch (_err) { /* leave prs = [] */ }
-  }
-
-  let runs: GitHubRun[] = []
-  const runResult = spawnSync('gh', ['run', 'list', '--json', 'databaseId,name,status,conclusion,headBranch', '--limit', '10'], { cwd, encoding: 'utf8' })
-  if (runResult.status === 0 && runResult.stdout) {
-    try {
-      const raw = JSON.parse(runResult.stdout) as Array<{ databaseId: number; name: string; status: string; conclusion: string | null; headBranch: string }>
-      runs = raw.map(r => ({ id: r.databaseId, name: r.name, status: r.status as GitHubRun['status'], conclusion: r.conclusion as GitHubRun['conclusion'], branch: r.headBranch }))
-    } catch (_err) { /* leave runs = [] */ }
-  }
-
-  let issues = 0
-  const issueResult = spawnSync('gh', ['issue', 'list', '--state', 'open', '--json', 'number', '--limit', '100'], { cwd, encoding: 'utf8' })
-  if (issueResult.status === 0 && issueResult.stdout) {
-    try {
-      issues = (JSON.parse(issueResult.stdout) as unknown[]).length
-    } catch (_err) { /* leave issues = 0 */ }
-  }
-
-  return { owner, repo, prs, runs, issues }
-})
+ipcMain.handle('github:status', (_e, repoPath: string) => getGitHubStatus(expandHome(repoPath)))

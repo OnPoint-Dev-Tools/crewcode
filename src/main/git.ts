@@ -39,6 +39,10 @@ function shq(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`
 }
 
+function validComparisonRef(value: string): boolean {
+  return value.length > 0 && value.length <= 255 && !value.startsWith('-') && !/[\x00-\x20~^:?*[\\]/.test(value) && !value.includes('..') && !value.includes('@{')
+}
+
 function runGit(cwd: string, args: string[], extraEnv?: NodeJS.ProcessEnv): Promise<{ stdout: string; stderr: string }> {
   // Remote workspaces carry an ssh:// root — run git on the host via the pooled
   // connection. `git -C <path>` reproduces the local cwd behavior, so every
@@ -362,6 +366,7 @@ export function registerGitIpc(): void {
   // files are folded in from status. This is what the crew compare view needs:
   // after a lane commits, its working tree is clean but it still differs from base.
   ipcMain.handle('git:changesVsRef', async (_e, cwd: string, ref: string) => {
+    if (!validComparisonRef(ref)) return { error: 'invalid comparison branch' }
     try {
       const { stdout } = await runGit(cwd, ['diff', '--name-status', ref])
       const files: GitStatusFile[] = []
@@ -387,6 +392,7 @@ export function registerGitIpc(): void {
 
   // Unified diff of one file relative to a base ref — committed work included.
   ipcMain.handle('git:diffVsRef', async (_e, cwd: string, ref: string, path: string) => {
+    if (!validComparisonRef(ref)) return { error: 'invalid comparison branch' }
     try {
       const prefix = ['--src-prefix=a/', '--dst-prefix=b/']
       const { stdout } = await runGit(cwd, ['diff', ...prefix, ref, '--', path])

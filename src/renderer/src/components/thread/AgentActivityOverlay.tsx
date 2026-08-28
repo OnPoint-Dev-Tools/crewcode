@@ -3,16 +3,19 @@ import {
   CheckCircleIcon,
   CheckSquareIcon,
   CaretDownIcon,
+  ChatTextIcon,
   CircleIcon,
   HourglassHighIcon,
+  ListChecksIcon,
   ListIcon,
   SpinnerIcon,
   XIcon,
 } from '@phosphor-icons/react'
 import type { AgentUserRequest, AgentUserResponse } from '../../types'
-import type { TodoItem } from './TurnWorkLog'
+import { isBlockedTodo, todoDisplayLabel, type TodoItem } from './TurnWorkLog'
 import { AgentRequestCard } from './AgentRequestCard'
 import { useSettings } from '../../hooks/useSettings'
+import type { CrewCoderPlanGate } from './crewcoder-plan-gate'
 
 interface AgentActivityOverlayProps {
   /** Active todos from an agent TodoWrite tool call. */
@@ -23,6 +26,10 @@ interface AgentActivityOverlayProps {
   request?: AgentUserRequest
   /** Sends the human answer back to the bridge/provider. */
   onRespond?: (response: AgentUserResponse) => void | Promise<unknown>
+  /** CrewCoder-mode clarify/plan gate. Not a tool-permission request. */
+  planGate?: CrewCoderPlanGate | null
+  /** Sends `/approve-plan` as a prompt or follow-up. */
+  onApprovePlan?: () => void
   /** Optional dismissal for completed inline activity. */
   onDismiss?: () => void
 }
@@ -31,31 +38,42 @@ export function shouldShowAgentActivity(
   showTodoActivity: boolean,
   todoCount: number,
   hasRequest: boolean,
+  hasPlanGate = false,
 ): boolean {
-  // Requests can pause the provider, so presentation preferences must never hide them.
-  return hasRequest || (showTodoActivity && todoCount > 0)
+  // Requests and CrewCoder plan gates can pause work, so Todo activity off must never hide them.
+  return hasRequest || hasPlanGate || (showTodoActivity && todoCount > 0)
 }
 
 /**
  * Converted from the Tailwind design in `.design/AgentActivityOverlay.tsx`.
  * This inline variant keeps chat history stable while still showing live task progress.
  */
-export function AgentActivityOverlay({ todos, isStreaming, request, onRespond, onDismiss }: AgentActivityOverlayProps) {
+export function AgentActivityOverlay({ todos, isStreaming, request, onRespond, planGate, onApprovePlan, onDismiss }: AgentActivityOverlayProps) {
   const { state: settings } = useSettings()
   const [isExpanded, setIsExpanded] = useState(isStreaming)
   const [dismissed, setDismissed] = useState(false)
+  const [planSent, setPlanSent] = useState(false)
   const visibleTodos = settings.showTodoActivity ? todos : []
+  const planKey = planGate
+    ? planGate.phase === 'awaiting_answers'
+      ? planGate.questions.join('\0')
+      : `${planGate.requirements}\0${planGate.plan}\0${planGate.acceptanceCriteria}`
+    : ''
 
   useEffect(() => {
     setIsExpanded(true)
   }, [request?.requestId])
 
+  useEffect(() => {
+    setPlanSent(false)
+  }, [planKey])
+
   const completedCount = useMemo(
     () => visibleTodos.filter(todo => todo.status === 'completed').length,
     [visibleTodos],
   )
-  const inProgressCount = useMemo(
-    () => visibleTodos.filter(todo => todo.status === 'in_progress').length,
+  const cancelledCount = useMemo(
+    () => visibleTodos.filter(todo => todo.status === 'cancelled').length,
     [visibleTodos],
   )
   const activeText = visibleTodos.find(todo => todo.status === 'in_progress')?.activeForm
@@ -70,9 +88,26 @@ export function AgentActivityOverlay({ todos, isStreaming, request, onRespond, o
     )
   }
 
-  if (dismissed || !shouldShowAgentActivity(settings.showTodoActivity, todos.length, false)) return null
+  if (planGate) {
+    return (
+      <div className="agent-activity agent-activity-plan">
+        <CrewCoderPlanGateCard
+          gate={planGate}
+          sent={planSent}
+          onApprove={() => {
+            if (planSent || !onApprovePlan) return
+            setPlanSent(true)
+            onApprovePlan()
+          }}
+        />
+      </div>
+    )
+  }
+
+  if (dismissed || !shouldShowAgentActivity(settings.showTodoActivity, todos.length, false, false)) return null
 
   const allComplete = completedCount === visibleTodos.length
+  const allSettled = completedCount + cancelledCount === visibleTodos.length
   const progress = Math.round((completedCount / visibleTodos.length) * 100)
 
   return (
@@ -86,12 +121,12 @@ export function AgentActivityOverlay({ todos, isStreaming, request, onRespond, o
         >
           <span className="agent-activity-title-group">
             <span className="agent-activity-icon-wrap">
-              {isStreaming && inProgressCount > 0 ? (
+              {isStreaming ? (
                 <SpinnerIcon className="agent-activity-icon spin" />
               ) : (
                 <CheckSquareIcon className="agent-activity-icon done" />
               )}
-              {(isStreaming && inProgressCount > 0) || (!isStreaming && allComplete) ? (
+              {isStreaming || (!isStreaming && allComplete) ? (
                 <span className="agent-activity-ping" />
               ) : null}
             </span>
@@ -101,7 +136,7 @@ export function AgentActivityOverlay({ todos, isStreaming, request, onRespond, o
                   agent working
                   <HourglassHighIcon className="agent-activity-hourglass" />
                 </span>
-              ) : allComplete ? 'tasks complete' : 'tasks updated'}
+              ) : allComplete ? 'tasks complete' : allSettled ? 'activity stopped' : 'tasks updated'}
             </span>
             <span className="agent-activity-count">{completedCount}/{visibleTodos.length}</span>
           </span>
@@ -172,7 +207,9 @@ interface TodoActivityItemProps {
 }
 
 function TodoActivityItem({ todo, isActive }: TodoActivityItemProps) {
-  const label = todo.status === 'in_progress' ? (todo.activeForm ?? todo.text) : todo.text
+  const label = todoDisplayLabel(todo)
+  const blocked = isBlockedTodo(todo)
+  const hints = [todo.owner ? `owner=${todo.owner}` : '', blocked ? `blockedBy=${todo.blockedBy!.join(',')}` : ''].filter(Boolean).join(' ')
 
   return (
     <div className={`agent-activity-item agent-activity-item-${todo.status} ${isActive ? 'active' : ''}`}>
@@ -186,6 +223,8 @@ function TodoActivityItem({ todo, isActive }: TodoActivityItemProps) {
             <span className="agent-activity-spinner-ping" />
             <SpinnerIcon size={16} className="spin" />
           </span>
+        ) : blocked ? (
+          <span className="agent-activity-blocked-mark">!</span>
         ) : (
           <span className="agent-activity-pending-dot-wrap">
             <CircleIcon size={16} />
@@ -193,7 +232,9 @@ function TodoActivityItem({ todo, isActive }: TodoActivityItemProps) {
           </span>
         )}
       </span>
+      {todo.displayNumber !== undefined ? <span className="agent-activity-task-number">#{todo.displayNumber}</span> : null}
       <span className="agent-activity-item-text">{label}</span>
+      {hints ? <span className="agent-activity-task-hints">{hints}</span> : null}
       {isActive ? (
         <span className="agent-activity-working-chip">
           <span className="agent-activity-working-dot" />
@@ -201,6 +242,71 @@ function TodoActivityItem({ todo, isActive }: TodoActivityItemProps) {
           <span className="agent-activity-dots"><span>.</span><span>.</span><span>.</span></span>
         </span>
       ) : null}
+    </div>
+  )
+}
+
+interface CrewCoderPlanGateCardProps {
+  gate: CrewCoderPlanGate
+  sent: boolean
+  onApprove: () => void
+}
+
+function CrewCoderPlanGateCard({ gate, sent, onApprove }: CrewCoderPlanGateCardProps) {
+  const awaitingApproval = gate.phase === 'awaiting_approval'
+
+  return (
+    <div className="agent-activity-card">
+      <div className="agent-activity-header agent-activity-request-header">
+        <span className="agent-activity-title-group">
+          <span className="agent-activity-icon-wrap">
+            {awaitingApproval ? <ListChecksIcon className="agent-activity-icon" /> : <ChatTextIcon className="agent-activity-icon" />}
+            <span className="agent-activity-ping" />
+          </span>
+          <span className="agent-activity-title">
+            {awaitingApproval ? 'Approve plan' : 'Clarification needed'}
+          </span>
+          <span className="agent-activity-count">crewcoder</span>
+        </span>
+      </div>
+      <div className="agent-activity-content agent-request-content">
+        {gate.phase === 'awaiting_answers' ? (
+          <>
+            <ol className="agent-plan-questions">
+              {gate.questions.map((question, index) => (
+                <li key={`${index}-${question}`}>{question}</li>
+              ))}
+            </ol>
+            <div className="agent-plan-hint">Reply in the composer. Answering a question is not plan approval.</div>
+          </>
+        ) : (
+          <>
+            <PlanSection label="requirements" text={gate.requirements} />
+            <PlanSection label="plan" text={gate.plan} />
+            <PlanSection label="acceptance" text={gate.acceptanceCriteria} />
+            <div className="agent-plan-hint">Approve this plan, or describe revisions in the composer.</div>
+            <div className="agent-request-actions">
+              <button
+                type="button"
+                className="agent-request-btn primary"
+                disabled={sent}
+                onClick={onApprove}
+              >
+                {sent ? 'approving…' : 'approve plan'}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function PlanSection({ label, text }: { label: string; text: string }) {
+  return (
+    <div className="agent-plan-section">
+      <div className="agent-plan-section-label">{label}</div>
+      <pre className="agent-request-detail">{text}</pre>
     </div>
   )
 }

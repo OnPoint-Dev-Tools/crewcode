@@ -10,6 +10,7 @@ interface ServeOptions {
   dataDir: string
   webRoot?: string
   allowedWorkspaceRoots?: string[]
+  publicOrigins?: string[]
 }
 
 function usage(): string {
@@ -24,6 +25,7 @@ Options:
   --data-dir <path>  Server state directory (default: ~/.crewcode)
   --web-root <path>  Built renderer directory
   --workspace-root <path>  Allow browser projects under this host directory (repeatable; default: home)
+  --public-origin <url>  Allow an exact browser origin behind a reverse proxy (repeatable)
   --help             Show this help
 
 Examples:
@@ -41,6 +43,15 @@ function valueAfter(argv: string[], index: number, flag: string): string {
   return value
 }
 
+function exactPublicOrigin(value: string): string {
+  let url: URL
+  try { url = new URL(value) } catch { throw new Error(`invalid public origin: ${value}`) }
+  if ((url.protocol !== 'http:' && url.protocol !== 'https:') || url.username || url.password || url.pathname !== '/' || url.search || url.hash) {
+    throw new Error(`invalid public origin: ${value}`)
+  }
+  return url.origin
+}
+
 export function parseServeOptions(argv: string[], cwd = process.cwd()): ServeOptions | { help: true } {
   const args = argv[0] === 'serve' ? argv.slice(1) : argv
   if (args.includes('--help') || args.includes('-h')) return { help: true }
@@ -49,6 +60,7 @@ export function parseServeOptions(argv: string[], cwd = process.cwd()): ServeOpt
   let dataDir = join(homedir(), '.crewcode')
   let webRoot: string | undefined
   const allowedWorkspaceRoots: string[] = []
+  const publicOrigins: string[] = []
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]
     if (arg === '--host') host = valueAfter(args, index++, arg)
@@ -59,9 +71,17 @@ export function parseServeOptions(argv: string[], cwd = process.cwd()): ServeOpt
     } else if (arg === '--data-dir') dataDir = resolve(cwd, valueAfter(args, index++, arg))
     else if (arg === '--web-root') webRoot = resolve(cwd, valueAfter(args, index++, arg))
     else if (arg === '--workspace-root') allowedWorkspaceRoots.push(resolve(cwd, valueAfter(args, index++, arg)))
+    else if (arg === '--public-origin') publicOrigins.push(exactPublicOrigin(valueAfter(args, index++, arg)))
     else throw new Error(`unknown option: ${arg}`)
   }
-  return { host, port, dataDir, webRoot, allowedWorkspaceRoots: allowedWorkspaceRoots.length ? allowedWorkspaceRoots : undefined }
+  return {
+    host,
+    port,
+    dataDir,
+    webRoot,
+    allowedWorkspaceRoots: allowedWorkspaceRoots.length ? allowedWorkspaceRoots : undefined,
+    publicOrigins: publicOrigins.length ? publicOrigins : undefined,
+  }
 }
 
 function defaultWebRoot(): string | undefined {

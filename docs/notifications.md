@@ -501,3 +501,16 @@ Ensure `duration` is set to a positive number. A duration of `0` disables the pr
 ### Too Many Notifications
 
 The system caps at 5 stored notifications and displays only the top 3. Older notifications are automatically dropped. If you need to show more, consider consolidating messages or using a different UI pattern (e.g., a dedicated status panel).
+
+## YuHeard — terminal-pane agent alerts
+
+YuHeard is a **separate channel** from the native OS notifications
+triggered by **chat** bridge turn-end. A terminal-agent `complete`
+plays knock, shows an in-app toast, and (when the window is unfocused)
+an OS notification titled "Terminal agent finished". Chat completions
+must not play the YuHeard knock — they keep Desktop notifications +
+Notification sound.
+
+See [`docs/yuheard.md`](./yuheard.md) for the protocol, the
+`bin/yuheard` CLI, the auto-wrap behavior, PTY idle/BEL fallback, and
+the privacy model.
