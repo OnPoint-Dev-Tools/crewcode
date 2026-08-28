@@ -95,114 +95,43 @@ export function CanvasMode({ workspaceName, openChatCount, openTerminalCount, pa
         </div>
       ) : (
         <div className="canvas-mode-pane-grid">
-          {panes.map(pane => {
-            const isChat = pane.kind === 'chat'
-            const menuOpen = paneMenuId === pane.id
-            return (
-              <article key={pane.id} className={`canvas-mode-pane canvas-pane-${pane.kind}`}>
-                <div className="canvas-mode-pane-bar">
-                  <span className="canvas-mode-pane-title"><Icon name={isChat ? 'threads' : 'terminal'} size={12} /> {pane.title}</span>
-                  {isMobile ? (
-                    // Phone: collapse the action cluster into a single
-                    // overflow button. The popover carries prompt toggle,
-                    // verbose-log toggle, and close. Add chat / Add terminal
-                    // live on the page-level FAB.
-                    <div className="canvas-mode-pane-menu" ref={paneMenuRef}>
-                      <button
-                        type="button"
-                        className="canvas-mode-pane-more"
-                        aria-haspopup="menu"
-                        aria-expanded={menuOpen}
-                        aria-label={`More actions for ${pane.title}`}
-                        onClick={() => setPaneMenuId(menuOpen ? null : pane.id)}
-                      >
-                        <Icon name="more" size={14} />
-                      </button>
-                      {menuOpen && (
-                        <div className="canvas-mode-pane-menu-pop" role="menu">
-                          {isChat && pane.modePrompt && (
-                            <button
-                              type="button"
-                              role="menuitem"
-                              className="canvas-mode-pane-menu-item"
-                              onClick={() => { pane.modePrompt!.onToggle(); setPaneMenuId(null) }}
-                              disabled={pane.modePrompt.locked}
-                            >
-                              <Icon name="bot" size={13} />
-                              <span className="lbl">Mode prompt</span>
-                              <span className={`canvas-mode-pane-toggle-track ${pane.modePrompt.enabled ? 'on' : ''}`} aria-hidden>
-                                <span className="canvas-mode-pane-toggle-thumb" />
-                              </span>
-                            </button>
-                          )}
-                          {isChat && (
-                            <button
-                              type="button"
-                              role="menuitem"
-                              className="canvas-mode-pane-menu-item"
-                              onClick={() => { setSetting('hideVerboseAgentLogs', !settings.hideVerboseAgentLogs); setPaneMenuId(null) }}
-                            >
-                              <Icon name={settings.hideVerboseAgentLogs ? 'eyeOff' : 'eye'} size={13} />
-                              <span className="lbl">{settings.hideVerboseAgentLogs ? 'Show logs' : 'Hide logs'}</span>
-                            </button>
-                          )}
-                          <button
-                            type="button"
-                            role="menuitem"
-                            className="canvas-mode-pane-menu-item danger"
-                            onClick={() => { onClosePane?.(pane.id); setPaneMenuId(null) }}
-                          >
-                            <Icon name="x" size={13} />
-                            <span className="lbl">Close pane</span>
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    // Desktop: keep the full inline cluster (mode prompt,
-                    // logs toggle, Add chat, Add terminal, close).
-                    <div className="canvas-mode-pane-actions">
-                      {isChat && pane.modePrompt && (
-                        <button
-                          type="button"
-                          className={`canvas-mode-pane-log canvas-mode-pane-prompt ${pane.modePrompt.enabled ? 'on' : ''}`}
-                          onClick={pane.modePrompt.onToggle}
-                          title={pane.modePrompt.locked
-                            ? `Mode prompt ${pane.modePrompt.enabled ? 'was enabled' : 'was disabled'} when this session started`
-                            : pane.modePrompt.enabled
-                              ? 'CrewCode mode prompt on — click to use only provider context for this session'
-                              : 'CrewCode mode prompt off — click to add mode guidance for this session'}
-                          aria-label="Inject CrewCode mode prompt for this Workbench chat"
-                          aria-pressed={pane.modePrompt.enabled}
-                          disabled={pane.modePrompt.locked}
-                        >
-                          <Icon name="bot" size={12} />
-                          <span>prompt</span>
-                          <span className="canvas-mode-pane-toggle-track" aria-hidden>
-                            <span className="canvas-mode-pane-toggle-thumb" />
-                          </span>
-                        </button>
-                      )}
-                      {isChat && (
-                        <button
-                          type="button"
-                          className={`canvas-mode-pane-log ${settings.hideVerboseAgentLogs ? 'on' : ''}`}
-                          onClick={() => setSetting('hideVerboseAgentLogs', !settings.hideVerboseAgentLogs)}
-                          title={settings.hideVerboseAgentLogs ? 'Show thinking and tool logs' : 'Hide thinking and tool logs'}
-                          aria-pressed={settings.hideVerboseAgentLogs}
-                        >
-                          <Icon name={settings.hideVerboseAgentLogs ? 'eyeOff' : 'eye'} size={12} />
-                          <span>{settings.hideVerboseAgentLogs ? 'replies' : 'logs'}</span>
-                        </button>
-                      )}
-                      <button type="button" className="canvas-mode-button" onClick={onNewChat}>
-                        <Icon name="threads" size={13} /> Add chat
-                      </button>
-                      <button type="button" className="canvas-mode-button" onClick={onNewTerminal}>
-                        <Icon name="terminal" size={13} /> Add terminal
-                      </button>
-                      <button type="button" className="canvas-mode-pane-close" onClick={() => onClosePane?.(pane.id)} aria-label={`Close ${pane.title}`}>×</button>
-                    </div>
+          {panes.map(pane => (
+            <article key={pane.id} className={`canvas-mode-pane canvas-pane-${pane.kind}`}>
+              <div className="canvas-mode-pane-bar">
+                <span className="canvas-mode-pane-title"><Icon name={pane.kind === 'terminal' ? 'terminal' : 'threads'} size={12} /> {pane.title}</span>
+                <div className="canvas-mode-pane-actions">
+                  {pane.kind === 'chat' && pane.modePrompt && (
+                    <button
+                      type="button"
+                      className={`canvas-mode-pane-log canvas-mode-pane-prompt ${pane.modePrompt.enabled ? 'on' : ''}`}
+                      onClick={pane.modePrompt.onToggle}
+                      title={pane.modePrompt.locked
+                        ? `Mode prompt ${pane.modePrompt.enabled ? 'was enabled' : 'was disabled'} when this session started`
+                        : pane.modePrompt.enabled
+                          ? 'CrewCode mode prompt on — click to use only provider context for this session'
+                          : 'CrewCode mode prompt off — click to add mode guidance for this session'}
+                      aria-label="Inject CrewCode mode prompt for this Workbench chat"
+                      aria-pressed={pane.modePrompt.enabled}
+                      disabled={pane.modePrompt.locked}
+                    >
+                      <Icon name="bot" size={12} />
+                      <span>prompt</span>
+                      <span className="canvas-mode-pane-toggle-track" aria-hidden>
+                        <span className="canvas-mode-pane-toggle-thumb" />
+                      </span>
+                    </button>
+                  )}
+                  {pane.kind === 'chat' && (
+                    <button
+                      type="button"
+                      className={`canvas-mode-pane-log ${settings.hideVerboseAgentLogs ? 'on' : ''}`}
+                      onClick={() => setSetting('hideVerboseAgentLogs', !settings.hideVerboseAgentLogs)}
+                      title={settings.hideVerboseAgentLogs ? 'Show thinking and tool logs' : 'Hide thinking and tool logs'}
+                      aria-pressed={settings.hideVerboseAgentLogs}
+                    >
+                      <Icon name={settings.hideVerboseAgentLogs ? 'eyeOff' : 'eye'} size={12} />
+                      <span>{settings.hideVerboseAgentLogs ? 'replies' : 'logs'}</span>
+                    </button>
                   )}
                 </div>
                 <div className="canvas-mode-pane-body">{pane.content}</div>
