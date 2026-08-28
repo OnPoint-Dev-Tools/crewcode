@@ -22,6 +22,7 @@ export function useMobileLayout() {
   const [layout, setLayout] = useState(readViewport)
 
   useEffect(() => {
+    if (typeof window === 'undefined') return
     const check = () => setLayout(readViewport())
     check()
     window.addEventListener('resize', check)

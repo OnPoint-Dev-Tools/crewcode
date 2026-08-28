@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest'
 const app = readFileSync(fileURLToPath(new URL('../../App.tsx', import.meta.url)), 'utf8')
 const drawer = readFileSync(fileURLToPath(new URL('./WorkspacesDrawer.tsx', import.meta.url)), 'utf8')
 const styles = readFileSync(fileURLToPath(new URL('../../styles/styles.css', import.meta.url)), 'utf8')
-const mobileStyles = styles.slice(styles.indexOf('@media (max-width: 768px)'))
+const mobileStyles = styles.slice(styles.indexOf('/* ── Mobile web shell'))
 const mobileDrawerStyles = mobileStyles.slice(
   mobileStyles.indexOf('.app-region.drawer-left'),
   mobileStyles.indexOf('.main {'),

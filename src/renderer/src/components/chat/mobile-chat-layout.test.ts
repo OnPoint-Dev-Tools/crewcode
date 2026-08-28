@@ -35,6 +35,8 @@ describe('mobile solo chat layout', () => {
 
   it('keeps embedded terminal and Git side panes out of the solo-chat column', () => {
     expect(styles).toContain('.main > .termcol-outer,')
-    expect(styles).toContain('.chat-pane-row > .gs { display: none !important; }')
+    expect(styles).toContain('.main > .splitter { display: none !important; }')
+    expect(styles).toContain('.chat-pane-row > .gs,')
+    expect(styles).toContain('.mobile-git-backdrop,')
   })
 })
