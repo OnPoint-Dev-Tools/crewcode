@@ -1,7 +1,7 @@
 {
    "name": "crewcode",
    "version": "0.2.1",
-   "description": "Desktop ACE for orchestrating AI coding agents In a elegant Chat UI across local project worktrees.",
+   "description": "CrewCode is the control center for multi-agent software development.",
    "author": {
       "name": "OnPoint Tools",
       "email": "Logix_Creations.Work@proton.me"
