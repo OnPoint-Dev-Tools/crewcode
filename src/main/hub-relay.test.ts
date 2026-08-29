@@ -8,7 +8,7 @@ import {
   hkdfSync,
   verify,
 } from 'crypto'
-import { mkdtempSync, readFileSync, rmSync } from 'fs'
+import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'fs'
 import { createServer } from 'http'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -26,8 +26,10 @@ const cleanups: Array<() => void | Promise<void>> = []
 afterEach(async () => { while (cleanups.length) await cleanups.pop()?.() })
 
 function directory(): string {
-  const value = mkdtempSync(join(tmpdir(), 'crewcode-hub-relay-'))
-  cleanups.push(() => rmSync(value, { recursive: true, force: true }))
+  const value = realpathSync(mkdtempSync(join(tmpdir(), 'crewcode-hub-relay-')))
+  cleanups.push(() => {
+    try { rmSync(value, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 }) } catch { /* Windows may keep SQLite/PTY handles briefly */ }
+  })
   return value
 }
 

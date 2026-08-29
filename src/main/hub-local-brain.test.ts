@@ -1,7 +1,7 @@
 import { EventEmitter } from 'events'
 import { mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
-import { join } from 'path'
+import { dirname, join } from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
 import type { ChildProcess } from 'child_process'
 import {
@@ -51,13 +51,14 @@ describe('local Brain Hub origin matching', () => {
 
 describe('local Brain spawn plan', () => {
   it('spawns sibling brain.js from a compiled Hub entry', () => {
+    const scriptPath = '/opt/crewcode/out/main/hub.js'
     expect(localBrainSpawnPlan({
       execPath: '/usr/bin/node',
-      scriptPath: '/opt/crewcode/out/main/hub.js',
+      scriptPath,
       brainArgv: ['--data-dir', '/brain'],
     })).toEqual({
       execPath: '/usr/bin/node',
-      args: ['/opt/crewcode/out/main/brain.js', '--data-dir', '/brain'],
+      args: [join(dirname(scriptPath), 'brain.js'), '--data-dir', '/brain'],
     })
   })
 
@@ -193,7 +194,7 @@ describe('local Brain supervisor', () => {
       warn: () => undefined,
     })
     await ready
-    expect(spawned[0]?.[0]).toBe('/opt/crewcode/out/main/brain.js')
+    expect(spawned[0]?.[0]).toBe(join(dirname('/opt/crewcode/out/main/hub.js'), 'brain.js'))
     await supervisor.stop()
     expect(child.killed).toBe(true)
   })

@@ -5,7 +5,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, readFileSync, existsSync, statSync, rmSync, utimesSync, readdirSync } from 'fs'
 import { tmpdir } from 'os'
-import { join } from 'path'
+import { delimiter, join } from 'path'
 import {
   installYuHeardWrapper,
   installYuHeardHook,
@@ -36,8 +36,10 @@ describe('installYuHeardWrapper', () => {
     expect(dir).toBe(join(baseDir, 'pn-1'))
     expect(existsSync(join(dir, 'claude'))).toBe(true)
     expect(existsSync(join(dir, 'codex'))).toBe(true)
-    const st = statSync(join(dir, 'claude'))
-    expect((st.mode & 0o100) !== 0).toBe(true)
+    if (process.platform !== 'win32') {
+      const st = statSync(join(dir, 'claude'))
+      expect((st.mode & 0o100) !== 0).toBe(true)
+    }
   })
 
   it('embeds the socket path in the hook and does not call yuheard on PATH', () => {
@@ -188,7 +190,8 @@ describe('pruneYuHeardWrappers', () => {
 
 describe('prependWrapperToPath', () => {
   it('prepends the wrapper dir to an existing PATH', () => {
-    expect(prependWrapperToPath('/wrappers/pn-1', '/usr/bin:/bin')).toBe('/wrappers/pn-1:/usr/bin:/bin')
+    const current = ['/usr/bin', '/bin'].join(delimiter)
+    expect(prependWrapperToPath('/wrappers/pn-1', current)).toBe(['/wrappers/pn-1', '/usr/bin', '/bin'].join(delimiter))
   })
 
   it('handles an empty PATH gracefully', () => {

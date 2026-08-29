@@ -1,7 +1,7 @@
 import { generateKeyPairSync } from 'crypto'
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
-import { join } from 'path'
+import { join, resolve } from 'path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   HubDeviceEnrollmentIssuer,
@@ -64,7 +64,7 @@ describe('Hub machine client security', () => {
     expect(() => parseBrainOptions([], 'enroll')).toThrow('requires --hub')
     expect(parseBrainOptions([], 'brain')).toMatchObject({ name: expect.any(String), allowedScopes: [], allowedWorkspaceRoots: [] })
     expect(parseBrainOptions(['--workspace-root', '.', '--allow-scope', 'workspace:read', '--allow-scope', 'agent'], 'brain', '/tmp')).toMatchObject({
-      allowedWorkspaceRoots: ['/tmp'], allowedScopes: ['workspace:read', 'agent'],
+      allowedWorkspaceRoots: [resolve('/tmp', '.')], allowedScopes: ['workspace:read', 'agent'],
     })
     expect(() => parseBrainOptions(['--allow-scope', 'everything'], 'brain')).toThrow('invalid Brain scope')
   })

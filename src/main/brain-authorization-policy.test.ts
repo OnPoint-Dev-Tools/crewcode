@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, statSync } from 'fs'
+import { mkdirSync, mkdtempSync, realpathSync, statSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { describe, expect, it } from 'vitest'
@@ -7,12 +7,13 @@ import { BrainAuthorizationPolicy, brainAuthorizationPolicyPath } from './brain-
 describe('Brain authorization policy', () => {
   it('persists canonical roots, scopes, and local audit across restart', () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'brain-policy-')); const root = join(dataDir, 'workspace'); mkdirSync(root)
+    const canonicalRoot = realpathSync(root)
     let now = 100; const path = brainAuthorizationPolicyPath(dataDir)
     const policy = new BrainAuthorizationPolicy(path, [root], ['workspace:read'], () => now)
     now = 200
     const updated = policy.update({ roots: [root], scopes: ['agent', 'workspace:read'], userId: 'owner' })
-    expect(updated).toMatchObject({ scopes: ['agent', 'workspace:read'], roots: [root], audit: [{ userId: 'owner', at: 200 }] })
-    expect(statSync(path).mode & 0o777).toBe(0o600)
+    expect(updated).toMatchObject({ scopes: ['agent', 'workspace:read'], roots: [canonicalRoot], audit: [{ userId: 'owner', at: 200 }] })
+    if (process.platform !== 'win32') expect(statSync(path).mode & 0o777).toBe(0o600)
     expect(new BrainAuthorizationPolicy(path, [], [], () => 300).current()).toEqual(updated)
   })
   it('rejects invalid policy', () => {

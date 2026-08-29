@@ -1,3 +1,6 @@
+import { mkdtempSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
@@ -46,11 +49,14 @@ function fakeProc() {
 }
 
 describe('PtyService YuHeard bundle boundary', () => {
+  let cwd: string
+
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.spawn.mockReturnValue(fakeProc())
     mocks.installWrapper.mockReturnValue('/tmp/crewcode-yuheard-wrap/pane-1')
     mocks.fishArgv.mockReturnValue(['-C', 'yuheard-init'])
+    cwd = mkdtempSync(join(tmpdir(), 'pty-yuheard-'))
   })
 
   it('uses injected server access and statically imported wrappers for a Fish shell', () => {
@@ -68,7 +74,7 @@ describe('PtyService YuHeard bundle boundary', () => {
 
     const result = service.create({
       paneId: 'pane-1',
-      cwd: '/tmp',
+      cwd,
       shell: 'fish',
       yuheard: true,
       autoWrap: true,
@@ -76,7 +82,7 @@ describe('PtyService YuHeard bundle boundary', () => {
     })
 
     expect(result.ok).toBe(true)
-    expect(notePaneSpawned).toHaveBeenCalledWith('pane-1', '/tmp')
+    expect(notePaneSpawned).toHaveBeenCalledWith('pane-1', cwd)
     expect(mocks.installWrapper).toHaveBeenCalledWith(
       'pane-1',
       ['codex', 'claude'],
@@ -121,7 +127,7 @@ describe('PtyService YuHeard bundle boundary', () => {
     const service = new PtyService(() => server)
     service.create({
       paneId: 'pane-1',
-      cwd: '/tmp',
+      cwd,
       shell: 'fish',
       yuheard: true,
       autoWrap: true,
@@ -158,7 +164,7 @@ describe('PtyService YuHeard bundle boundary', () => {
     const service = new PtyService(() => server)
     service.create({
       paneId: 'pane-1',
-      cwd: '/tmp',
+      cwd,
       shell: 'fish',
       yuheard: true,
       autoWrap: true,
