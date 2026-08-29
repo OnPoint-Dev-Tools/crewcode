@@ -107,7 +107,7 @@ export function CanvasMode({ workspaceName, openChatCount, openTerminalCount, pa
                     // overflow button. The popover carries prompt toggle,
                     // verbose-log toggle, and close. Add chat / Add terminal
                     // live on the page-level FAB.
-                    <div className="canvas-mode-pane-menu" ref={paneMenuRef}>
+                    <div className="canvas-mode-pane-menu" ref={menuOpen ? paneMenuRef : undefined}>
                       <button
                         type="button"
                         className="canvas-mode-pane-more"
