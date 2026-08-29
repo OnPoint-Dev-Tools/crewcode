@@ -12,6 +12,16 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('node-pty', () => ({ spawn: mocks.spawn }))
+vi.mock('fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('fs')>()
+  return {
+    ...actual,
+    // GitHub runners do not install Fish. Keep shell discovery out of this
+    // file: pretend the first POSIX candidate exists so spawn stays Fish.
+    existsSync: (p: Parameters<typeof actual.existsSync>[0]) =>
+      String(p) === '/usr/bin/fish' || actual.existsSync(p),
+  }
+})
 vi.mock('./yuheard-wrapper', () => ({
   bashKeepWrapPrompt: vi.fn((dir: string) => `PATH=${dir}:$PATH`),
   codexNotifyArgv: vi.fn(() => ['-c', 'notify=[]']),
