@@ -4995,6 +4995,7 @@ body.light .ncp-start svg { color: #285a48; }
 /* ─── File tree: drag and drop ──────────────────────────────────────────── */
 .ft-row[draggable] { cursor: pointer; }
 .ft-drag-ghost { opacity: 0.4; }
+.ft-cut { opacity: 0.45; }
 .ft-drop-target {
   background: rgba(40, 90, 72, 0.35) !important;
   outline: 1px solid #285a48;
@@ -5044,6 +5045,15 @@ body.light .ncp-start svg { color: #285a48; }
 .ft-ctx-item.danger svg { opacity: 0.7; }
 .ft-ctx-item.danger:hover { background: rgba(192,60,60,.12); color: #e07070; }
 .ft-ctx-item.danger:hover svg { opacity: 1; }
+.ft-ctx-item:disabled {
+  opacity: 0.4;
+  cursor: default;
+  pointer-events: none;
+}
+.ft-ctx-item:disabled:hover {
+  background: transparent;
+  color: var(--muted-foreground, #7a9a8a);
+}
 .ft-ctx-sep {
   height: 1px;
   background: #1e3030;

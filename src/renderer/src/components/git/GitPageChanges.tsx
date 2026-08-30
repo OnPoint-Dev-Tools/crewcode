@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type MouseEvent } from 'react'
 import { Icon } from '../ui/Icon'
+import { ChatContextMenu, type ChatContextMenuItem } from '../chat/ChatContextMenu'
 import { PierreDiff } from '../diff/PierreDiff'
 import type { GitChange } from './git-state'
 import { getCrewCodeClient } from '../../runtime/crewcode-client'
@@ -13,6 +14,7 @@ interface GitPageChangesProps {
   onUnstage?: (path: string) => void
   onStageAll?: (paths: string[]) => void
   onUnstageAll?: (paths: string[]) => void
+  onDiscard?: (path: string) => void
 }
 
 interface SelectedChange {
@@ -21,15 +23,16 @@ interface SelectedChange {
   title: string
 }
 
-function ChangeRow({ change, selected, onSelect, onStage, onUnstage }: {
+function ChangeRow({ change, selected, onSelect, onStage, onUnstage, onContextMenu }: {
   change: GitChange
   selected: boolean
   onSelect: () => void
   onStage?: (path: string) => void
   onUnstage?: (path: string) => void
+  onContextMenu: (event: MouseEvent, change: GitChange) => void
 }) {
   return (
-    <button type="button" className={`git-page-change ${change.staged ? 'staged' : ''} ${selected ? 'on' : ''}`} onClick={onSelect}>
+    <button type="button" className={`git-page-change ${change.staged ? 'staged' : ''} ${selected ? 'on' : ''}`} onClick={onSelect} onContextMenu={event => onContextMenu(event, change)}>
       <span className={`gs-file-status ${change.status}`}>{change.status}</span>
       <span className="git-page-change-path"><b>{change.name}</b><span>{change.dir}</span></span>
       <span className="gs-file-diff">
@@ -58,11 +61,12 @@ function ChangeRow({ change, selected, onSelect, onStage, onUnstage }: {
   )
 }
 
-export function GitPageChanges({ repoPath, comparisonRef, changes, hasUnpushed, onStage, onUnstage, onStageAll, onUnstageAll }: GitPageChangesProps) {
+export function GitPageChanges({ repoPath, comparisonRef, changes, hasUnpushed, onStage, onUnstage, onStageAll, onUnstageAll, onDiscard }: GitPageChangesProps) {
   const staged = useMemo(() => changes.filter(change => change.staged), [changes])
   const unstaged = useMemo(() => changes.filter(change => !change.staged), [changes])
   const [selected, setSelected] = useState<SelectedChange | null>(null)
   const [diff, setDiff] = useState<{ loading: boolean; patch: string; error?: string }>({ loading: false, patch: '' })
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; change: GitChange } | null>(null)
 
   useEffect(() => {
     const current = selected
@@ -112,6 +116,28 @@ export function GitPageChanges({ repoPath, comparisonRef, changes, hasUnpushed, 
     })
   }
 
+  const openContextMenu = (event: MouseEvent, change: GitChange) => {
+    event.preventDefault()
+    select(change)
+    setContextMenu({ x: event.clientX, y: event.clientY, change })
+  }
+  const runContextAction = (id: string) => {
+    const change = contextMenu?.change
+    if (!change) return
+    if (id === 'stage') onStage?.(change.path)
+    else if (id === 'stage-all') {
+      const paths = unstaged.filter(file => file.stageable !== false).map(file => file.path)
+      if (paths.length) onStageAll ? onStageAll(paths) : paths.forEach(path => onStage?.(path))
+    } else if (id === 'unstage') onUnstage?.(change.path)
+    else if (id === 'discard' && window.confirm(`Discard changes to ${change.path}? This cannot be undone.`)) onDiscard?.(change.path)
+  }
+  const contextItems: ChatContextMenuItem[] = [
+    { id: 'stage', label: 'stage changes', icon: 'plus', disabled: contextMenu?.change.staged || contextMenu?.change.stageable === false },
+    { id: 'stage-all', label: 'stage all changes', icon: 'plus', disabled: !unstaged.some(change => change.stageable !== false) },
+    { id: 'unstage', label: 'unstage changes', icon: 'undo', disabled: !contextMenu?.change.staged },
+    { id: 'discard', label: 'discard changes', icon: 'trash', disabled: !onDiscard },
+  ]
+
   return (
     <section className="git-page-changes" aria-label="Changed files">
       <div className="git-page-changes-list">
@@ -125,7 +151,7 @@ export function GitPageChanges({ repoPath, comparisonRef, changes, hasUnpushed, 
         {staged.length > 0 && (
           <div className="git-page-change-group">
             <div className="gs-section-head">Staged · {staged.length}<button className="stage-toggle" onClick={() => onUnstageAll ? onUnstageAll(staged.map(c => c.path)) : staged.forEach(change => onUnstage?.(change.path))}>unstage all</button></div>
-            {staged.map(change => <ChangeRow key={`s-${change.path}`} change={change} selected={selected?.path === change.path && selected.staged} onSelect={() => select(change)} onStage={onStage} onUnstage={onUnstage} />)}
+            {staged.map(change => <ChangeRow key={`s-${change.path}`} change={change} selected={selected?.path === change.path && selected.staged} onSelect={() => select(change)} onStage={onStage} onUnstage={onUnstage} onContextMenu={openContextMenu} />)}
           </div>
         )}
         {unstaged.length > 0 && (
@@ -139,7 +165,7 @@ export function GitPageChanges({ repoPath, comparisonRef, changes, hasUnpushed, 
                 }}>stage all</button>
               )}
             </div>
-            {unstaged.map(change => <ChangeRow key={`u-${change.path}`} change={change} selected={selected?.path === change.path && !selected.staged} onSelect={() => select(change)} onStage={onStage} onUnstage={onUnstage} />)}
+            {unstaged.map(change => <ChangeRow key={`u-${change.path}`} change={change} selected={selected?.path === change.path && !selected.staged} onSelect={() => select(change)} onStage={onStage} onUnstage={onUnstage} onContextMenu={openContextMenu} />)}
           </div>
         )}
         {changes.length === 0 && (
@@ -148,6 +174,7 @@ export function GitPageChanges({ repoPath, comparisonRef, changes, hasUnpushed, 
           </div>
         )}
       </div>
+      {contextMenu && <ChatContextMenu x={contextMenu.x} y={contextMenu.y} items={contextItems} onPick={runContextAction} onClose={() => setContextMenu(null)} />}
       <div className="git-page-diff-pane">
         <div className="git-page-diff-head">
           <span>{selected?.title ?? 'No file selected'}</span>

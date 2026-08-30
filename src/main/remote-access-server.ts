@@ -328,6 +328,12 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
     ['fs.mkdir', params => filesystemService.mkdir(registeredRoot(params), String(params.sub ?? ''))],
     ['fs.delete', params => filesystemService.delete(registeredRoot(params), String(params.sub ?? ''))],
     ['fs.rename', params => filesystemService.rename(registeredRoot(params), String(params.sub ?? ''), String(params.newName ?? ''))],
+    ['fs.copyFile', params => filesystemService.copyFile(
+      registeredRoot(params),
+      String(params.sub ?? ''),
+      Object.prototype.hasOwnProperty.call(params, 'destDirRel') ? String(params.destDirRel ?? '') : undefined,
+    )],
+    ['fs.move', params => filesystemService.move(registeredRoot(params), String(params.srcRel ?? ''), String(params.destDirRel ?? ''))],
     ['fs.listFiles', params => filesystemService.listFiles(registeredRoot(params))],
     ['attachments.begin', params => {
       if (attachmentUploads.size >= MAX_ACTIVE_ATTACHMENT_UPLOADS) throw new Error('too many active attachment uploads')
@@ -407,6 +413,7 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
     ['git.stage', params => gitService.stage(registeredRoot({ root: params.cwd }), Array.isArray(params.paths) ? params.paths.map(String) : [])],
     ['git.stageAll', params => gitService.stageAll(registeredRoot({ root: params.cwd }))],
     ['git.unstage', params => gitService.unstage(registeredRoot({ root: params.cwd }), Array.isArray(params.paths) ? params.paths.map(String) : [])],
+    ['git.discard', params => gitService.discard(registeredRoot({ root: params.cwd }), String(params.path ?? ''))],
     ['git.diff', params => gitService.diff(registeredRoot({ root: params.cwd }), String(params.path ?? ''), params.staged === true)],
     ['git.changesVsRef', params => gitService.changesVsRef(registeredRoot({ root: params.cwd }), String(params.ref ?? ''))],
     ['git.diffVsRef', params => gitService.diffVsRef(registeredRoot({ root: params.cwd }), String(params.ref ?? ''), String(params.path ?? ''))],

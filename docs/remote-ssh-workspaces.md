@@ -61,6 +61,11 @@ the connection** (possible MITM or server rekey).
 | Code intelligence | the TypeScript language server is launched **on the remote**; the remote host must have `typescript` and `typescript-language-server` installed — CrewCode does not install them |
 | Writer file watching | bounded polling (remote filesystem events are unavailable) |
 
+CrewCode advertises ACP text-file methods for both local and remote CrewCoder
+sessions. Remote custody is negotiated separately through explicit initialize
+metadata; the presence of file methods alone does not disable provider-native
+tools or reject providers in an ordinary local chat.
+
 ## Limitations
 
 - Plugins are denied access to remote workspaces (plugin API v0 is local-only).

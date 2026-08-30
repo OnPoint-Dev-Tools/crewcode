@@ -187,20 +187,44 @@ export async function remoteRename(root: string, sub: string, newName: string): 
   })
 }
 
-export async function remoteCopyFile(root: string, sub: string): Promise<{ ok?: boolean; rel?: string; error?: string }> {
+export async function remoteCopyFile(root: string, sub: string, destDirRel?: string): Promise<{ ok?: boolean; rel?: string; error?: string }> {
   const t = target(root); if ('error' in t) return t
   const r = resolveRemote(t, sub); if ('error' in r) return r
+  if (!sub) return { error: 'path missing' }
+
+  const destDirResolved = destDirRel === undefined
+    ? { abs: posix.dirname(r.abs) }
+    : resolveRemote(t, destDirRel || '')
+  if ('error' in destDirResolved) return destDirResolved
 
   let sftp: SFTPWrapper
   try { sftp = await getSftp(t) } catch (e) { return { error: connErr(e) } }
+  const srcStat = await statRemote(sftp, r.abs)
+  if (!srcStat) return { error: 'path missing' }
+  const destDirStat = await statRemote(sftp, destDirResolved.abs)
+  if (!destDirStat) return { error: 'destination missing' }
+  if (!destDirStat.isDirectory()) return { error: 'destination is not a directory' }
 
-  const ext  = posix.extname(r.abs)
-  const stem = posix.basename(r.abs, ext)
-  const dir  = posix.dirname(r.abs)
-  let dest = posix.join(dir, `${stem} copy${ext}`)
-  let n = 2
-  while (await statRemote(sftp, dest)) { dest = posix.join(dir, `${stem} copy ${n}${ext}`); n++ }
+  if (srcStat.isDirectory()) {
+    const destAbs = destDirResolved.abs
+    if (destAbs === r.abs || destAbs.startsWith(`${r.abs}/`)) {
+      return { error: 'cannot copy a folder into itself' }
+    }
+  }
 
+  const original = posix.basename(r.abs)
+  const ext = posix.extname(original)
+  const stem = posix.basename(original, ext)
+  let name = original
+  let n = 1
+  while (await statRemote(sftp, posix.join(destDirResolved.abs, name))) {
+    name = n === 1 ? `${stem} copy${ext}` : `${stem} copy ${n}${ext}`
+    n++
+    if (n > 10_000) return { error: 'too many copies' }
+  }
+
+  const dest = posix.join(destDirResolved.abs, name)
+  const safe = resolveRemote(t, posix.relative(t.path, dest)); if ('error' in safe) return safe
   const res = await execRemote(t, `cp -R ${sh(r.abs)} ${sh(dest)}`).catch(e => ({ code: 1, stdout: '', stderr: connErr(e) }))
   return res.code === 0 ? { ok: true, rel: posix.relative(t.path, dest) } : { error: res.stderr.trim() || 'copy failed' }
 }

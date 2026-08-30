@@ -398,6 +398,20 @@ function splitModel(model: string | undefined): { provider?: string; model?: str
   return { provider: value.slice(0, separator), model: value.slice(separator + 1) }
 }
 
+export function crewCoderInitializeParams(remote: boolean): Record<string, unknown> {
+  return {
+    protocolVersion: 1,
+    clientCapabilities: {
+      fs: { readTextFile: true, writeTextFile: true },
+      terminal: false,
+    },
+    // File capabilities are advertised for local chats too. Keep virtual
+    // custody as a separate, explicit signal so providers are restricted only
+    // when those methods proxy a filesystem outside the agent process host.
+    _meta: { 'crewcode/virtualFilesystem': remote },
+  }
+}
+
 export async function createCrewCoderBridge(
   crewCoderPath: string,
   opts: BridgeStartOpts,
@@ -791,13 +805,7 @@ export async function createCrewCoderBridge(
   })
 
   try {
-    await request('initialize', {
-      protocolVersion: 1,
-      clientCapabilities: {
-        fs: { readTextFile: true, writeTextFile: true },
-        terminal: false,
-      },
-    })
+    await request('initialize', crewCoderInitializeParams(remote))
 
     let resumed = false
     if (opts.resumeSessionId) {

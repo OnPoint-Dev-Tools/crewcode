@@ -9,6 +9,7 @@ vi.mock('./agent-spawn', () => ({ spawnAgentProcess }))
 import {
   CREWCODER_PROMPT_INACTIVITY_TIMEOUT_MS,
   createCrewCoderBridge,
+  crewCoderInitializeParams,
   crewCoderAcpErrorMessage,
   createCrewCoderToolProjectionState,
   crewCoderEventsFromUpdate,
@@ -16,6 +17,21 @@ import {
   crewCoderPermissionOptions,
   crewCoderUsageFromPromptResult,
 } from './crewcoder-bridge'
+
+describe('CrewCoder filesystem custody handshake', () => {
+  it('keeps local ACP file capabilities separate from virtual custody', () => {
+    expect(crewCoderInitializeParams(false)).toEqual(expect.objectContaining({
+      clientCapabilities: { fs: { readTextFile: true, writeTextFile: true }, terminal: false },
+      _meta: { 'crewcode/virtualFilesystem': false },
+    }))
+  })
+
+  it('marks the filesystem virtual only for a remote process', () => {
+    expect(crewCoderInitializeParams(true)).toEqual(expect.objectContaining({
+      _meta: { 'crewcode/virtualFilesystem': true },
+    }))
+  })
+})
 
 afterEach(() => {
   vi.useRealTimers()

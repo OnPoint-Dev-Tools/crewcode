@@ -282,7 +282,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   fsFormat:    (root: string, sub: string, text: string)  => ipcRenderer.invoke('fs:format',    root, sub, text),
   fsDelete:    (root: string, sub: string)                    => ipcRenderer.invoke('fs:delete',   root, sub),
   fsRename:    (root: string, sub: string, newName: string)   => ipcRenderer.invoke('fs:rename',  root, sub, newName),
-  fsCopyFile:  (root: string, sub: string)                    => ipcRenderer.invoke('fs:copyFile', root, sub),
+  fsCopyFile:  (root: string, sub: string, destDirRel?: string) => ipcRenderer.invoke('fs:copyFile', root, sub, destDirRel),
   fsMove:      (root: string, srcRel: string, destDirRel: string) => ipcRenderer.invoke('fs:move', root, srcRel, destDirRel),
 
   // Writer binary formats are converted in main; renderer never receives raw
@@ -406,6 +406,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('git:stageAll', cwd),
   gitUnstage:  (cwd: string, paths: string[]) =>
     ipcRenderer.invoke('git:unstage', cwd, paths),
+  gitDiscard:  (cwd: string, path: string) =>
+    ipcRenderer.invoke('git:discard', cwd, path),
   gitDiff:     (cwd: string, path: string, staged: boolean) =>
     ipcRenderer.invoke('git:diff', cwd, path, staged),
   gitChangesVsRef: (cwd: string, ref: string) =>

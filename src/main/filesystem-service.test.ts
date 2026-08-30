@@ -40,6 +40,32 @@ describe('FilesystemService', () => {
     expect(service.readDataUrl(root, '../pixel.png')).toEqual({ error: 'path escapes root' })
   })
 
+  it('copies files and folders without escaping the workspace', () => {
+    const { root, service } = fixture()
+    mkdirSync(join(root, 'src'))
+    mkdirSync(join(root, 'dest'))
+    writeFileSync(join(root, 'src', 'index.ts'), 'export {}')
+    writeFileSync(join(root, 'readme.md'), '# hi')
+    mkdirSync(join(root, 'src', 'lib'))
+    writeFileSync(join(root, 'src', 'lib', 'util.ts'), 'ok')
+
+    expect(service.copyFile(root, 'readme.md')).toMatchObject({ ok: true, rel: 'readme copy.md' })
+    expect(readFileSync(join(root, 'readme copy.md'), 'utf8')).toBe('# hi')
+    expect(service.copyFile(root, 'src/index.ts', 'dest')).toMatchObject({ ok: true, rel: join('dest', 'index.ts') })
+    expect(readFileSync(join(root, 'dest', 'index.ts'), 'utf8')).toBe('export {}')
+    expect(service.copyFile(root, 'src/index.ts', 'dest')).toMatchObject({ ok: true, rel: join('dest', 'index copy.ts') })
+    expect(service.copyFile(root, 'src/lib', 'dest')).toMatchObject({ ok: true, rel: join('dest', 'lib') })
+    expect(readFileSync(join(root, 'dest', 'lib', 'util.ts'), 'utf8')).toBe('ok')
+    expect(service.copyFile(root, 'src/lib', 'src/lib')).toEqual({ error: 'cannot copy a folder into itself' })
+    expect(service.move(root, 'dest/index.ts', '')).toMatchObject({ ok: true, rel: 'index.ts' })
+    expect(existsSync(join(root, 'dest', 'index.ts'))).toBe(false)
+    expect(readFileSync(join(root, 'index.ts'), 'utf8')).toBe('export {}')
+    expect(service.move(root, 'src/lib', 'src/lib')).toEqual({ error: 'cannot move a folder into itself' })
+    expect(service.move(root, '../secret', 'dest')).toEqual({ error: 'source escapes root' })
+    expect(service.copyFile(root, '../secret')).toEqual({ error: 'path escapes root' })
+    expect(service.copyFile(root, 'readme.md', '../')).toEqual({ error: 'destination escapes root' })
+  })
+
   it('lists directories while hiding ignored dependency trees', () => {
     const { root, service } = fixture()
     mkdirSync(join(root, 'node_modules'))

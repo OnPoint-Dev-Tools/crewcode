@@ -19,7 +19,7 @@ function remoteWebUrl(remote: string): string | null {
 export function GitPage(props: GitSidebarProps) {
   const {
     workspace, state, onCommit, onPush, onPull, onFetch, onSync, onStageFile, onUnstageFile,
-    onStageAll, onUnstageAll,
+    onStageAll, onUnstageAll, onDiscardFile,
     onCheckoutBranch, onCreateBranch, onCreatePR, onOpenTerminal,
   } = props
   const staged = (state.changes || []).filter(change => change.staged).length
@@ -173,6 +173,7 @@ export function GitPage(props: GitSidebarProps) {
             onUnstage={onUnstageFile}
             onStageAll={onStageAll}
             onUnstageAll={onUnstageAll}
+            onDiscard={onDiscardFile}
           />
         </div>
 

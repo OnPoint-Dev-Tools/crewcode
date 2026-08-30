@@ -1,6 +1,6 @@
 import electron from 'electron'
 import { join, basename, relative, isAbsolute, normalize, sep, dirname, extname } from 'path'
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync, mkdirSync, rmSync, renameSync, copyFileSync } from 'fs'
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync, mkdirSync, rmSync, renameSync } from 'fs'
 import { execFile, spawnSync } from 'child_process'
 import { IGNORE, MAX_ATTACHMENT_FILE_BYTES, MAX_ATTACHMENT_FILE_MB, MAX_FILE_BYTES } from './fs-constants'
 import { isRemoteRoot } from './remote/ssh-target'
@@ -82,21 +82,7 @@ export function registerFsIpc(): void {
 
   ipcMain.handle('fs:move', (_e, root: string, srcRel: string, destDirRel: string) => {
     if (isRemoteRoot(root)) return remoteMove(root, srcRel, destDirRel)
-    if (!root || !isAbsolute(root)) return { error: 'absolute root required' }
-    const src = join(root, srcRel)
-    if (!safeUnder(root, src)) return { error: 'source escapes root' }
-    if (!existsSync(src))      return { error: 'source missing' }
-    const destDir = destDirRel ? join(root, destDirRel) : root
-    if (!safeUnder(root, destDir)) return { error: 'destination escapes root' }
-    const dest = join(destDir, basename(src))
-    if (!safeUnder(root, dest))    return { error: 'destination escapes root' }
-    if (existsSync(dest))          return { error: `${basename(src)} already exists there` }
-    try {
-      renameSync(src, dest)
-      return { ok: true, rel: relative(root, dest) }
-    } catch (err) {
-      return { error: (err as Error).message }
-    }
+    return service.move(root, srcRel, destDirRel)
   })
 
   ipcMain.handle('fs:delete', (_e, root: string, sub: string) => {
@@ -129,24 +115,9 @@ export function registerFsIpc(): void {
     }
   })
 
-  ipcMain.handle('fs:copyFile', (_e, root: string, sub: string) => {
-    if (isRemoteRoot(root)) return remoteCopyFile(root, sub)
-    if (!root || !isAbsolute(root)) return { error: 'absolute root required' }
-    const target = join(root, sub)
-    if (!safeUnder(root, target)) return { error: 'path escapes root' }
-    if (!existsSync(target))      return { error: 'path missing' }
-    const ext  = extname(target)
-    const base = basename(target, ext)
-    const dir  = dirname(target)
-    let dest = join(dir, `${base} copy${ext}`)
-    let n = 2
-    while (existsSync(dest)) { dest = join(dir, `${base} copy ${n}${ext}`); n++ }
-    try {
-      copyFileSync(target, dest)
-      return { ok: true, rel: relative(root, dest) }
-    } catch (err) {
-      return { error: (err as Error).message }
-    }
+  ipcMain.handle('fs:copyFile', (_e, root: string, sub: string, destDirRel?: string) => {
+    if (isRemoteRoot(root)) return remoteCopyFile(root, sub, destDirRel)
+    return service.copyFile(root, sub, destDirRel)
   })
 
   ipcMain.handle('fs:listFiles', (_e, root: string) => service.listFiles(root))
