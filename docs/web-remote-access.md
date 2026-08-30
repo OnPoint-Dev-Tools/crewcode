@@ -87,10 +87,10 @@ connections. Hub relay provides a stronger multi-machine topology, not a blanket
 security upgrade: it has more moving parts and remains a preview with the limitations
 listed below.
 
-Example direct server:
+Example direct server from a built source checkout:
 
 ```bash
-crewcode serve \
+node bin/crewcode-server.mjs serve \
   --host 127.0.0.1 \
   --workspace-root /path/to/projects
 ```
@@ -100,10 +100,10 @@ Example Hub deployment:
 ```bash
 # On the persistent Hub host (VPS, NAS, or always-on desktop):
 # Identity/relay only — recommended when this box should not execute agents:
-crewcode hub --host 0.0.0.0 --public-origin https://your-hub.example
+node bin/crewcode-server.mjs hub --host 0.0.0.0 --public-origin https://your-hub.example
 
 # Same host should also appear as a machine (sibling Brain, not one process):
-crewcode hub --local-brain \
+node bin/crewcode-server.mjs hub --local-brain \
   --host 0.0.0.0 \
   --public-origin https://your-hub.example \
   --workspace-root /path/to/projects \
@@ -113,10 +113,10 @@ crewcode hub --local-brain \
   --allow-scope agent
 
 # On each additional development machine, enroll once:
-crewcode enroll --hub https://your-hub.example
+node bin/crewcode-server.mjs enroll --hub https://your-hub.example
 
 # Then run the outbound Brain with explicit local authority:
-crewcode brain \
+node bin/crewcode-server.mjs brain \
   --workspace-root /path/to/projects \
   --allow-scope workspace:read \
   --allow-scope workspace:write \
@@ -424,19 +424,22 @@ AuditEvent(id, user_id?, machine_id?, browser_session_id?, type, created_at, met
 Implemented direct-server commands:
 
 ```bash
-npx crewcode@latest
-npx crewcode serve --host 127.0.0.1
-npx crewcode serve --host 0.0.0.0 --public-origin https://your-hub.example
+npm run serve
+npm run serve -- --host 127.0.0.1
+npm run serve -- --host 0.0.0.0 --public-origin https://your-hub.example
 ```
+
+These commands currently run from a source checkout. CrewCode is not distributed
+as an npm package.
 
 Implemented self-hosted Hub and mobile QR commands:
 
 ```bash
-crewcode hub
-crewcode hub --local-brain --workspace-root ~/developing --allow-scope agent
-crewcode hub mobile --tailscale
-crewcode hub mobile --public-origin https://your-hub.example
-crewcode hub --host 0.0.0.0 --public-origin https://your-hub.example
+node bin/crewcode-server.mjs hub
+node bin/crewcode-server.mjs hub --local-brain --workspace-root ~/developing --allow-scope agent
+node bin/crewcode-server.mjs hub mobile --tailscale
+node bin/crewcode-server.mjs hub mobile --public-origin https://your-hub.example
+node bin/crewcode-server.mjs hub --host 0.0.0.0 --public-origin https://your-hub.example
 ```
 
 `hub mobile --tailscale` requires a connected Tailscale client, MagicDNS, and HTTPS
@@ -478,7 +481,7 @@ still owner-only on disk; Hub identity still cannot widen Brain scopes.
 After signing in on the phone, run this on every additional machine:
 
 ```bash
-crewcode enroll --hub https://your-hub.example
+node bin/crewcode-server.mjs enroll --hub https://your-hub.example
 ```
 
 The PC generates its Ed25519 identity locally, prints a short `XXXX-XXXX` comparison
@@ -492,7 +495,7 @@ legacy `--token` path remains for controlled automation but is no longer the def
 Then start the relay:
 
 ```bash
-crewcode brain
+node bin/crewcode-server.mjs brain
 ```
 
 Enrollment creates an Ed25519 machine identity plus a random bearer credential in
@@ -509,7 +512,7 @@ Remote authority is disabled by default. Enable only explicit Brain-local roots 
 scopes, for example:
 
 ```bash
-crewcode brain \
+node bin/crewcode-server.mjs brain \
   --workspace-root ~/developing \
   --allow-scope workspace:read \
   --allow-scope workspace:write \
@@ -538,25 +541,30 @@ crewcode hub revoke <machine-id>
 crewcode brain logout
 ```
 
-The initial CLI distribution is implemented. From a checkout, run `npm run serve`;
-from a published package, run `npx crewcode@latest` or `crewcode serve`. It
-builds/serves the shared renderer, defaults to loopback, prints a single-use pairing
-URL, resolves installed provider CLIs without Electron, and shuts down cleanly on
-SIGINT/SIGTERM. The direct-auth CLI and remaining machine-management commands above
-remain planned. Enrollment, dashboard revocation, machine selection, and shared
-CrewCode workspace-client launch through the encrypted Hub relay are implemented.
+The initial CLI implementation is available from a source checkout through
+`npm run serve` or `node bin/crewcode-server.mjs <command>` after `npm run build`.
+It builds/serves the shared renderer, defaults to loopback, prints a single-use
+pairing URL, resolves installed provider CLIs without Electron, and shuts down
+cleanly on SIGINT/SIGTERM. The direct-auth CLI and remaining machine-management
+commands above remain planned. Enrollment, dashboard revocation, machine selection,
+and shared CrewCode workspace-client launch through the encrypted Hub relay are
+implemented.
 
 ## Current backend extraction
 
 `WorkspaceService` owns persisted workspace listing and mutations, project
 creation, cloning, and remote workspace registration without importing Electron.
-`FilesystemService` owns sandboxed directory listing, text reads/writes, and file
-discovery, including the existing SSH routing. Network filesystem RPC also
-rejects roots absent from the server workspace store, preventing a browser from
-substituting `/` or another arbitrary host path. `workspaceStore.ts` and `fs.ts`
-are now Electron transport adapters for those operations. Native folder pickers,
-formatting, and destructive filesystem mutations remain in the Electron adapter
-until their browser API and validation contracts are added.
+`FilesystemService` owns sandboxed directory listing, text reads/writes, mkdir,
+rename, delete, copy, and file discovery, including the existing SSH routing for
+reads. Network filesystem RPC also rejects roots absent from the server workspace
+store, preventing a browser from substituting `/` or another arbitrary host path.
+`workspaceStore.ts` and `fs.ts` are now Electron transport adapters for those
+operations. Browser file-tree copy/paste uses `fs.copyFile` (same-dir duplicate
+when `destDirRel` is omitted, otherwise copy into that folder, with `''` meaning
+the workspace root). Cut/paste uses `fs.move` into the destination folder.
+Native folder pickers remain in the Electron adapter. SSH roots still refuse
+copy/move/mkdir/rename/delete over web access; Electron SSH uses the remote
+copy and move paths.
 
 Hub-relayed attachment tunneling uses ordered 256 KiB chunks inside the existing
 browser-to-Brain encrypted RPC tunnel. The Hub sees only bounded ciphertext frames.

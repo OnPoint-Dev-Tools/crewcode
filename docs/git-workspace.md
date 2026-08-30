@@ -41,7 +41,10 @@ available only for real working-tree changes.
 - **Overview cards** — quick counts for changes and recent history.
 - **Changes** — files changed against the configured default branch (or the
   working tree when none is configured), with staging for local changes and
-  Pierre diff review.
+  Pierre diff review. Staged rows have a minus control to unstage them; right-
+  click a row for **stage changes**, **stage all changes**, **unstage changes**,
+  or **discard changes**. Discard restores tracked files to `HEAD` (including
+  staged changes) and removes untracked files, so it cannot be undone.
 - **Commit** — commit message + commit action, including signing support.
 - **Sidebar sections** — history, branches, and the remaining Git Sidebar
   sections render on the right (with the commit/changes sections hidden, since

@@ -5,6 +5,7 @@ CrewCode's code editor uses a fork of CodeMirror 6 for the active editing surfac
 ## Current foundation
 
 - `src/renderer/src/components/editor/CodeEditor.tsx` owns the surrounding product UI: tabs, file tree, save/format actions, disk-change conflict handling, plugin editor actions, and search-result jumps.
+- The file-tree context menu **Cut** / **Copy** / **Paste** a file or folder through an in-session clipboard (not the OS clipboard; **Copy path** still does that). Paste into the folder under the cursor, a file's parent, or the tree root. **Copy** then paste uses sandboxed `fs.copyFile` and suffixes name collisions with `copy`. **Cut** then paste uses sandboxed `fs.move`, dims the source row until the move lands, refuses the current parent and pasting a folder into itself, and clears the clipboard only after a successful move. **Duplicate** still creates a sibling copy in place. The clipboard is workspace-scoped and clears when the tree root changes. SSH workspaces use the remote copy/move paths.
 - Git Sidebar changed-file rows open the active worktree's patch in the editor's existing `PierreDiff` review surface. The Settings-selected default branch is the comparison ref when configured; closing the review returns to the prior editor state without changing the checked-out branch.
 - `src/renderer/src/components/editor/CrewCodeMirrorEditor.tsx` owns the live editing surface.
 - CodeMirror is intentionally kept below `CodeEditor` so high-frequency typing, selection, autocomplete, and scroll state do not force broad React/App re-renders.

@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import {
-  FilePlusIcon, FolderPlusIcon, CopyIcon, ClipboardTextIcon, PencilIcon, TrashIcon
+  FilePlusIcon, FolderPlusIcon, ScissorsIcon, CopyIcon, ClipboardIcon, ClipboardTextIcon, PencilIcon, TrashIcon
 } from '@phosphor-icons/react'
 import { Icon } from '../ui/Icon'
 import { BeardedFileIcon } from './bearded-file-icons'
 import type { EditorOutlineSymbol } from './editor-outline'
 import type { FsNode } from '../../types'
+import { canPasteInto, parentRel, pasteTargetDirRel, type TreeClipboard } from './file-tree-clipboard'
 
 interface SearchResult {
   rel: string
@@ -57,7 +58,7 @@ interface CtxMenu {
 }
 
 function parentOf(rel: string): string {
-  return rel.includes('/') ? rel.substring(0, rel.lastIndexOf('/')) : ''
+  return parentRel(rel)
 }
 
 function isAncestorOf(ancestor: string, target: string): boolean {
@@ -75,6 +76,7 @@ export function FileTree({ root, activeRel, onSelect, onSelectLine, onDiff, widt
   const [renameRel,   setRenameRel]   = useState<string | null>(null)
   const [renameName,  setRenameName]  = useState('')
   const [ctx,         setCtx]         = useState<CtxMenu | null>(null)
+  const [clipboard,   setClipboard]   = useState<TreeClipboard | null>(null)
   const [selectedRel, setSelectedRel] = useState<string | null>(null)
   const [dragSrc,     setDragSrc]     = useState<FsNode | null>(null)
   const [dropTarget,  setDropTarget]  = useState<string | null>(null)  // rel of hovered dir, '' = root
@@ -234,6 +236,7 @@ export function FileTree({ root, activeRel, onSelect, onSelectLine, onDiff, widt
   useEffect(() => {
     setCache({})
     setRootErr(null)
+    setClipboard(null)
     expandedReportRef.current = null
     if (!root) return
     restoringRef.current = true
@@ -379,6 +382,35 @@ export function FileTree({ root, activeRel, onSelect, onSelectLine, onDiff, widt
     navigator.clipboard.writeText(`${root}/${node.rel}`).catch(() => {})
   }
 
+  function handleCopy(node: FsNode) {
+    setCtx(null)
+    setClipboard({ rel: node.rel, kind: node.kind, mode: 'copy' })
+  }
+
+  function handleCut(node: FsNode) {
+    setCtx(null)
+    setClipboard({ rel: node.rel, kind: node.kind, mode: 'cut' })
+  }
+
+  async function handlePaste(destDirRel: string) {
+    setCtx(null)
+    const clip = clipboard
+    const api = window.electronAPI
+    if (!api || !clip || !canPasteInto(clip, destDirRel)) return
+    if (clip.mode === 'cut') {
+      const result = await api.fsMove(root, clip.rel, destDirRel)
+      loadDir(parentOf(clip.rel))
+      loadDir(destDirRel)
+      if (!result.rel) return
+      setClipboard(null)
+      if (clip.kind === 'file' && activeRel === clip.rel) onSelect(result.rel)
+      return
+    }
+    const result = await api.fsCopyFile(root, clip.rel, destDirRel)
+    loadDir(destDirRel)
+    if (clip.kind === 'file' && result.rel) onSelect(result.rel)
+  }
+
   // ── Drag-and-drop ────────────────────────────────────────────────────────────
 
   function onDragStart(e: React.DragEvent, node: FsNode) {
@@ -437,6 +469,7 @@ export function FileTree({ root, activeRel, onSelect, onSelectLine, onDiff, widt
     const isActive   = selectedRel === node.rel || (!isDir && activeRel === node.rel)
     const isRenaming = renameRel === node.rel
     const isDragging = dragSrc?.rel === node.rel
+    const isCut      = clipboard?.mode === 'cut' && clipboard.rel === node.rel
     const isDropZone = isDir && dropTarget === node.rel
 
     return (
@@ -447,6 +480,7 @@ export function FileTree({ root, activeRel, onSelect, onSelectLine, onDiff, widt
             isDir ? 'dir' : 'file',
             isActive   ? 'on'        : '',
             isDragging ? 'ft-drag-ghost' : '',
+            isCut      ? 'ft-cut'        : '',
             isDropZone ? 'ft-drop-target' : '',
           ].filter(Boolean).join(' ')}
           style={{ paddingLeft: 6 + depth * 12 }}
@@ -696,9 +730,26 @@ export function FileTree({ root, activeRel, onSelect, onSelectLine, onDiff, widt
               <button className="ft-ctx-item" onClick={() => startNew('folder', ctx.node?.rel ?? '')}>
                 <FolderPlusIcon weight="duotone" size={13} /> new folder
               </button>
-              {ctx.node && <div className="ft-ctx-sep" />}
+              <div className="ft-ctx-sep" />
             </>
           )}
+          {ctx.node && (
+            <>
+              <button className="ft-ctx-item" onClick={() => handleCut(ctx.node!)}>
+                <ScissorsIcon weight="duotone" size={13} /> cut
+              </button>
+              <button className="ft-ctx-item" onClick={() => handleCopy(ctx.node!)}>
+                <CopyIcon weight="duotone" size={13} /> copy
+              </button>
+            </>
+          )}
+          <button
+            className="ft-ctx-item"
+            disabled={!clipboard || !canPasteInto(clipboard, pasteTargetDirRel(ctx.node, ctx.isDir))}
+            onClick={() => handlePaste(pasteTargetDirRel(ctx.node, ctx.isDir))}
+          >
+            <ClipboardIcon weight="duotone" size={13} /> paste
+          </button>
           {ctx.node && !ctx.isDir && (
             <button className="ft-ctx-item" onClick={() => handleDuplicate(ctx.node!)}>
               <CopyIcon weight="duotone" size={13} /> duplicate

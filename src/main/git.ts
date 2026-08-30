@@ -333,6 +333,22 @@ export function registerGitIpc(): void {
     }
   })
 
+  ipcMain.handle('git:discard', async (_e, cwd: string, path: string) => {
+    try {
+      const status = parseStatus((await runGit(cwd, ['status', '--porcelain=v1', '-b'])).stdout)
+      const relPath = String(path)
+      const known = [...status.staged, ...status.unstaged, ...status.untracked].some(file => file.path === relPath)
+      if (!known) return { error: 'file is no longer changed' }
+      if ([...status.untracked].some(file => file.path === relPath) && !status.staged.some(file => file.path === relPath) && !status.unstaged.some(file => file.path === relPath)) {
+        await runGit(cwd, ['clean', '--force', '--', relPath])
+      } else {
+        try { await runGit(cwd, ['restore', '--source=HEAD', '--staged', '--worktree', '--', relPath]) }
+        catch { await runGit(cwd, ['rm', '--force', '--cached', '--', relPath]); await runGit(cwd, ['clean', '--force', '--', relPath]) }
+      }
+      return { ok: true }
+    } catch (err: unknown) { return { error: (err as Error).message } }
+  })
+
   ipcMain.handle('git:diff', async (_e, cwd: string, path: string, staged: boolean) => {
     try {
       // Force standard a/ b/ prefixes — the user's diff.mnemonicPrefix/noprefix

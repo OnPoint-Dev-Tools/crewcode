@@ -391,6 +391,7 @@ export function useGitSidebar(args: UseGitSidebarArgs): UseGitSidebarResult {
     // current state rather than replaying paths that may have moved meanwhile.
     onStageAll:    (paths) => { if (paths.length) runAction('staging…',   () => window.electronAPI!.gitStageAll(repoPath),       'staged') },
     onUnstageAll:  (paths) => { if (paths.length) runAction('unstaging…', () => window.electronAPI!.gitUnstage(repoPath, paths), 'unstaged') },
+    onDiscardFile: (p) => runAction('discarding…', () => window.electronAPI!.gitDiscard(repoPath, p), 'discarded'),
     onCommit: ({ message, amend, push, sync }) => runAction(
       sync ? 'commit & sync…' : push ? 'commit & push…' : amend ? 'amending…' : 'committing…',
       async () => {

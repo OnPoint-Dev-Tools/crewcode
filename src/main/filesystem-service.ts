@@ -1,7 +1,8 @@
 import { execFile } from 'child_process'
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, sep } from 'path'
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
 import { IGNORE, MAX_FILE_BYTES } from './fs-constants'
+import { uniqueCopyName } from './fs-copy-name'
 import { isRemoteRoot } from './remote/ssh-target'
 import { remoteListFiles, remoteReadDir, remoteReadFile, remoteWriteFile } from './remote/remote-fs'
 
@@ -134,6 +135,91 @@ export class FilesystemService {
     if (existsSync(destination)) return { error: 'destination already exists' }
     try { renameSync(target, destination); return { ok: true, rel: relative(root, destination) } }
     catch (error) { return { error: (error as Error).message } }
+  }
+
+  move(root: string, srcRel: string, destDirRel: string): { ok?: boolean; rel?: string; error?: string } {
+    if (isRemoteRoot(root)) return { error: 'move unavailable on remote workspaces over web access' }
+    if (!root || !isAbsolute(root)) return { error: 'absolute root required' }
+    if (!srcRel || srcRel === '.' || srcRel === '..') return { error: 'source missing' }
+    const source = join(root, srcRel)
+    if (!safeUnder(root, source) || source === normalize(root)) return { error: 'source escapes root' }
+    if (!existsSync(source)) return { error: 'source missing' }
+    let sourceStat
+    try { sourceStat = statSync(source) } catch { return { error: 'stat failed' } }
+
+    const destDir = destDirRel ? join(root, destDirRel) : root
+    if (!safeUnder(root, destDir)) return { error: 'destination escapes root' }
+    if (!existsSync(destDir)) return { error: 'destination missing' }
+    let destStat
+    try { destStat = statSync(destDir) } catch { return { error: 'destination missing' } }
+    if (!destStat.isDirectory()) return { error: 'destination is not a directory' }
+
+    if (sourceStat.isDirectory()) {
+      const sourceNorm = normalize(source)
+      const destNorm = normalize(destDir)
+      if (destNorm === sourceNorm || destNorm.startsWith(sourceNorm + sep)) {
+        return { error: 'cannot move a folder into itself' }
+      }
+    }
+
+    const destination = join(destDir, basename(source))
+    if (!safeUnder(root, destination) || destination === normalize(root)) return { error: 'destination escapes root' }
+    if (existsSync(destination)) return { error: `${basename(source)} already exists there` }
+    try {
+      renameSync(source, destination)
+      return { ok: true, rel: relative(root, destination) }
+    } catch (error) {
+      return { error: (error as Error).message }
+    }
+  }
+
+  /**
+   * Copy a file or folder under `root`.
+   * Omit `destDirRel` to duplicate beside the source; pass `''` for the workspace root.
+   */
+  copyFile(root: string, sub: string, destDirRel?: string): { ok?: boolean; rel?: string; error?: string } {
+    if (isRemoteRoot(root)) return { error: 'copy unavailable on remote workspaces over web access' }
+    if (!root || !isAbsolute(root)) return { error: 'absolute root required' }
+    if (!sub || sub === '.' || sub === '..') return { error: 'path missing' }
+    const source = join(root, sub)
+    if (!safeUnder(root, source) || source === normalize(root)) return { error: 'path escapes root' }
+    if (!existsSync(source)) return { error: 'path missing' }
+    let sourceStat
+    try { sourceStat = statSync(source) } catch { return { error: 'stat failed' } }
+
+    const destDir = destDirRel === undefined
+      ? dirname(source)
+      : destDirRel
+        ? join(root, destDirRel)
+        : root
+    if (!safeUnder(root, destDir)) return { error: 'destination escapes root' }
+    if (!existsSync(destDir)) return { error: 'destination missing' }
+    let destStat
+    try { destStat = statSync(destDir) } catch { return { error: 'destination missing' } }
+    if (!destStat.isDirectory()) return { error: 'destination is not a directory' }
+
+    if (sourceStat.isDirectory()) {
+      const sourceNorm = normalize(source)
+      const destNorm = normalize(destDir)
+      if (destNorm === sourceNorm || destNorm.startsWith(sourceNorm + sep)) {
+        return { error: 'cannot copy a folder into itself' }
+      }
+    }
+
+    let name: string
+    try {
+      name = uniqueCopyName(basename(source), candidate => existsSync(join(destDir, candidate)))
+    } catch (error) {
+      return { error: (error as Error).message }
+    }
+    const destination = join(destDir, name)
+    if (!safeUnder(root, destination) || destination === normalize(root)) return { error: 'destination escapes root' }
+    try {
+      cpSync(source, destination, { recursive: true, errorOnExist: true, force: false })
+      return { ok: true, rel: relative(root, destination) }
+    } catch (error) {
+      return { error: (error as Error).message }
+    }
   }
 
   async listFiles(root: string): Promise<{ files?: string[]; error?: string }> {

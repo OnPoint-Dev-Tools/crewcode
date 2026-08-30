@@ -12,6 +12,9 @@ This file provides guidance to models when working with code in this repository.
 
 Update corresponding Docs in [CrewCode Docs](/docs/), and [AGENTS.md](/AGENTS.md/) when major changes were made and or every time i add a feature. Create or update docs file for it
 
+Git Workspace changed-file rows support stage/unstage controls and a context
+menu for stage, stage-all, unstage, and explicitly confirmed discard actions.
+
 ## What is CrewCode?
 
 CrewCode is a desktop ACE (Agent Coding Environment) GUI built with Electron + React + TypeScript. It lets developers run a *crew* of AI coding agents (Claude Code, Codex, OpenCode, etc.) in parallel across local git worktrees, each in its own workspace with a chat thread, embedded terminal panes, and a code/markdown editor — all in one frameless native-feeling window.

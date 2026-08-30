@@ -1,6 +1,7 @@
 import { execFile } from 'child_process'
 import { parseLog, parseStatus } from './git-porcelain-parse'
 import { unstagePaths } from './git-unstage'
+import { discardPath } from './git-discard'
 
 interface GitResult { stdout: string; stderr: string }
 
@@ -31,6 +32,7 @@ export class GitService {
   async stage(cwd: string, paths: string[]) { try { await this.run(cwd, ['add', '--', ...paths.map(String)]); return { ok: true } } catch (error) { return { error: this.message(error) } } }
   async stageAll(cwd: string) { try { await this.run(cwd, ['add', '--all']); return { ok: true } } catch (error) { return { error: this.message(error) } } }
   async unstage(cwd: string, paths: string[]) { try { await unstagePaths(paths.map(String), args => this.run(cwd, args)); return { ok: true } } catch (error) { return { error: this.message(error) } } }
+  async discard(cwd: string, path: string) { try { await discardPath(String(path), args => this.run(cwd, args)); return { ok: true } } catch (error) { return { error: this.message(error) } } }
 
   async diff(cwd: string, path: string, staged: boolean) {
     try {

@@ -805,7 +805,7 @@ declare global {
       fsFormat:    (root: string, sub: string, text: string)  => Promise<{ ok?: boolean; text?: string; error?: string }>
       fsDelete:    (root: string, sub: string)                => Promise<{ ok?: boolean; error?: string }>
       fsRename:    (root: string, sub: string, newName: string) => Promise<{ ok?: boolean; rel?: string; error?: string }>
-      fsCopyFile:  (root: string, sub: string)                => Promise<{ ok?: boolean; rel?: string; error?: string }>
+      fsCopyFile:  (root: string, sub: string, destDirRel?: string) => Promise<{ ok?: boolean; rel?: string; error?: string }>
       fsMove:      (root: string, srcRel: string, destDirRel: string) => Promise<{ ok?: boolean; rel?: string; error?: string }>
       writerDocumentsImport: (root: string, sourceRel: string) => Promise<WriterDocumentImportResult>
       writerDocumentsExport: (root: string, sourceRel: string, markdown: string, format: WriterBinaryFormat) => Promise<WriterDocumentExportResult>
@@ -866,6 +866,7 @@ declare global {
       gitStage:    (cwd: string, paths: string[]) => Promise<{ ok?: boolean; error?: string }>
       gitStageAll: (cwd: string) => Promise<{ ok?: boolean; error?: string }>
       gitUnstage:  (cwd: string, paths: string[]) => Promise<{ ok?: boolean; error?: string }>
+      gitDiscard:  (cwd: string, path: string) => Promise<{ ok?: boolean; error?: string }>
       gitDiff:     (cwd: string, path: string, staged: boolean) => Promise<{ ok?: boolean; diff?: string; error?: string }>
       gitChangesVsRef: (cwd: string, ref: string) => Promise<{ ok?: boolean; files?: GitStatusFile[]; error?: string }>
       gitDiffVsRef: (cwd: string, ref: string, path: string) => Promise<{ ok?: boolean; diff?: string; error?: string }>
