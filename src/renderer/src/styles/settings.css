@@ -459,6 +459,14 @@ body.light .ss-profile-error { color: #b91c1c; }
 .ss-btn.danger { color: #fca5a5; border-color: rgba(220, 38, 38, 0.4); }
 .ss-btn.danger:hover { background: rgba(220, 38, 38, 0.12); color: #fecaca; }
 
+.ss-brain-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .ss-pill {
   display: inline-flex; align-items: center; gap: 6px;
   font-family: var(--font-family-mono); font-size: 10.5px;

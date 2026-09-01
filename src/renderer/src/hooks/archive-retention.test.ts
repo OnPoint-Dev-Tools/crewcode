@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { Session } from '../types'
-import { MS_PER_DAY, daysArchived, expiredSessions, formatArchivedAgo, isExpired, retentionLabel } from './archive-retention'
+import { MS_PER_DAY, daysArchived, expiredSessions, formatArchivedAgo, formatLastUsedDate, isExpired, retentionLabel } from './archive-retention'
 
 const NOW = 1_800_000_000_000
 
@@ -60,5 +60,11 @@ describe('archive retention', () => {
     expect(formatArchivedAgo(session({ archived: true }), NOW)).toBe('unknown')
     expect(retentionLabel(0)).toBe('Never')
     expect(retentionLabel(90)).toBe('90 days')
+  })
+
+  it('formats the last-used date instead of the later archive date', () => {
+    const lastUsedAt = new Date(2026, 7, 28, 12).getTime()
+    const archivedAt = new Date(2026, 7, 30, 12).getTime()
+    expect(formatLastUsedDate(session({ lastUsedAt, archivedAt }))).toBe('08/28/2026')
   })
 })

@@ -76,6 +76,16 @@ export class CustodyJournal {
 
     let recovered = false
     this.records = this.records.map(record => {
+      // Before CrewCoder exposed its native approval picker every bridge was
+      // launched in review. Backfill that known authority fact so an upgraded
+      // app does not mistake an older journal shape for unexplained drift.
+      if (!record.authority.crewcoderApprovalMode) {
+        recovered = true
+        record = {
+          ...record,
+          authority: { ...record.authority, crewcoderApprovalMode: 'review' },
+        }
+      }
       // A turn that was in flight when CrewCode stopped has unknown effects on
       // the workspace. It is interrupted and gated, never assumed complete.
       if (record.status === 'running') {

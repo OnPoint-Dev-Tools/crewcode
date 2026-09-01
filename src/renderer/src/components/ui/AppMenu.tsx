@@ -25,6 +25,7 @@ export type AppMenuAction =
   | { kind: 'updates' }
   | { kind: 'toggle-menulet' }
   | { kind: 'toggle-system-monitor' }
+  | { kind: 'quit-stop-brain' }
 
 interface AppMenuItem {
   id:        string
@@ -57,6 +58,7 @@ const MENU: AppMenuGroup[] = [
       { id: 'archive',  icon: 'archive',  label: 'Archive',                         action: { kind: 'open-tab', tab: 'archive' } },
       { id: 'updates',  icon: 'refresh',  label: 'Check for updates',               action: { kind: 'updates' } },
       { id: 'docs',     icon: 'globe',    label: 'Docs',             action: { kind: 'docs' } },
+      { id: 'quit-stop-brain', icon: 'square', label: 'Quit and stop Brain', action: { kind: 'quit-stop-brain' } },
     ],
   },
 ]
@@ -73,6 +75,7 @@ export function AppMenu({ activeKind, footStatus, onPick }: AppMenuProps) {
   const ref = useRef<HTMLDivElement>(null)
   const isDark = useIsDark()
   const isWeb = getCrewCodeRuntime().kind === 'web'
+  const isBrain = getCrewCodeRuntime().kind === 'brain'
 
   useEffect(() => {
     if (!open) return
@@ -127,7 +130,7 @@ export function AppMenu({ activeKind, footStatus, onPick }: AppMenuProps) {
           {MENU.map(g => (
             <div key={g.label} className="appmenu-group">
               <div className="appmenu-sec">{g.label}</div>
-              {g.items.filter(it => !isWeb || it.id !== 'updates').map(it => (
+              {g.items.filter(it => (!isWeb || it.id !== 'updates') && (it.id !== 'quit-stop-brain' || isBrain)).map(it => (
                 <button
                   key={it.id}
                   type="button"

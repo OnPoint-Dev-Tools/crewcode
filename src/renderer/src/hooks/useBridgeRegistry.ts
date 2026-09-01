@@ -20,7 +20,7 @@ import type { CrewCoderMode } from '../../../shared/crewcoder-types'
 type BridgeToolPolicy = 'default' | 'read-only'
 
 function isWebRuntime(): boolean {
-  try { return getCrewCodeRuntime().kind === 'web' } catch { return false }
+  try { return getCrewCodeRuntime().kind !== 'electron' } catch { return false }
 }
 
 export function bridgeRuntimeId(tabId: string, agentId: string, web: boolean, at = Date.now()): string {
@@ -185,6 +185,7 @@ export function useBridgeRegistry({ setMessagesForTab }: UseBridgeRegistryOpts) 
     freshSession = false,
     externalDirectories?: string[],
     crewcoderMode?: CrewCoderMode,
+    crewcoderApprovalMode?: import('../../../shared/crewcoder-types').CrewCoderApprovalMode,
   ): Promise<{ bridgeId: string } | { error: string }> => {
     const key      = `${tabId}:${agentId}`
     const existing = bridgesByKey[key]
@@ -197,7 +198,7 @@ export function useBridgeRegistry({ setMessagesForTab }: UseBridgeRegistryOpts) 
         // Brain restarted and lost its process-local owner map, it creates the
         // replacement bridge instead. The interrupted prompt is never replayed.
         bridge.registerRoute(existing, tabId, cwd, mode)
-        const attached = await bridge.start(existing, provider, cwd, model, mode, effort, toolPolicy, key, tabId, mcpServers, false, externalDirectories, crewcoderMode)
+        const attached = await bridge.start(existing, provider, cwd, model, mode, effort, toolPolicy, key, tabId, mcpServers, false, externalDirectories, crewcoderMode, crewcoderApprovalMode)
         if (attached.custodyHalt) bridgeActivity.setCustodyHalt(tabId, attached.custodyHalt)
         if (attached.error) return { error: attached.error }
       }
@@ -235,7 +236,7 @@ export function useBridgeRegistry({ setMessagesForTab }: UseBridgeRegistryOpts) 
 
     // Native resume ids stay provider-specific via `key`; local replay history
     // is session-scoped so switching providers can continue the same thread.
-    const r = await bridge.start(bridgeId, provider, cwd, model, mode, effort, toolPolicy, key, tabId, mcpServers, freshSession, externalDirectories, crewcoderMode)
+    const r = await bridge.start(bridgeId, provider, cwd, model, mode, effort, toolPolicy, key, tabId, mcpServers, freshSession, externalDirectories, crewcoderMode, crewcoderApprovalMode)
     startingBridgeIdsRef.current.delete(bridgeId)
     // A halt in force refuses the start outright, so no process was spawned.
     // Record it here, where the tab is known synchronously.

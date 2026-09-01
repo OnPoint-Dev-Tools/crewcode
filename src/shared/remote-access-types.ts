@@ -1,6 +1,6 @@
 export const CREWCODE_REMOTE_PROTOCOL_VERSION = 1 as const
 
-export type CrewCodeRuntimeKind = 'electron' | 'web'
+export type CrewCodeRuntimeKind = 'electron' | 'brain' | 'web'
 
 export interface CrewCodeServerCapabilities {
   protocolVersion: typeof CREWCODE_REMOTE_PROTOCOL_VERSION

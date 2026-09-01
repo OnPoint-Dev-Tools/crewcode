@@ -31,6 +31,7 @@ import {
   type ProfileIconPreset,
 } from '../profile/UserProfileAvatar'
 import { PROVIDER_IMAGES, providerImageClass } from '../composer/provider-meta'
+import { SETTINGS_SECTION_EVENT, takePendingSettingsSection } from './settings-section-focus'
 import type { AppBuildInfo, UpdaterEvent, GhStatus, AgentInfo, Workspace } from '../../types'
 import type { CompletionProviderId } from '../../../../shared/agent-completion-types'
 import {
@@ -384,6 +385,13 @@ function GeneralSection({ state, set, workspace }: { state: SettingsState; set: 
           </div>
           <Seg<OnLaunch> value={state.onLaunch} options={['blank','last session','workspaces drawer']} onChange={v => set('onLaunch', v)} />
         </div>
+        {typeof window.electronAPI?.trayConfigure === 'function' && <div className="ss-row" data-q="system tray background close window keep running open quit">
+          <div>
+            <div className="label">Keep running in background</div>
+            <div className="help">When you close the CrewCode window, keep terminals and agents running and reopen the app from the system tray. Use <b>Quit CrewCode</b> in the tray menu to exit fully.</div>
+          </div>
+          <Toggle value={state.keepRunningInBackground} onChange={v => set('keepRunningInBackground', v)} />
+        </div>}
         <div className="ss-row" data-q="tweaks panel floating controls visibility">
           <div>
             <div className="label">Layout panel</div>
@@ -479,6 +487,78 @@ function GeneralSection({ state, set, workspace }: { state: SettingsState; set: 
           <button className="ss-btn" onClick={() => set('onboardingCompleted', false)}>
             <Icon name="sparkle" size={12} />replay tour
           </button>
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function BrainContinuitySection() {
+  const [status, setStatus] = useState<import('../../../../shared/brain-desktop-types').BrainDesktopStatus | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  const refresh = useCallback(() => {
+    void window.electronAPI?.brainDesktopStatus(true).then(setStatus).catch(cause => setError((cause as Error).message))
+  }, [])
+  useEffect(refresh, [refresh])
+
+  const enable = async () => {
+    setBusy(true); setError('')
+    try {
+      const next = await window.electronAPI!.brainDesktopSetEnabled(true)
+      setStatus(next)
+      if (next.attached) window.location.reload()
+    } catch (cause) { setError((cause as Error).message) }
+    finally { setBusy(false) }
+  }
+  const stop = async () => {
+    setBusy(true); setError('')
+    try {
+      setStatus(await window.electronAPI!.brainDesktopStop())
+      window.location.reload()
+    } catch (cause) { setError((cause as Error).message) }
+    finally { setBusy(false) }
+  }
+  const openHub = async () => {
+    if (!status?.hubBrowserOrigin) return
+    setError('')
+    try {
+      const result = await window.electronAPI!.openExternal(status.hubBrowserOrigin)
+      if (!result.ok) setError('CrewCode could not open the Hub browser URL.')
+    } catch (cause) { setError((cause as Error).message) }
+  }
+
+  const loopbackHub = status?.hubBrowserOrigin
+    ? ['localhost', '127.0.0.1', '::1'].includes(new URL(status.hubBrowserOrigin).hostname)
+    : false
+
+  return (
+    <section id="brain-continuity" className="ss-section">
+      <div className="ss-section-h">
+        <h2>Desktop &amp; Web</h2>
+        <span className="desc">Brain continuity</span>
+      </div>
+      <div className="ss-card tight">
+        <div className="ss-row" data-q="brain background web continuity remote conversations workspaces">
+          <div>
+            <div className="label">Background Brain</div>
+            <div className="help">Make this machine's Brain authoritative for workspaces, conversations, terminals, and agents. Closing the desktop window leaves enrolled web access available; <b>Stop Brain</b> removes that availability.</div>
+            <div className="help mono">{status?.running ? 'running · desktop attached' : status?.enabled ? 'enabled · not reachable' : status?.enrolled ? 'ready to enable' : 'Hub enrollment required'}</div>
+            {status?.hubBrowserOrigin ? (
+              <>
+                <div className="help mono">Hub browser · {status.hubBrowserOrigin}{loopbackHub ? ' · this PC only' : ''}</div>
+                <div className="help">The Hub web server is separate from the Brain and must be running and reachable at this address.</div>
+              </>
+            ) : status?.hubOrigin ? <div className="help mono">Hub browser · {status.hubReachable === false ? 'not reachable' : 'origin unavailable'} · enrolled through {status.hubOrigin}</div> : null}
+            {(error || status?.error) ? <div className="help" style={{ color: 'var(--destructive)' }}>{error || status?.error}</div> : null}
+          </div>
+          <div className="ss-brain-actions">
+            {status?.hubBrowserOrigin ? <button className="ss-btn" type="button" disabled={busy} onClick={() => void openHub()}><Icon name="globe" size={12} />Open Hub</button> : null}
+            {status?.running || status?.enabled
+              ? <button className="ss-btn danger" type="button" disabled={busy} onClick={() => void stop()}>{busy ? 'stopping…' : 'Stop Brain'}</button>
+              : <button className="ss-btn primary" type="button" disabled={busy || !status?.enrolled} onClick={() => void enable()}>{busy ? 'starting…' : 'Enable'}</button>}
+          </div>
         </div>
       </div>
     </section>
@@ -2254,7 +2334,9 @@ export function SettingsScreen({ activeWorkspace }: { activeWorkspace?: Workspac
     ? SECTIONS.map(group => group.group === 'connectivity'
       ? { ...group, items: [...group.items, { id: 'brain-authorization', label: 'Brain Access', icon: 'server' as IconName }] }
       : group)
-    : SECTIONS, [webRuntime])
+    : SECTIONS.map(group => group.group === 'connectivity'
+      ? { ...group, items: [{ id: 'brain-continuity', label: 'Desktop & Web', icon: 'server' as IconName }, ...group.items] }
+      : group), [webRuntime])
 
   const [query, setQuery] = useState('')
   const searchRef = useRef<HTMLInputElement>(null)
@@ -2324,6 +2406,26 @@ export function SettingsScreen({ activeWorkspace }: { activeWorkspace?: Workspac
     const root = detailRef.current
     if (sec && root) root.scrollTo({ top: sec.offsetTop - 12, behavior: 'smooth' })
   }
+
+  // Honor an updater-bar (or other) request to land on a specific section,
+  // whether Settings was already open or just mounted.
+  useEffect(() => {
+    const apply = (id: string) => {
+      const run = () => scrollTo(id)
+      run()
+      requestAnimationFrame(run)
+    }
+    const pending = takePendingSettingsSection()
+    if (pending) apply(pending)
+    const onEvent = (event: Event) => {
+      const id = (event as CustomEvent<string>).detail
+      if (typeof id !== 'string' || !id.trim()) return
+      takePendingSettingsSection()
+      apply(id)
+    }
+    window.addEventListener(SETTINGS_SECTION_EVENT, onEvent)
+    return () => window.removeEventListener(SETTINGS_SECTION_EVENT, onEvent)
+  }, [])
 
   useEffect(() => {
     const fn = (e: KeyboardEvent) => {
@@ -2425,6 +2527,7 @@ export function SettingsScreen({ activeWorkspace }: { activeWorkspace?: Workspac
               <EditorCompletionSection state={state} set={set} />
               <IntegrationsSection     state={state} set={set} />
               {webRuntime && <BrainAuthorizationSection />}
+              {!webRuntime && <BrainContinuitySection />}
               <McpSection          state={state} set={set} />
               <SSHSection          state={state} set={set} />
               <ShortcutsSection    state={state} set={set} />

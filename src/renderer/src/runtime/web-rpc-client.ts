@@ -201,6 +201,11 @@ export function createWebCrewCodeClient(sessionOrTransport: string | WebClientTr
     onEditorLanguageServerStatus: callback => { editorLspStatusListeners.add(callback); ensureEvents(); return () => editorLspStatusListeners.delete(callback) },
     onGhAuthEvent: callback => { ghListeners.add(callback); ensureEvents(); return () => ghListeners.delete(callback) },
     onUpdaterEvent: noSubscription,
+    updaterConfigure: async () => ({ ok: false, error: 'updates are desktop-only' }),
+    updaterCheck: async () => ({ ok: false, error: 'updates are desktop-only' }),
+    updaterDownload: async () => ({ ok: false, error: 'updates are desktop-only' }),
+    updaterQuitAndInstall: async () => ({ ok: false, error: 'updates are desktop-only' }),
+    appBuildInfo: async () => ({ version: 'web', buildHash: 'web', packaged: false }),
     // These desktop integrations are deliberately inert in a browser. Defining
     // them explicitly matters because the Proxy fallback is a function, so
     // optional method checks would otherwise invoke a rejected Promise.
@@ -261,6 +266,8 @@ export function createWebCrewCodeClient(sessionOrTransport: string | WebClientTr
     transcriptsMtimes: () => rpc('transcripts.mtimes', {}),
     transcriptsSave: (scopeId, messages) => rpc('transcripts.save', { scopeId, messages }),
     transcriptsRemove: scopeId => rpc('transcripts.remove', { scopeId }),
+    continuityStateGet: () => rpc('continuity.get', {}),
+    continuityStateUpdate: values => rpc('continuity.update', { values }),
     worktreeList: repoPath => rpc('worktrees.list', { repoPath }),
     worktreeCreate: (repoPath, branch, worktreePath, startPoint) => rpc('worktrees.create', { repoPath, branch, worktreePath, startPoint }),
     worktreeRemove: worktreePath => rpc('worktrees.remove', { worktreePath }),
@@ -369,8 +376,8 @@ export function createWebCrewCodeClient(sessionOrTransport: string | WebClientTr
     },
     bridgeStart: opts => rpc('bridge.start', {
       bridgeId: opts.bridgeId, provider: opts.provider, cwd: opts.cwd, model: opts.model,
-      mode: opts.mode, crewcoderMode: opts.crewcoderMode, toolPolicy: opts.toolPolicy, thinking: opts.thinking,
-      conversationScopeKey: opts.conversationScopeKey, freshSession: opts.freshSession,
+      mode: opts.mode, crewcoderMode: opts.crewcoderMode, crewcoderApprovalMode: opts.crewcoderApprovalMode, toolPolicy: opts.toolPolicy, thinking: opts.thinking,
+      conversationScopeKey: opts.conversationScopeKey?.replace(/^(?:web|thread):/, ''), freshSession: opts.freshSession,
       suppressProviderHistoryReplay: opts.suppressProviderHistoryReplay,
       // Send references only. The Brain resolves these against its own registry
       // and never trusts browser-supplied MCP command/env definitions.
@@ -378,11 +385,15 @@ export function createWebCrewCodeClient(sessionOrTransport: string | WebClientTr
     }),
     bridgePrompt: (bridgeId, text, options) => rpc('bridge.prompt', { bridgeId, text, options }),
     bridgeCompact: bridgeId => rpc('bridge.compact', { bridgeId }),
+    bridgeResetSession: (sessionKey, conversationScopeKey) => rpc('bridge.resetSession', {
+      sessionKey,
+      conversationScopeKey: (conversationScopeKey ?? sessionKey)?.replace(/^(?:web|thread):/, ''),
+    }),
     bridgeHandoff: (bridgeId, sourceConversationKey, options) => rpc('bridge.handoff', {
       bridgeId,
       // The shared renderer uses desktop's `thread:<session>` key. Brain keeps
       // browser conversations in a separate namespace and adds `web:` itself.
-      sourceConversationKey: sourceConversationKey.replace(/^thread:/, ''),
+      sourceConversationKey: sourceConversationKey.replace(/^(?:web|thread):/, ''),
       options,
     }),
     bridgeRemoveFollowUp: (bridgeId, followUpId) => rpc('bridge.removeFollowUp', { bridgeId, followUpId }),
@@ -401,6 +412,68 @@ export function createWebCrewCodeClient(sessionOrTransport: string | WebClientTr
       if (Reflect.has(target, property)) return Reflect.get(target, property, receiver)
       if (typeof property !== 'string') return undefined
       return () => Promise.reject(new WebRpcError(`${property} is not available in this CrewCode web preview`, 'UNSUPPORTED'))
+    },
+  })
+}
+
+const BRAIN_BACKED_METHODS = new Set([
+  'workspacesList', 'workspacesAdd', 'workspacesRemove', 'workspacesPin', 'workspacesRename', 'workspacesSetFolder',
+  'workspacesCloneRepo', 'workspacesInitProject',
+  'agentRegistry', 'agentListModels',
+  'transcriptsLoadAll', 'transcriptsMtimes', 'transcriptsSave', 'transcriptsRemove', 'transcriptsSaveSyncBatch',
+  'continuityStateGet', 'continuityStateUpdate',
+  'worktreeList', 'worktreeCreate', 'worktreeRemove',
+  'fsReadDir', 'fsListFiles', 'fsReadFile', 'fsReadDataUrl', 'fsWriteFile', 'fsFormat', 'fsMkdir', 'fsDelete', 'fsRename', 'fsCopyFile', 'fsMove',
+  'gitStatus', 'gitStage', 'gitStageAll', 'gitUnstage', 'gitDiscard', 'gitDiff', 'gitChangesVsRef', 'gitDiffVsRef', 'gitLog',
+  'gitBranches', 'gitRemotes', 'gitCommit', 'gitPush', 'gitPull', 'gitFetch', 'gitCheckout', 'gitCreateBranch', 'gitMerge', 'gitMergeAbort', 'gitMergeContinue', 'gitResolveConflict', 'gitInit',
+  'githubStatus', 'ghStatus', 'ghPrCreate', 'ghPrMerge', 'ghPrApprove', 'ghLoginStart', 'ghLoginCancel', 'ghRepoCreate', 'onGhAuthEvent',
+  'ptyCreate', 'ptyWrite', 'ptyResize', 'ptyKill', 'onPtyData', 'onPtyDataForPane', 'onPtyExit',
+  'bridgeStart', 'bridgePrompt', 'bridgeCompact', 'bridgeResetSession', 'bridgeHandoff', 'bridgeRemoveFollowUp', 'bridgeRespondUserRequest', 'bridgeSetMode', 'bridgeAbort', 'bridgeStop', 'onBridgeEvent',
+  'delegationEnable', 'delegationDisable', 'delegationRespond', 'onDelegationRequest',
+  'editorWatchAdd', 'editorWatchRemove', 'editorLanguageServerStart', 'editorLanguageServerSend', 'editorLanguageServerStop',
+  'onEditorFileChanged', 'onEditorLanguageServerMessage', 'onEditorLanguageServerStatus',
+  'voiceProviderAvailability', 'voiceCreateClientSecret', 'voiceTranscribe', 'voiceSynthesize',
+  'mcpList', 'pluginsList', 'pluginsWatch', 'pluginsRefresh', 'pluginsResolveTab', 'pluginsInvoke',
+  'attachmentsImport',
+])
+
+/**
+ * Electron keeps native window/picker/updater integrations while all durable
+ * workspace, transcript, terminal, and agent work crosses the same Brain
+ * boundary used by the web client.
+ */
+export function createBrainAttachedCrewCodeClient(local: CrewCodeClient): CrewCodeClient {
+  const transport: WebClientTransport = {
+    rpc: (method, params) => local.brainDesktopRpc(method, params),
+    subscribe: onEvent => local.onBrainDesktopEvent(event => onEvent(event as WebEventEnvelope)),
+    uploadAttachment: async (root, name, body) => {
+      const result = await local.brainDesktopUploadAttachment(root, name, new Uint8Array(body))
+      if (!result.rel) throw new WebRpcError(result.error ?? 'Brain attachment upload failed')
+      return result.rel
+    },
+    saveSyncBatch: entries => {
+      void local.brainDesktopRpc('transcripts.saveBatch', { entries }).catch(() => undefined)
+      return true
+    },
+  }
+  const brain = createWebCrewCodeClient(transport)
+  const trustedBrainOverrides: Partial<CrewCodeClient> = {
+    agentGetKey: id => local.brainDesktopRpc('desktop.agent.getKey', { id }),
+    agentSetKey: (id, key) => local.brainDesktopRpc('desktop.agent.setKey', { id, key }),
+    voiceSetProviderKey: (provider, key) => local.brainDesktopRpc('desktop.voice.setProviderKey', { provider, key }),
+  }
+  // Electron contextBridge exposes `local` as a frozen proxy whose methods are
+  // non-configurable data properties. Using it as this Proxy's target and then
+  // returning a Brain-backed replacement violates the ECMAScript `get` trap
+  // invariant. Keep a separate facade target and delegate native reads to the
+  // contextBridge object instead.
+  return new Proxy({} as CrewCodeClient, {
+    get(_target, property) {
+      if (Object.prototype.hasOwnProperty.call(trustedBrainOverrides, property)) {
+        return Reflect.get(trustedBrainOverrides, property)
+      }
+      if (typeof property === 'string' && BRAIN_BACKED_METHODS.has(property)) return Reflect.get(brain, property)
+      return Reflect.get(local, property, local)
     },
   })
 }

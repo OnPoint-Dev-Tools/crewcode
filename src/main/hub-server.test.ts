@@ -130,7 +130,12 @@ describe('Hub HTTP security boundary', () => {
     const body = await response.text()
     expect(response.status).toBe(200)
     expect(body).not.toContain(running.bootstrapToken as string)
-    expect(JSON.parse(body)).toEqual({ service: 'crewcode-hub', protocolVersion: 1, ownerConfigured: false })
+    expect(JSON.parse(body)).toEqual({
+      service: 'crewcode-hub',
+      protocolVersion: 1,
+      ownerConfigured: false,
+      publicOrigin: running.publicOrigin,
+    })
   })
 
   it('enrolls a local Brain only after the owner exists', async () => {

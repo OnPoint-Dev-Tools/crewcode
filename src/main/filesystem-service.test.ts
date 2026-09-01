@@ -9,16 +9,16 @@ function fixture(): { root: string; service: FilesystemService } {
 }
 
 describe('FilesystemService', () => {
-  it('reads and writes files under a workspace root', () => {
+  it('reads and writes files under a workspace root', async () => {
     const { root, service } = fixture()
     expect(service.writeFile(root, 'src/index.ts', 'export {}')).toEqual({ ok: true })
-    expect(service.readFile(root, 'src/index.ts')).toMatchObject({ ok: true, text: 'export {}', name: 'index.ts' })
+    expect(await service.readFile(root, 'src/index.ts')).toMatchObject({ ok: true, text: 'export {}', name: 'index.ts' })
     expect(readFileSync(join(root, 'src', 'index.ts'), 'utf8')).toBe('export {}')
   })
 
-  it('rejects path traversal', () => {
+  it('rejects path traversal', async () => {
     const { root, service } = fixture()
-    expect(service.readFile(root, '../secret')).toEqual({ error: 'path escapes root' })
+    expect(await service.readFile(root, '../secret')).toEqual({ error: 'path escapes root' })
     expect(service.writeFile(root, '../secret', 'no')).toEqual({ error: 'path escapes root' })
   })
 
@@ -66,12 +66,12 @@ describe('FilesystemService', () => {
     expect(service.copyFile(root, 'readme.md', '../')).toEqual({ error: 'destination escapes root' })
   })
 
-  it('lists directories while hiding ignored dependency trees', () => {
+  it('lists directories while hiding ignored dependency trees', async () => {
     const { root, service } = fixture()
     mkdirSync(join(root, 'node_modules'))
     writeFileSync(join(root, 'visible.ts'), 'ok')
     writeFileSync(join(root, 'node_modules', 'hidden.js'), 'no')
-    const result = service.readDir(root)
-    expect('nodes' in result ? result.nodes?.map(node => node.name) : []).toEqual(['visible.ts'])
+    const result = await service.readDir(root)
+    expect(result.nodes?.map(node => node.name) ?? []).toEqual(['visible.ts'])
   })
 })

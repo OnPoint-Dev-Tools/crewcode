@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createWebCrewCodeClient, exchangePairingToken, savedWebSession, webRpc } from './web-rpc-client'
+import { createBrainAttachedCrewCodeClient, createWebCrewCodeClient, exchangePairingToken, savedWebSession, webRpc } from './web-rpc-client'
+import type { CrewCodeClient } from './crewcode-client'
 
 const storage = new Map<string, string>()
 
@@ -63,11 +64,11 @@ describe('web RPC client', () => {
     })
 
     await client.bridgeStart({
-      bridgeId: 'crew-1', provider: 'crewcoder', cwd: '/repo', crewcoderMode: 'extension',
+      bridgeId: 'crew-1', provider: 'crewcoder', cwd: '/repo', crewcoderMode: 'extension', crewcoderApprovalMode: 'full-access',
     })
 
     expect(rpc).toHaveBeenCalledWith('bridge.start', expect.objectContaining({
-      provider: 'crewcoder', crewcoderMode: 'extension',
+      provider: 'crewcoder', crewcoderMode: 'extension', crewcoderApprovalMode: 'full-access',
     }))
   })
 
@@ -82,12 +83,69 @@ describe('web RPC client', () => {
     })
 
     await client.bridgeHandoff('target-bridge', 'thread:source-session', { fromProvider: 'claude', toProvider: 'codex' })
+    await client.bridgeStart({
+      bridgeId: 'target-bridge', provider: 'codex', cwd: '/repo', conversationScopeKey: 'thread:source-session',
+    })
+    await client.bridgeResetSession('source-session:codex', 'web:source-session')
 
     expect(rpc).toHaveBeenCalledWith('bridge.handoff', {
       bridgeId: 'target-bridge',
       sourceConversationKey: 'source-session',
       options: { fromProvider: 'claude', toProvider: 'codex' },
     })
+    expect(rpc).toHaveBeenCalledWith('bridge.start', expect.objectContaining({ conversationScopeKey: 'source-session' }))
+    expect(rpc).toHaveBeenCalledWith('bridge.resetSession', {
+      sessionKey: 'source-session:codex',
+      conversationScopeKey: 'source-session',
+    })
+  })
+
+  it('routes Brain-backed Electron work through Brain RPC while keeping native desktop methods', async () => {
+    const rpc = vi.fn<(method: string, params: Record<string, unknown>) => void>()
+    const local = {
+      brainDesktopRpc: async <T,>(method: string, params: Record<string, unknown>) => {
+        rpc(method, params)
+        return { ok: true } as T
+      },
+      onBrainDesktopEvent: () => () => undefined,
+      minimize: () => undefined,
+      agentGetKey: async () => { throw new Error('local key store must not be used') },
+    } as unknown as CrewCodeClient
+
+    const client = createBrainAttachedCrewCodeClient(local)
+    await client.workspacesList()
+    await client.continuityStateGet()
+    client.minimize()
+    await client.agentGetKey('codex')
+
+    expect(rpc).toHaveBeenCalledWith('workspaces.list', {})
+    expect(rpc).toHaveBeenCalledWith('continuity.get', {})
+    expect(rpc).toHaveBeenCalledWith('desktop.agent.getKey', { id: 'codex' })
+  })
+
+  it('can override read-only contextBridge methods without violating Proxy invariants', async () => {
+    const rpc = vi.fn<(method: string, params: Record<string, unknown>) => void>()
+    const localWorkspacesList = vi.fn(async () => [])
+    const localTranscriptsMtimes = vi.fn(async () => ({}))
+    const local = {
+      brainDesktopRpc: async <T,>(method: string, params: Record<string, unknown>) => {
+        rpc(method, params)
+        return (method === 'workspaces.list' ? [] : {}) as T
+      },
+      onBrainDesktopEvent: () => () => undefined,
+      workspacesList: localWorkspacesList,
+      transcriptsMtimes: localTranscriptsMtimes,
+    }
+    Object.freeze(local)
+
+    const client = createBrainAttachedCrewCodeClient(local as unknown as CrewCodeClient)
+    await expect(client.workspacesList()).resolves.toEqual([])
+    await expect(client.transcriptsMtimes()).resolves.toEqual({})
+
+    expect(rpc).toHaveBeenCalledWith('workspaces.list', {})
+    expect(rpc).toHaveBeenCalledWith('transcripts.mtimes', {})
+    expect(localWorkspacesList).not.toHaveBeenCalled()
+    expect(localTranscriptsMtimes).not.toHaveBeenCalled()
   })
 
   it('maps default-branch comparison calls through the web client', async () => {

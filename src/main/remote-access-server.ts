@@ -2,7 +2,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { dirname, extname, join, normalize, posix, sep } from 'path'
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from 'fs'
 import { spawnSync } from 'child_process'
-import { createHash, randomBytes } from 'crypto'
+import { createHash, randomBytes, timingSafeEqual } from 'crypto'
 import { homedir } from 'os'
 import {
   CREWCODE_REMOTE_PROTOCOL_VERSION,
@@ -22,7 +22,7 @@ import {
 } from './remote-access-security'
 import { WorkspaceService } from './workspace-service'
 import { PtyService } from './pty-service'
-import { AgentBridgeService, type AgentPathResolver } from './agents/bridge-service'
+import { AgentBridgeService, webConversationKey, type AgentPathResolver } from './agents/bridge-service'
 import { headlessAgentRegistry, listHeadlessAgentModels } from './headless-agent-resolver'
 import { readMcpConfig } from './mcp-config-service'
 import { getGhStatus, getGitHubStatus, runGh } from './github-service'
@@ -31,14 +31,16 @@ import { RemoteEditorLanguageServer } from './remote-editor-language-server'
 import { RemoteEditorFileWatch } from './remote-editor-file-watch'
 import { RemoteDelegationService } from './remote-delegation-service'
 import { RemotePluginService } from './remote-plugin-service'
-import { createVoiceClientSecret, synthesizeRemoteVoiceText, transcribeRemoteVoiceAudio, voiceProviderAvailability } from './voice-provider-auth'
+import { createVoiceClientSecret, setVoiceProviderKey, synthesizeRemoteVoiceText, transcribeRemoteVoiceAudio, voiceProviderAvailability } from './voice-provider-auth'
 import { TranscriptService, type TranscriptBatchEntry } from './transcript-service'
 import { parsePorcelainWorktrees } from './worktree-list-parse'
 import { addWorktree, removeWorktree } from './worktree-ops'
 import { GitService } from './git-service'
 import type { BridgeEvent, BridgeStartOpts, HandoffPromptOptions, PromptOptions } from './agents/bridge-types'
-import { isCrewCoderMode } from '../shared/crewcoder-types'
+import { isCrewCoderApprovalMode, isCrewCoderMode } from '../shared/crewcoder-types'
+import { getAgentKey, setAgentKey } from './agents/agent-keys'
 import { WebSocketServer, WebSocket } from 'ws'
+import { ContinuityStateService, continuityStatePath } from './continuity-state-service'
 
 const MAX_REQUEST_BYTES = 2 * 1024 * 1024
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
@@ -57,6 +59,12 @@ export interface RemoteAccessServerOptions {
   allowedWorkspaceRoots?: string[]
   /** Exact HTTPS/HTTP browser origins accepted when a reverse proxy changes Host. */
   publicOrigins?: string[]
+  /**
+   * Optional owner-local Brain control. This is deliberately separate from a
+   * browser device session and from Hub scopes; only the Electron main process
+   * receives the random token through the owner-only rendezvous file.
+   */
+  desktopControl?: { token: string; onStop: () => void }
 }
 
 export interface RunningRemoteAccessServer {
@@ -165,6 +173,7 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
   const gitService = new GitService()
   const ptyService = new PtyService()
   const transcriptService = new TranscriptService(options.dataDir)
+  const continuityState = new ContinuityStateService(continuityStatePath(options.dataDir))
   const agentService = new AgentBridgeService(options.resolveAgentPath ?? (() => null))
   const auth = options.auth ?? new RemoteAccessAuth({ storePath: join(options.dataDir, 'remote-access-sessions.json') })
   const remoteGh = new RemoteGhService()
@@ -215,6 +224,15 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
       throw Object.assign(new Error('filesystem root is not a registered workspace'), { remoteCode: 'FORBIDDEN' })
     }
     return root
+  }
+  const registeredWorkspaceId = (value: unknown): string => {
+    const id = String(value ?? '')
+    const workspace = workspaceService.list().find(item => item.id === id)
+    if (!workspace) return id
+    try { allowedPath(workspace.path) } catch {
+      throw Object.assign(new Error('workspace is outside the server workspace roots'), { remoteCode: 'FORBIDDEN' })
+    }
+    return id
   }
   const listWorktrees = (repoPath: string) => {
     const cwd = registeredRoot({ root: repoPath })
@@ -270,10 +288,10 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
       if (!statSync(parentDir).isDirectory()) throw new Error('parent is not a directory')
       return workspaceService.initProject(parentDir, validChildName(params.folderName), params.asGit === true)
     }],
-    ['workspaces.remove', params => workspaceService.remove(String(params.id ?? ''))],
-    ['workspaces.pin', params => workspaceService.pin(String(params.id ?? ''), params.pinned === true)],
-    ['workspaces.rename', params => workspaceService.rename(String(params.id ?? ''), String(params.name ?? ''))],
-    ['workspaces.setFolder', params => workspaceService.setFolder(String(params.id ?? ''), typeof params.folder === 'string' ? params.folder : null)],
+    ['workspaces.remove', params => workspaceService.remove(registeredWorkspaceId(params.id))],
+    ['workspaces.pin', params => workspaceService.pin(registeredWorkspaceId(params.id), params.pinned === true)],
+    ['workspaces.rename', params => workspaceService.rename(registeredWorkspaceId(params.id), String(params.name ?? ''))],
+    ['workspaces.setFolder', params => workspaceService.setFolder(registeredWorkspaceId(params.id), typeof params.folder === 'string' ? params.folder : null)],
     ['agents.registry', () => headlessAgentRegistry()],
     ['agents.listModels', params => listHeadlessAgentModels(String(params.provider ?? ''))],
     // Browser clients may inspect the Brain-owned registry, but never submit
@@ -303,6 +321,8 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
     ['transcripts.save', params => transcriptService.save(String(params.scopeId ?? ''), params.messages)],
     ['transcripts.saveBatch', params => transcriptService.saveBatch(params.entries as TranscriptBatchEntry[])],
     ['transcripts.remove', params => transcriptService.remove(String(params.scopeId ?? ''))],
+    ['continuity.get', () => continuityState.snapshot()],
+    ['continuity.update', params => continuityState.update(params.values)],
     ['worktrees.list', params => listWorktrees(String(params.repoPath ?? ''))],
     ['worktrees.create', params => {
       const repoPath = registeredRoot({ root: params.repoPath })
@@ -478,9 +498,10 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
         model: typeof params.model === 'string' ? params.model : undefined,
         mode: params.mode === 'ask' || params.mode === 'plan' || params.mode === 'build' || params.mode === 'full' ? params.mode : 'build',
         crewcoderMode: isCrewCoderMode(params.crewcoderMode) ? params.crewcoderMode : undefined,
+        crewcoderApprovalMode: isCrewCoderApprovalMode(params.crewcoderApprovalMode) ? params.crewcoderApprovalMode : 'review',
         toolPolicy: params.toolPolicy === 'read-only' ? 'read-only' : 'default',
         thinking: typeof params.thinking === 'string' ? params.thinking as BridgeStartOpts['thinking'] : undefined,
-        conversationKey: typeof params.conversationScopeKey === 'string' ? `web:${params.conversationScopeKey}` : undefined,
+        conversationKey: typeof params.conversationScopeKey === 'string' ? webConversationKey(params.conversationScopeKey) : undefined,
         freshSession: params.freshSession === true,
         suppressProviderHistoryReplay: params.suppressProviderHistoryReplay === true,
         // Resolve opaque selections against the Brain's local registry. This is
@@ -492,11 +513,15 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
     }],
     ['bridge.prompt', params => agentService.prompt(String(params.bridgeId ?? ''), String(params.text ?? ''), params.options as PromptOptions | undefined)],
     ['bridge.compact', params => agentService.compact(String(params.bridgeId ?? ''))],
+    ['bridge.resetSession', params => {
+      const scope = String(params.conversationScopeKey ?? '')
+      return agentService.resetSession(scope ? webConversationKey(scope) : '', String(params.sessionKey ?? ''))
+    }],
     ['bridge.handoff', params => {
       const sourceScope = String(params.sourceConversationKey ?? '')
       return agentService.handoff(
         String(params.bridgeId ?? ''),
-        sourceScope ? `web:${sourceScope}` : '',
+        sourceScope ? webConversationKey(sourceScope) : '',
         params.options && typeof params.options === 'object' ? params.options as HandoffPromptOptions : {},
       )
     }],
@@ -512,6 +537,50 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
   const server: Server = createServer(async (request, response) => {
     try {
       const pathname = new URL(request.url ?? '/', 'http://localhost').pathname
+      if (pathname === '/api/v1/desktop/status' || pathname === '/api/v1/desktop/stop' || pathname === '/api/v1/desktop/control') {
+        const supplied = bearer(request)
+        const expected = options.desktopControl?.token ?? ''
+        const suppliedBytes = Buffer.from(supplied)
+        const expectedBytes = Buffer.from(expected)
+        const allowed = !!options.desktopControl
+          && suppliedBytes.length === expectedBytes.length
+          && timingSafeEqual(suppliedBytes, expectedBytes)
+          && (request.socket.remoteAddress === '127.0.0.1' || request.socket.remoteAddress === '::ffff:127.0.0.1' || request.socket.remoteAddress === '::1')
+        if (!allowed) { sendJson(response, 401, { error: remoteError('UNAUTHENTICATED', 'desktop Brain control was rejected') }); return }
+        if (pathname === '/api/v1/desktop/status' && request.method === 'GET') {
+          sendJson(response, 200, { ok: true, pid: process.pid })
+          return
+        }
+        if (pathname === '/api/v1/desktop/stop' && request.method === 'POST') {
+          sendJson(response, 202, { ok: true })
+          setImmediate(options.desktopControl!.onStop)
+          return
+        }
+        if (pathname === '/api/v1/desktop/control' && request.method === 'POST') {
+          const body = await readJson(request) as { method?: string; params?: Record<string, unknown> }
+          const params = body.params && typeof body.params === 'object' ? body.params : {}
+          if (body.method === 'agent.getKey') {
+            sendJson(response, 200, { ok: true, result: { key: getAgentKey(String(params.id ?? '')) } })
+            return
+          }
+          if (body.method === 'agent.setKey') {
+            setAgentKey(String(params.id ?? ''), typeof params.key === 'string' ? params.key : null)
+            sendJson(response, 200, { ok: true, result: { ok: true, registry: headlessAgentRegistry() } })
+            return
+          }
+          if (body.method === 'voice.setProviderKey') {
+            const provider = params.provider === 'openai' || params.provider === 'xai' ? params.provider : null
+            if (!provider) { sendJson(response, 400, { error: remoteError('INVALID_REQUEST', 'invalid voice provider') }); return }
+            setVoiceProviderKey(provider, typeof params.key === 'string' ? params.key : null)
+            sendJson(response, 200, { ok: true, result: { ok: true, availability: voiceProviderAvailability() } })
+            return
+          }
+          sendJson(response, 400, { error: remoteError('UNSUPPORTED', 'desktop Brain control method is unsupported') })
+          return
+        }
+        sendJson(response, 405, { error: remoteError('INVALID_REQUEST', 'method not allowed') })
+        return
+      }
       if (pathname.startsWith('/api/') && !browserOriginAllowed(request, options.publicOrigins)) {
         sendJson(response, 403, { error: remoteError('FORBIDDEN', 'browser origin is not allowed') })
         return

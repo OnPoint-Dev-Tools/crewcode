@@ -309,7 +309,12 @@ export async function startHubServer(options: HubServerOptions): Promise<Running
         return
       }
       if (request.method === 'GET' && pathname === '/api/v1/hub/status') {
-        sendJson(response, 200, { service: 'crewcode-hub', protocolVersion: 1, ownerConfigured: store.owner() !== null })
+        sendJson(response, 200, {
+          service: 'crewcode-hub',
+          protocolVersion: 1,
+          ownerConfigured: store.owner() !== null,
+          publicOrigin,
+        })
         return
       }
       if (request.method === 'POST' && (pathname.startsWith('/api/v1/hub/bootstrap/') || pathname.startsWith('/api/v1/hub/auth/'))) {
@@ -612,11 +617,25 @@ export async function startHubServer(options: HubServerOptions): Promise<Running
         relayConnections.delete(connectionId)
       }
     })
-    socket.on('close', () => {
+    socket.on('close', (code, reasonBuffer) => {
       relaySockets.delete(socket)
       if (peer.kind === 'brain' && brainSockets.get(peer.machineId) === socket) brainSockets.delete(peer.machineId)
       for (const [connectionId, connection] of relayConnections) {
         if (connection.brain !== socket && connection.browser !== socket) continue
+        const closedPeer = connection.brain === socket ? 'brain' : 'browser'
+        // Hub shutdown sets `closed` before closing sockets and may close the
+        // SQLite store as soon as the HTTP server drains. That lifecycle is
+        // already observed by the caller; audit only unexpected/live-server
+        // peer closure so late WebSocket callbacks never touch a closed store.
+        if (!closed) {
+          store.audit('hub.connection.closed', connection.userId, connection.machineId, {
+            connectionId,
+            browserSessionId: connection.browserSessionId,
+            closedPeer,
+            code,
+            reason: reasonBuffer.toString(),
+          }, now())
+        }
         if (connection.brain === socket) {
           if (connection.browser.readyState === WebSocket.OPEN) connection.browser.close(4000, 'Brain relay disconnected')
         } else if (connection.brain.readyState === WebSocket.OPEN) {

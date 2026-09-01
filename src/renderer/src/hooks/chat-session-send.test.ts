@@ -108,13 +108,14 @@ describe('sendChatSessionPrompt mode handling', () => {
       agents: [crewcoder],
       activeAgentId: 'crewcoder',
       crewcoderMode: 'plugin' as const,
+      crewcoderApprovalMode: 'full-access' as const,
     }
 
     await sendChatSessionPrompt(opts)
 
     expect(opts.bridges.ensureBridge).toHaveBeenCalledWith(
       'sess-1', 'crewcoder', 'crewcoder', '/repo', 'gpt-5.4', 'medium',
-      'plan', undefined, false, [], false, undefined, 'plugin',
+      'plan', undefined, false, [], false, undefined, 'plugin', 'full-access',
     )
   })
 

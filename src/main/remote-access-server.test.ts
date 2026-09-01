@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, readFileSync, realpathSync, symlinkSync } from 
 import { createHash } from 'crypto'
 import { join } from 'path'
 import { tmpdir as osTmpdir } from 'os'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CREWCODE_REMOTE_PROTOCOL_VERSION } from '../shared/remote-access-types'
 import { startRemoteAccessServer, type RunningRemoteAccessServer } from './remote-access-server'
 import WebSocket from 'ws'
@@ -22,6 +22,40 @@ async function start(): Promise<RunningRemoteAccessServer> {
 }
 
 describe('remote access server', () => {
+  it('stores allowlisted catalogue continuity on the Brain', async () => {
+    const server = await start()
+    const pair = await fetch(`${server.url}/api/v1/pair`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: server.pairingToken }) })
+    const { sessionToken } = await pair.json() as { sessionToken: string }
+    const rpc = (id: string, method: string, params: Record<string, unknown>) => fetch(`${server.url}/api/v1/rpc`, {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${sessionToken}` },
+      body: JSON.stringify({ protocolVersion: CREWCODE_REMOTE_PROTOCOL_VERSION, id, method, params }),
+    })
+
+    expect(await (await rpc('empty', 'continuity.get', {})).json()).toMatchObject({ ok: true, result: { version: 1, revision: 0, values: {} } })
+    const updated = await (await rpc('patch', 'continuity.update', { values: { 'crewcode:activeWorkspaceId': 'workspace-one' } })).json()
+    expect(updated).toMatchObject({ ok: true, result: { revision: 1, values: { 'crewcode:activeWorkspaceId': 'workspace-one' } } })
+    expect(await (await rpc('forbidden', 'continuity.update', { values: { 'crewcode:secret': 'no' } })).json()).toMatchObject({
+      ok: false,
+      error: { message: expect.stringContaining('continuity key is not allowed') },
+    })
+  })
+
+  it('keeps desktop Brain stop control separate from browser sessions', async () => {
+    const onStop = vi.fn()
+    running = await startRemoteAccessServer({
+      dataDir: mkdtempSync(join(tmpdir(), 'crewcode-desktop-control-')),
+      allowedWorkspaceRoots: [tmpdir()],
+      desktopControl: { token: 'desktop-control-secret', onStop },
+    })
+    expect((await fetch(`${running.url}/api/v1/desktop/status`)).status).toBe(401)
+    const status = await fetch(`${running.url}/api/v1/desktop/status`, { headers: { authorization: 'Bearer desktop-control-secret' } })
+    expect(await status.json()).toMatchObject({ ok: true, pid: process.pid })
+    const stopped = await fetch(`${running.url}/api/v1/desktop/stop`, { method: 'POST', headers: { authorization: 'Bearer desktop-control-secret' } })
+    expect(stopped.status).toBe(202)
+    await new Promise(resolve => setImmediate(resolve))
+    expect(onStop).toHaveBeenCalledTimes(1)
+  })
+
   it('publishes an unauthenticated protocol handshake', async () => {
     const server = await start()
     const response = await fetch(`${server.url}/api/v1/capabilities`)

@@ -122,6 +122,18 @@ async function openHubRelayTransport(machineId: string, requestedScopes: BrainAc
   const ready = new Promise<void>((resolve, reject) => { readyResolve = resolve; readyReject = reject })
   const closed = new Promise<{ code: number; reason: string; error: Error }>(resolve => { closedResolve = resolve })
 
+  const disconnectedError = async (): Promise<never> => {
+    if (failure) throw failure
+    // readyState changes to CLOSING before the close event supplies its code
+    // and reason. Preserve that evidence instead of replacing it with a
+    // generic preflight error during this short race.
+    if (socket.readyState === WebSocket.CLOSING) {
+      const disconnect = await closed
+      throw disconnect.error
+    }
+    throw new WebRpcError('encrypted Brain tunnel is not connected', 'UNAUTHENTICATED')
+  }
+
   const fail = (error: Error): void => {
     failure ??= error
     if (failed) return
@@ -155,7 +167,9 @@ async function openHubRelayTransport(machineId: string, requestedScopes: BrainAc
     }
     if (frame.type === 'close') throw new Error(`Brain closed the tunnel: ${frame.reason}`)
     if (frame.type !== 'encrypted' || !brainKey || frame.connectionId !== connectionId) return
-    if (frame.sequence !== expectedBrainSequence) throw new Error('Brain encrypted frame sequence was rejected')
+    if (frame.sequence !== expectedBrainSequence) {
+      throw new Error(`Brain encrypted frame sequence was rejected: expected ${expectedBrainSequence}, received ${frame.sequence}`)
+    }
     expectedBrainSequence += 1
     const plaintext = await crypto.subtle.decrypt(
       { name: 'AES-GCM', iv: nonce('brain', frame.sequence), additionalData: aad(connectionId, 'brain', frame.sequence), tagLength: 128 },
@@ -194,7 +208,7 @@ async function openHubRelayTransport(machineId: string, requestedScopes: BrainAc
 
   const transport: WebClientTransport = {
     async rpc<T>(method: string, params: Record<string, unknown>): Promise<T> {
-      if (!browserKey || socket.readyState !== WebSocket.OPEN) throw new WebRpcError('encrypted Brain tunnel is not connected', 'UNAUTHENTICATED')
+      if (!browserKey || socket.readyState !== WebSocket.OPEN) return disconnectedError()
       requestCounter += 1
       const id = `hub-${Date.now().toString(36)}-${requestCounter.toString(36)}`
       const request: CrewCodeRemoteRequest = { protocolVersion: CREWCODE_REMOTE_PROTOCOL_VERSION, id, method, params }
@@ -203,7 +217,7 @@ async function openHubRelayTransport(machineId: string, requestedScopes: BrainAc
       // encryption and socket.send in one chain so sequence order is also wire
       // order; the Brain rejects gaps and replayed/out-of-order frames.
       const send = sendChain.then(async () => {
-        if (!browserKey || socket.readyState !== WebSocket.OPEN) throw new WebRpcError('encrypted Brain tunnel is not connected', 'UNAUTHENTICATED')
+        if (!browserKey || socket.readyState !== WebSocket.OPEN) return disconnectedError()
         const sequence = browserSequence++
         const ciphertext = await crypto.subtle.encrypt(
           { name: 'AES-GCM', iv: nonce('browser', sequence), additionalData: aad(connectionId, 'browser', sequence), tagLength: 128 },

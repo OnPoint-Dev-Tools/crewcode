@@ -11,7 +11,16 @@
     <title>CrewCode</title>
   </head>
   <body class="dark">
-    <div id="root"></div>
+    <div id="root">
+      <div id="startup-screen" class="loading-screen" role="status" aria-live="polite" aria-label="Starting CrewCode">
+        <div class="loading-screen-orbit" aria-hidden="true"></div>
+        <div class="loading-screen-mark">
+          <img src="/src/assets/icon-logo-dark.png" alt="CrewCode" class="loading-screen-logo" />
+          <div class="loading-screen-line" aria-hidden="true"><span></span></div>
+        </div>
+        <div id="startup-screen-caption" class="loading-screen-caption">starting CrewCode</div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

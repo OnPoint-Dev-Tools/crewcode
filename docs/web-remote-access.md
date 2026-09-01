@@ -11,8 +11,9 @@ WebSocket, or Electron IPC calls.
 
 ```text
 shared React renderer
-  -> Electron client -> Electron IPC -> backend services
-  -> Web client      -> authenticated HTTP/WebSocket -> backend services
+  -> Electron client       -> Electron IPC -> backend services
+  -> Brain-attached desktop -> Electron IPC -> owner-local Brain RPC/events
+  -> Web client            -> authenticated HTTP/WebSocket -> Brain services
 ```
 
 Filesystem, Git, PTY, agent, SSH, plugin, and credential operations remain on
@@ -86,6 +87,28 @@ machines, phone access, passkey login, or machines that cannot accept inbound
 connections. Hub relay provides a stronger multi-machine topology, not a blanket
 security upgrade: it has more moving parts and remains a preview with the limitations
 listed below.
+
+### Brain-attached desktop continuity
+
+An enrolled Electron install can enable **Settings → Desktop & Web → Background
+Brain**. Electron starts an optional detached Brain, attaches its shared renderer to
+the Brain's loopback backend, and leaves that Brain running when the desktop window or
+ordinary app process closes. Desktop and Hub web clients then use the same machine-
+authoritative workspace, transcript, replay/resume, terminal, and agent backend.
+Files never move to the Hub.
+
+The first enable seeds only missing Brain runtime files from Electron data; existing
+Brain state wins. It also aliases existing desktop `thread:` replay shards into the
+Brain `web:` namespace and preserves provider-specific native resume IDs. Catalogue
+state hydrates before the app mounts and is mirrored as bounded allowlisted patches.
+Rich transcript writes merge divergent client snapshots so a stale save cannot erase
+an observed turn.
+
+Both clients may prompt concurrently. One conversation is serialized FIFO by the
+Brain, while different conversations remain concurrent. **Stop Brain** or **Quit and
+stop Brain** explicitly withdraws availability and terminates Brain-owned resources;
+normal window/app close does not. See `docs/desktop-web-continuity.md` for the source-
+of-truth, lifecycle, security, and first-release limitations.
 
 Example direct server from a built source checkout:
 
@@ -417,7 +440,12 @@ AuditEvent(id, user_id?, machine_id?, browser_session_id?, type, created_at, met
     renderer launch are complete; automatic reconnect and live status remain.**
 11. Persist remote execution custody and test disconnect, restart, revocation,
     replay, cross-user isolation, relay compromise, and backpressure behavior.
-12. Move the desktop application onto the same backend contract.
+12. Move the desktop application onto the same backend contract. **First continuity
+    slice complete:** enrolled Electron can start and attach to an optional background
+    Brain; desktop and web share machine-authoritative workspaces, transcripts,
+    replay/resume state, terminals, agents, and a bounded chat/workspace catalogue.
+    Remaining desktop-only orchestration surfaces and live cross-client navigation
+    updates still need convergence.
 
 ## CLI
 
@@ -441,6 +469,21 @@ node bin/crewcode-server.mjs hub mobile --tailscale
 node bin/crewcode-server.mjs hub mobile --public-origin https://your-hub.example
 node bin/crewcode-server.mjs hub --host 0.0.0.0 --public-origin https://your-hub.example
 ```
+
+From a source checkout, equivalent npm conveniences build the current checkout first:
+
+```bash
+npm run hub:mobile
+npm run enroll -- --hub https://your-tailnet-host.example.ts.net
+npm run brain
+```
+
+`npm run hub:mobile` configures Tailscale Serve without replacing an unrelated
+existing Serve configuration. After inspecting `tailscale serve status`, replacement
+requires the explicit `npm run hub:mobile -- --tailscale-replace` opt-in. `npm run
+brain` is the foreground/headless Brain command; do not run it against the default
+Brain data directory while Electron **Background Brain** is enabled. Electron already
+owns that detached Brain lifecycle.
 
 `hub mobile --tailscale` requires a connected Tailscale client, MagicDNS, and HTTPS
 certificates enabled for the tailnet. It derives the exact `https://<node>.<tailnet>`

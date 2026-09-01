@@ -6,6 +6,7 @@ import type { ITerminalAddon } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
 
 import { monoFontStack, resolveTerminalFont, type Gpu } from '../../hooks/useSettings'
+import { TerminalOutputBuffer } from './terminal-output-buffer'
 
 // Browsers hard-cap live WebGL contexts (~16 in Chromium); past that the oldest
 // context is force-lost, which cascades into contextLost→dispose churn across
@@ -109,6 +110,7 @@ interface XTermPaneProps {
   shell?:  string
   argv?:   string[]
   env?:    Record<string, string>
+  active?: boolean
   collapsed?: boolean
   onCollapsedChange?: (collapsed: boolean) => void
   onExit?: (exitCode: number) => void
@@ -120,11 +122,12 @@ interface XTermPaneProps {
 }
 
 
-export function XTermPane({ pane, tabKind, shell, argv, env, collapsed = false, onCollapsedChange, onExit, onClose, onOpenUrl, onHeaderDragStart, onHeaderDragEnd, onClipboardActionsChange }: XTermPaneProps) {
+export function XTermPane({ pane, tabKind, shell, argv, env, active = true, collapsed = false, onCollapsedChange, onExit, onClose, onOpenUrl, onHeaderDragStart, onHeaderDragEnd, onClipboardActionsChange }: XTermPaneProps) {
   const hostRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<Terminal | null>(null)
   const fitRef  = useRef<FitAddon | null>(null)
   const rendererRef = useRef<ITerminalAddon | null>(null)
+  const outputBufferRef = useRef<TerminalOutputBuffer | null>(null)
   const [live, setLive] = useState(pane.live)
 
   const { state: settings } = useSettings()
@@ -209,11 +212,13 @@ export function XTermPane({ pane, tabKind, shell, argv, env, collapsed = false, 
     let disposed = false
     // Routed subscription: this pane only receives its own output, so a busy
     // sibling terminal no longer runs a callback here per chunk.
-    const offData = api.onPtyDataForPane(pane.paneId, (data) => term.write(data))
+    const outputBuffer = new TerminalOutputBuffer((data, done) => term.write(data, done), { active: false })
+    outputBufferRef.current = outputBuffer
+    const offData = api.onPtyDataForPane(pane.paneId, (data) => outputBuffer.enqueue(data))
     const offExit = api.onPtyExit(({ paneId, exitCode }) => {
       if (paneId !== pane.paneId) return
       setLive(false)
-      term.write(`\r\n\x1b[2;37m[process exited: ${exitCode}]\x1b[0m\r\n`)
+      outputBuffer.enqueue(`\r\n\x1b[2;37m[process exited: ${exitCode}]\x1b[0m\r\n`)
       onExitRef.current?.(exitCode)
     })
 
@@ -238,7 +243,7 @@ export function XTermPane({ pane, tabKind, shell, argv, env, collapsed = false, 
         setLive(false)
         return
       }
-      if (result.buffer) term.write(result.buffer)
+      if (result.buffer) outputBuffer.enqueue(result.buffer)
       setLive(true)
     })
 
@@ -301,6 +306,8 @@ export function XTermPane({ pane, tabKind, shell, argv, env, collapsed = false, 
       onResize.dispose()
       linkProvider.dispose()
       ro.disconnect()
+      outputBuffer.dispose()
+      outputBufferRef.current = null
       // Unmounts happen on tab switches and layout changes; keep the PTY alive
       // so open tabs retain shell/agent state until the user explicitly closes.
       onClipboardActionsChangeRef.current?.(pane.paneId, null)
@@ -311,6 +318,25 @@ export function XTermPane({ pane, tabKind, shell, argv, env, collapsed = false, 
       fitRef.current  = null
     }
   }, [pane.paneId, collapsed, shell, argv, env])
+
+  // Terminal tabs intentionally stay mounted so their PTYs survive navigation.
+  // Keep inactive xterms completely off the renderer hot path; when the tab is
+  // selected, refit first and then drain the bounded output tail over frames.
+  useEffect(() => {
+    const outputBuffer = outputBufferRef.current
+    if (!outputBuffer) return
+    if (!active) {
+      outputBuffer.setActive(false)
+      return
+    }
+    const frame = requestAnimationFrame(() => {
+      if (hostRef.current && hostHasUsableSize(hostRef.current)) {
+        try { fitRef.current?.fit() } catch { /* host detached */ }
+      }
+      outputBuffer.setActive(true)
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [active, collapsed])
 
   // Apply Typography settings to a live terminal without recreating it.
   // Refits afterwards so cols/rows stay accurate.

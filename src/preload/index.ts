@@ -57,6 +57,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
   minimize: () => ipcRenderer.send('win:minimize'),
   maximize: () => ipcRenderer.send('win:maximize'),
   close:    () => ipcRenderer.send('win:close'),
+  trayConfigure: (enabled: boolean) => ipcRenderer.invoke('tray:configure', enabled),
+  // Optional machine-local Brain lifecycle. Connection credentials stay in
+  // main except for the loopback session installed into the trusted renderer.
+  brainDesktopStatus: (probeHub?: boolean) => ipcRenderer.invoke('brain:desktopStatus', probeHub),
+  brainDesktopSetEnabled: (enabled: boolean) => ipcRenderer.invoke('brain:desktopSetEnabled', enabled),
+  brainDesktopStop: () => ipcRenderer.invoke('brain:desktopStop'),
+  brainDesktopStopAndQuit: () => ipcRenderer.invoke('brain:desktopStopAndQuit'),
+  brainDesktopRpc: (method: string, params: Record<string, unknown>) => ipcRenderer.invoke('brain:desktopRpc', method, params),
+  brainDesktopUploadAttachment: (root: string, name: string, body: Uint8Array) => ipcRenderer.invoke('brain:desktopUploadAttachment', root, name, body),
+  onBrainDesktopEvent: (cb: (event: unknown) => void) => {
+    const listener = (_e: unknown, event: unknown) => cb(event)
+    ipcRenderer.on('brain:desktopEvent', listener)
+    return () => ipcRenderer.removeListener('brain:desktopEvent', listener)
+  },
+  continuityStateGet: () => ipcRenderer.invoke('brain:desktopRpc', 'continuity.get', {}),
+  continuityStateUpdate: (values: Record<string, string>) => ipcRenderer.invoke('brain:desktopRpc', 'continuity.update', { values }),
   // Native Chromium page zoom, matching VS Code/Electron behavior. Unlike CSS
   // `zoom`, this updates the web contents viewport and relayouts the app.
   setUiZoom: (percent: number): void =>
@@ -149,6 +165,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     model?:      string
     mode?:       'ask' | 'plan' | 'build' | 'full'
     crewcoderMode?: import('../shared/crewcoder-types').CrewCoderMode
+    crewcoderApprovalMode?: import('../shared/crewcoder-types').CrewCoderApprovalMode
     toolPolicy?: 'default' | 'read-only'
     thinking?:   'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
     apiKey?:     string

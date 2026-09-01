@@ -21,7 +21,7 @@ import type { EffortLevel } from '../composer/EffortPicker'
 import type { McpServerConfig } from '../../hooks/useSettings'
 import type { VoiceControlSurface } from '../../../../shared/voice-types'
 import type { TurnChangeTarget } from '../thread/turn-changes-data'
-import type { CrewCoderMode } from '../../../../shared/crewcoder-types'
+import type { CrewCoderApprovalMode, CrewCoderMode } from '../../../../shared/crewcoder-types'
 
 type ThreadView = 'chat' | 'code' | 'md'
 
@@ -89,6 +89,8 @@ export interface SoloChatViewProps {
   setEffort: (e: EffortLevel) => void
   crewcoderMode?: CrewCoderMode
   setCrewCoderMode: (mode: CrewCoderMode | undefined) => void
+  crewcoderApprovalMode: CrewCoderApprovalMode
+  setCrewCoderApprovalMode: (mode: CrewCoderApprovalMode) => void
   // MCP — registry + this session's opt-in selection. Picker hidden when disabled.
   mcpEnabled?: boolean
   mcpServers?: McpServerConfig[]
@@ -151,7 +153,7 @@ export function SoloChatView(props: SoloChatViewProps) {
     agentLabel, modelLabel, voiceControl,
     gitOpen, setGitOpen, github, dirtyCount = 0, changesOpen, changesCount, toggleChangesOpen, onStartCrew, onOpenCanvas, onOpenTerminal, onHandoff,
     composerMode, setComposerMode, composer, setComposer, onSend, onRunCommand, onQueueFollowUp, queuedFollowUps = [], onRemoveQueuedFollowUp, isRunning, loadingStatus = null, onStop, agentRequest, custodyHalt, onReauthorizeCustody, onAgentRequestResponse,
-    agents, activeAgentId, setActiveAgentId, model, setModel, effort, setEffort, crewcoderMode, setCrewCoderMode,
+    agents, activeAgentId, setActiveAgentId, model, setModel, effort, setEffort, crewcoderMode, setCrewCoderMode, crewcoderApprovalMode, setCrewCoderApprovalMode,
     mcpEnabled, mcpServers, selectedMcpIds, onToggleMcp,
     shortcutOverrides, onOpenFile, onOpenTurnChange, editorInitialFile, onThreadContextMenu, onOpenPrompts, onOpenBrowser,
     delegationEnabled, onToggleDelegation,
@@ -269,6 +271,8 @@ export function SoloChatView(props: SoloChatViewProps) {
       onSelectEffort={setEffort}
       crewcoderMode={crewcoderMode}
       onSelectCrewCoderMode={setCrewCoderMode}
+      crewcoderApprovalMode={crewcoderApprovalMode}
+      onSelectCrewCoderApprovalMode={setCrewCoderApprovalMode}
       mcpEnabled={mcpEnabled}
       mcpServers={mcpServers}
       selectedMcpIds={selectedMcpIds}

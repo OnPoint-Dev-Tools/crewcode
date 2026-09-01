@@ -34,7 +34,9 @@ If a sharded file is missing or unreadable, CrewCode can lazily recover that ses
 
 ### Browser/Brain conversation scopes
 
-Remote browser replay history remains authoritative on the Brain, not in browser `localStorage`. The shared renderer supplies an opaque chat session id; the remote boundary namespaces it as `web:<session>` before `AgentBridgeService` reads or writes the same per-session conversation shards described above. This keeps desktop `thread:` keys and browser keys from aliasing each other.
+Remote browser and Brain-attached desktop replay history remains authoritative on the Brain, not in renderer `localStorage`. The shared renderer supplies an opaque chat session id; the remote boundary namespaces it as `web:<session>` before `AgentBridgeService` reads or writes the same per-session conversation shards described above. First-time desktop attachment copies missing state and creates non-destructive `web:` aliases for existing `thread:` shards. Provider-native resume IDs continue to use the desktop-compatible `<session>:<provider>` key, so switching clients does not lose resume state and switching providers cannot consume another provider's native id.
+
+The Brain also serializes prompt entry per conversation. Desktop and web may submit concurrently, but one conversation receives one provider turn at a time in FIFO order; different conversations remain concurrent. Stable bridge starts are coalesced so simultaneous first attachment does not create competing provider processes.
 
 Cross-thread browser handoff is a bounded Brain-side operation. The browser names a source chat and an already-owned destination bridge, but never downloads the source replay shard. The Brain summarizes the source with a disposable destination-provider bridge, appends only the resulting handoff packet to the destination shard, clears the destination's native resume id, and replays the combined destination history once on its next native-provider prompt. Stateless HTTP providers consume the updated shard directly. Missing source history, summary failure, a running destination, or lost destination ownership is an explicit failure and is never inferred as success.
 
@@ -95,6 +97,13 @@ The rich UI thread (the full renderer `Message[]` — user/agent/thinking/toolca
 ```
 
 Messages are stored opaquely — the main process never inspects their shape, so the renderer `Message` type stays renderer-only. IPC surface: `transcripts:loadAll`, `transcripts:save`, `transcripts:remove`, and a **synchronous** `transcripts:saveSyncBatch` used only on window teardown (an async `invoke` can be dropped before the renderer dies, so the last turn is written synchronously).
+
+In a Brain-attached runtime, `src/main/transcript-service.ts` owns the equivalent
+Brain-side shards. Since desktop and browser can save full arrays based on different
+snapshots, it merges by stable message identity (ignoring client-local display time
+where no durable id exists) before writing. New divergent rows are appended in Brain
+receipt order, known activity/tool/turn rows are replaced, and explicit
+`transcripts.remove` remains the only whole-thread deletion path.
 
 ### L1 — `crewcode:messagesByTab` localStorage (bounded fast-paint cache)
 

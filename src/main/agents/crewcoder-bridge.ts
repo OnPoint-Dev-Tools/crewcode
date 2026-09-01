@@ -14,7 +14,7 @@ import type {
 import { buildUsage } from './model-context'
 import { enrichUsageContextWindow } from './openrouter-model-context'
 import { tripwireForToolCall } from './dangerous-command'
-import { normalizeCrewCoderMode } from '../../shared/crewcoder-types'
+import { crewCoderApprovalForProfile, normalizeCrewCoderMode } from '../../shared/crewcoder-types'
 
 // CrewCoder is an ACP agent. CrewCode is the client: it spawns `crewcoder acp`
 // and maps the newline-delimited JSON-RPC stream onto the shared BridgeEvent API.
@@ -418,7 +418,7 @@ export async function createCrewCoderBridge(
   emit: EmitFn,
   requestUser?: RequestUserFn,
 ): Promise<AgentBridge> {
-  const args = ['acp', '--approval', 'review']
+  const args = ['acp', '--approval', crewCoderApprovalForProfile(opts.crewcoderMode, opts.crewcoderApprovalMode)]
   if (opts.crewcoderMode) args.push('--mode', normalizeCrewCoderMode(opts.crewcoderMode))
   const selectedModel = splitModel(opts.model)
   const env: Record<string, string> = { ...(opts.env ?? {}) }

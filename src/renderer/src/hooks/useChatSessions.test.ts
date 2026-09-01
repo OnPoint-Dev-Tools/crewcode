@@ -39,6 +39,16 @@ describe('chat session mode migration', () => {
     const migrated = migratePersistedSessions(sessions)
     expect(migrated.tab[0].mode).toBe('build')
     expect(migrated.tab[0].crewcoderMode).toBe('general')
+    expect(migrated.tab[0].crewcoderApprovalMode).toBe('review')
+  })
+
+  it('preserves explicit CrewCoder full access and fails invalid approval state closed', () => {
+    const base = {
+      id: 'tab', tabId: 'tab', label: 'Session', agentId: 'crewcoder', model: '',
+      mode: 'build' as const, crewcoderMode: 'crewcoder' as const, effort: 'high' as const, mcpServerIds: [],
+    }
+    expect(migratePersistedSessions({ tab: [{ ...base, crewcoderApprovalMode: 'full-access' as const }] }).tab[0].crewcoderApprovalMode).toBe('full-access')
+    expect(migratePersistedSessions({ tab: [{ ...base, crewcoderApprovalMode: 'invalid' as never }] }).tab[0].crewcoderApprovalMode).toBe('review')
   })
 
   it('preserves normal execution modes when CrewCoder uses its configured default', () => {
@@ -295,6 +305,54 @@ describe('chat session archiving', () => {
     const restored = hook.result.current.getAllSessions('chat-a').find(s => s.id === 'chat-a::s2')
     // A re-archive must get a fresh window, not inherit the old clock.
     expect(restored?.archivedAt).toBeUndefined()
+    hook.unmount()
+  })
+
+  it('records creation and last-used separately from archive time', () => {
+    const now = vi.spyOn(Date, 'now')
+    now.mockReturnValueOnce(1_000)
+    const hook = host()
+    act(() => { hook.result.current.ensureTab('chat-a', 'Project') })
+
+    expect(hook.result.current.getActiveSession('chat-a')).toMatchObject({
+      createdAt: 1_000,
+      lastUsedAt: 1_000,
+    })
+
+    act(() => { hook.result.current.touchLastUsed('chat-a', 'chat-a', 2_000) })
+    now.mockReturnValue(3_000)
+    act(() => { hook.result.current.setArchived('chat-a', 'chat-a', true) })
+
+    expect(hook.result.current.getAllSessions('chat-a')[0]).toMatchObject({
+      createdAt: 1_000,
+      lastUsedAt: 2_000,
+      archivedAt: 3_000,
+    })
+    now.mockRestore()
+    hook.unmount()
+  })
+
+  it('backfills legacy timestamps from transcript activity', () => {
+    const data = new Map<string, string>()
+    data.set('crewcode:sessionsByTab', JSON.stringify({
+      'chat-a': [
+        { id: 'chat-a', tabId: 'chat-a', label: 'Legacy', agentId: 'claude', model: '', mode: 'build', effort: 'high', mcpServerIds: [], enabledSkillIds: [] },
+      ],
+    }))
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => data.get(key) ?? null,
+      setItem: (key: string, value: string) => { data.set(key, value) },
+    })
+    const hook = renderHook(() => useChatSessions({
+      agentId: 'codex', model: '', mode: 'build', effort: 'medium',
+    }), undefined)
+
+    act(() => { hook.result.current.backfillSessionTimestamps({ 'chat-a': 8_000 }) })
+
+    expect(hook.result.current.getActiveSession('chat-a')).toMatchObject({
+      createdAt: 8_000,
+      lastUsedAt: 8_000,
+    })
     hook.unmount()
   })
 

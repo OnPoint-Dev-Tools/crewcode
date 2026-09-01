@@ -3,8 +3,10 @@ import ReactDOM from 'react-dom/client'
 import App from './App'
 import { SettingsProvider } from './hooks/useSettings'
 import { NotificationsProvider } from './hooks/useNotifications'
-import { initializeCrewCodeRuntime } from './runtime/crewcode-client'
+import { initializeCrewCodeRuntime, installCrewCodeRuntime } from './runtime/crewcode-client'
 import { WebConnectionScreen } from './runtime/WebConnectionScreen'
+import { createBrainAttachedCrewCodeClient } from './runtime/web-rpc-client'
+import { hydrateContinuityState } from './runtime/continuity-state'
 import './styles/fonts'
 import './styles/colors_and_type.css'
 import './styles/tailwind.css'
@@ -36,10 +38,11 @@ import './styles/system-monitor.css'
 ;(window as Window & { dragEvent?: unknown }).dragEvent = undefined
 
 const isElectronRuntime = !!window.electronAPI
-// Install the transport before any hook can issue a privileged request. Browser
-// startup mounts a non-privileged connection screen until its authenticated
-// adapter has negotiated the server contract.
-if (isElectronRuntime) initializeCrewCodeRuntime()
+
+function setStartupStatus(message: string): void {
+  const caption = document.getElementById('startup-screen-caption')
+  if (caption) caption.textContent = message
+}
 
 // Warm every declared web-font face at idle so the browser fetches/rasterizes
 // them up front. Without this, a font face is only loaded the first time text
@@ -63,14 +66,42 @@ if ('serviceWorker' in navigator && !isElectronRuntime) {
   })
 }
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    {isElectronRuntime ? (
-      <SettingsProvider>
-        <NotificationsProvider>
-          <App />
-        </NotificationsProvider>
-      </SettingsProvider>
-    ) : <WebConnectionScreen />}
-  </React.StrictMode>
-)
+async function bootstrap(): Promise<void> {
+  // Install the transport before any hook can issue a privileged request.
+  // An enabled local Brain keeps Electron's native integrations but becomes
+  // the durable backend, matching the web client's workspace/transcript/agent
+  // contract. Failure to probe it falls back to the legacy local runtime.
+  if (isElectronRuntime) {
+    const local = window.electronAPI!
+    try {
+      setStartupStatus('checking background Brain')
+      const status = await local.brainDesktopStatus()
+      if (status.attached) {
+        setStartupStatus('connecting to background Brain')
+        installCrewCodeRuntime({ kind: 'brain', client: createBrainAttachedCrewCodeClient(local) })
+        setStartupStatus('restoring workspaces and conversations')
+        await hydrateContinuityState()
+      } else {
+        setStartupStatus('loading local workspace')
+        initializeCrewCodeRuntime()
+      }
+    } catch {
+      setStartupStatus('loading local workspace')
+      initializeCrewCodeRuntime()
+    }
+  }
+
+  ReactDOM.createRoot(document.getElementById('root')!).render(
+    <React.StrictMode>
+      {isElectronRuntime ? (
+        <SettingsProvider>
+          <NotificationsProvider>
+            <App />
+          </NotificationsProvider>
+        </SettingsProvider>
+      ) : <WebConnectionScreen />}
+    </React.StrictMode>
+  )
+}
+
+void bootstrap()

@@ -21,6 +21,28 @@ type PromptFileMeta = Partial<Pick<Prompt, 'title' | 'description' | 'category' 
 
 const EMPTY_LIBRARY: LoadedCrewcodeLibrary = { prompts: [], skills: [], commands: [], error: null }
 
+/**
+ * The library is owned by App, so replacing it makes the full renderer tree
+ * reconcile. Polling must therefore publish only meaningful file changes, not
+ * fresh arrays (and fresh generated timestamps) from an unchanged scan.
+ */
+export function promptLibraryContentKey(library: LoadedCrewcodeLibrary): string {
+  return JSON.stringify({
+    prompts: library.prompts.map(prompt => [
+      prompt.id, prompt.title, prompt.description, prompt.category,
+      prompt.favorite, prompt.body,
+    ]),
+    skills: library.skills.map(skill => [
+      skill.id, skill.title, skill.description, skill.category,
+      skill.favorite, skill.body, skill.enabled,
+    ]),
+    commands: library.commands.map(command => [
+      command.id, command.name, command.description, command.body,
+    ]),
+    error: library.error,
+  })
+}
+
 function asString(value: unknown, fallback = ''): string {
   return typeof value === 'string' && value.trim() ? value.trim() : fallback
 }
@@ -184,25 +206,37 @@ export function useCrewcodePromptFiles(): LoadedCrewcodeLibrary {
     const api = window.electronAPI
     if (!api) { setLibrary(EMPTY_LIBRARY); return }
     let cancelled = false
+    let loading = false
 
-    const load = () => {
-      api.crewcodeConfigDir().then(config => {
+    const publish = (next: LoadedCrewcodeLibrary): void => {
+      if (cancelled) return
+      const nextKey = promptLibraryContentKey(next)
+      setLibrary(previous => promptLibraryContentKey(previous) === nextKey ? previous : next)
+    }
+
+    const load = async (): Promise<void> => {
+      // A slow filesystem/SSH scan must not accumulate behind the poll timer.
+      if (loading) return
+      loading = true
+      try {
+        const config = await api.crewcodeConfigDir()
         if (!config.ok || !config.path) throw new Error(config.error ?? 'CrewCode config dir unavailable')
-        return Promise.all([
+        const [prompts, skills, commands] = await Promise.all([
           loadPromptGroup(config.path, 'prompts', toPrompt),
           loadPromptGroup(config.path, 'skills', toSkill),
           loadCommandGroup(config.path),
         ])
-      }).then(([prompts, skills, commands]) => {
-        if (!cancelled) setLibrary({ prompts, skills, commands, error: null })
-      }).catch(err => {
-        if (!cancelled) setLibrary({ prompts: [], skills: [], commands: [], error: (err as Error).message })
-      })
+        publish({ prompts, skills, commands, error: null })
+      } catch (err) {
+        publish({ prompts: [], skills: [], commands: [], error: (err as Error).message })
+      } finally {
+        loading = false
+      }
     }
 
-    load()
+    void load()
     // Poll because users can add files outside CrewCode while Studio is open.
-    const interval = window.setInterval(load, 5000)
+    const interval = window.setInterval(() => { void load() }, 5000)
     return () => { cancelled = true; window.clearInterval(interval) }
   }, [])
 

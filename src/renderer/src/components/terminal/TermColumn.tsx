@@ -30,6 +30,8 @@ export interface TermColumnProps {
   agents:     AgentInfo[]
   /** Window-tab kind so XTermPane's reattach `ptyCreate` keeps YuHeard flags. */
   tabKind?:   string
+  /** False for mounted keepalive tabs; their xterms buffer without rendering. */
+  active?:    boolean
   onClose:    (paneId: string) => void
   onAddShell: () => PtyPane
   onAddAgent: (agentId: string) => PtyPane | undefined
@@ -65,7 +67,7 @@ const PANE_MENU_BASE: ChatContextMenuItem[] = [
 ]
 
 export function TermColumn({
-  panes, agents, tabKind, onClose, onAddShell, onAddAgent, onAddSsh, sshTargets = [],
+  panes, agents, tabKind, active = true, onClose, onAddShell, onAddAgent, onAddSsh, sshTargets = [],
   layout: externalLayout, onLayoutChange, onOpenUrl,
   pluginTerminalWatchers = [], onPluginTerminalWatcher, onSessionDrop,
 }: TermColumnProps) {
@@ -408,6 +410,7 @@ export function TermColumn({
                       <XTermPane
                         pane={p}
                         tabKind={tabKind}
+                        active={active}
                         shell={p.shell ?? (p.agentId ? (agents.find(a => a.id === p.agentId)?.path ?? undefined) : undefined)}
                         argv={p.argv}
                         collapsed={paneCollapsed}

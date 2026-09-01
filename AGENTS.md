@@ -15,6 +15,27 @@ Update corresponding Docs in [CrewCode Docs](/docs/), and [AGENTS.md](/AGENTS.md
 Git Workspace changed-file rows support stage/unstage controls and a context
 menu for stage, stage-all, unstage, and explicitly confirmed discard actions.
 
+Desktop system-tray behavior is opt-in. When enabled, closing the window hides
+it while app-owned work continues; the tray must expose explicit Open and Quit
+actions, and Quit must pass through normal cleanup. Disabling the preference
+removes the tray immediately. Retain the macOS Dock icon and do not expose tray
+behavior to web, Hub, or headless runtimes. See `docs/system-tray.md`.
+
+Chat sessions persist independent `createdAt`, `lastUsedAt`, and `archivedAt`
+timestamps. Advance `lastUsedAt` only when work is sent through the chat; the
+Archive page displays it as `MM/DD/YYYY`, while retention continues to use only
+`archivedAt`.
+
+Inactive standalone terminal tabs stay mounted to preserve their PTYs, but must
+pass `active={false}` through `TermColumn` to `XTermPane`. Buffer their output
+without `term.write()`, then refit and replay it with bounded frame work and
+xterm callback backpressure when activated. Keep bridge activity phase changes
+inside the existing 50 ms text/thinking stream flush. Idle App-owned pollers
+must preserve state identity when data is unchanged, remain single-flight, and
+use asynchronous filesystem/child-process APIs; never put sync I/O or
+`spawnSync` in an automatic refresh path. See
+`docs/terminal-stream-performance.md`.
+
 ## What is CrewCode?
 
 CrewCode is a desktop ACE (Agent Coding Environment) GUI built with Electron + React + TypeScript. It lets developers run a *crew* of AI coding agents (Claude Code, Codex, OpenCode, etc.) in parallel across local git worktrees, each in its own workspace with a chat thread, embedded terminal panes, and a code/markdown editor — all in one frameless native-feeling window.
@@ -148,6 +169,32 @@ Project-owned type declarations belong in `.ts` files. `.d.ts` is reserved for a
 
 The shared React renderer supports desktop and direct browser clients. New renderer code must obtain privileged operations through the typed CrewCode client boundary in `src/renderer/src/runtime/crewcode-client.ts`; do not introduce transport-specific HTTP/WebSocket calls in components. Electron installs `window.electronAPI`; the web adapter implements the same contract over authenticated, versioned HTTP/WebSocket RPC. Protocol envelopes live in `src/shared/remote-access-types.ts`; see `docs/web-remote-access.md`.
 
+Optional desktop/web continuity attaches Electron to an enrolled, detached background
+Brain through an owner-only loopback rendezvous. Once attached, the Brain store is
+authoritative for routed workspaces, transcripts, replay/resume state, terminals,
+agents, and the allowlisted workspace/chat catalogue; Electron retains native-only
+integrations through the composite client. Seed only missing Brain state, preserve
+provider-specific resume keys, and alias legacy `thread:` replay to `web:` without
+overwriting existing Brain data. Normal desktop close must not stop the Brain; only an
+explicit Stop Brain/Quit-and-stop action withdraws remote availability. Serialize
+prompts FIFO within one conversation while allowing different conversations to run in
+parallel, and merge divergent full transcript saves instead of letting stale clients
+clobber observed turns. Keep Hub scopes/registered-root checks intact and never treat
+this as file synchronization. Keep the pre-React startup surface present while Electron
+probes, attaches to, and hydrates from an enabled Brain; startup status is observational
+and must never imply attachment success before it is observed. Desktop & Web Settings
+must probe and show the Hub's observed canonical browser/passkey origin without exposing
+its machine credential; never substitute the enrollment address for an observed browser
+origin or imply that enabling Brain starts or proves reachability of the separate Hub
+service. See
+`docs/desktop-web-continuity.md`.
+
+Source-checkout remote-access scripts are `npm run enroll -- --hub <origin>`, `npm run
+brain`, and `npm run hub:mobile`. Keep mobile Hub fail-closed around an existing
+Tailscale Serve configuration: replacement requires explicit `--tailscale-replace`.
+Do not run the foreground `npm run brain` against the default Brain data directory
+while Electron Background Brain owns it.
+
 Remote-access credentials are authority boundaries. Pairing tokens must remain short-lived, memory-only, and single-use. Persist only device-session digests in owner-only atomic stores; enforce expiry and revocation. Browser HTTP/WebSocket origins must match exactly or be explicitly configured—never reflect arbitrary `Origin`/forwarded headers. Keep authentication limiters bounded, and do not hardcode CJ's `crewcode.logixhub.icu` deployment as a default Hub URL.
 
 Browser delegation keeps its agent-facing endpoint Brain-loopback and bearer-scoped;
@@ -158,7 +205,7 @@ the trusted renderer plus manifest permission gate. Remote GitHub UI may drive t
 Brain's `gh` device login and registered-workspace publishing, but must never expose
 the Brain's GitHub credential or allow remote logout.
 
-The self-hosted Hub is a separate `crewcode hub` process, not Electron renderer state. `crewcode hub --local-brain` may spawn a sibling `crewcode brain` on the Hub host after owner passkey setup; keep Hub SQLite and Brain credentials in separate data dirs, do not default-grant scopes, and still enroll extra machines with `crewcode enroll` then `crewcode brain`. Keep its SQLite store owner-only and server-side; persist WebAuthn public credentials and only digests of browser/CSRF secrets. Bootstrap credentials and WebAuthn challenges stay short-lived and memory-only. Require user verification, exact configured RP origin/id, one-use challenges, secure HttpOnly SameSite cookies, and CSRF checks for mutations. Machine enrollment tokens must also stay short-lived, memory-only, single-use, and rate-limited; persist only machine bearer digests at the Hub and keep the brain credential file owner-only. Presence and relay connections are outbound-only and revocation must fail closed. Hub connection tickets remain short-lived, memory-only, one-shot, browser-session/user/machine bound, and exact-origin protected. Relay application frames must stay end-to-end encrypted and ordered; the Hub may route metadata but must not receive RPC/source/terminal/agent plaintext. Do not let Hub identity, machine presence, or requested ticket scope imply Brain execution authority: `crewcode brain` defaults to no RPC grants, and every decrypted method must pass both explicit Brain-local scope and registered-workspace validation. Relay loss means pending outcomes are interrupted, never successful.
+The self-hosted Hub is a separate `crewcode hub` process, not Electron renderer state. `crewcode hub --local-brain` may spawn a sibling `crewcode brain` on the Hub host after owner passkey setup; keep Hub SQLite and Brain credentials in separate data dirs, do not default-grant scopes, and still enroll extra machines with `crewcode enroll` then `crewcode brain`. Keep its SQLite store owner-only and server-side; persist WebAuthn public credentials and only digests of browser/CSRF secrets. Bootstrap credentials and WebAuthn challenges stay short-lived and memory-only. Require user verification, exact configured RP origin/id, one-use challenges, secure HttpOnly SameSite cookies, and CSRF checks for mutations. Machine enrollment tokens must also stay short-lived, memory-only, single-use, and rate-limited; persist only machine bearer digests at the Hub and keep the brain credential file owner-only. Presence and relay connections are outbound-only and revocation must fail closed. Hub connection tickets remain short-lived, memory-only, one-shot, browser-session/user/machine bound, and exact-origin protected. Relay application frames must stay end-to-end encrypted and ordered; the Hub may route metadata but must not receive RPC/source/terminal/agent plaintext. Do not let Hub identity, machine presence, or requested ticket scope imply Brain execution authority: `crewcode brain` defaults to no RPC grants, and every decrypted method must pass both explicit Brain-local scope and registered-workspace validation. Relay loss means pending outcomes are interrupted, never successful. Preserve the first observed encrypted-relay close reason through browser startup and record bounded close metadata (peer, WebSocket code, and reason) in the Hub audit store; never replace it with a later generic disconnected error or log relay payloads. Brain-to-browser encrypted frames must use bounded callback-backed ordering and advance their sequence/nonce only after the preceding WebSocket send is accepted; serialization, transport, or queue failure closes the affected tunnel rather than creating a sequence hole.
 
 Remote cross-thread conversation handoff stays Brain-local. Namespace browser replay shards under `web:`; never copy the replay store into browser persistence. Require an authenticated owner-held destination bridge and Brain-local `agent` scope, refuse handoff while the destination is running, perform bounded disposable summarization on the Brain, clear the destination native resume id, and replay the combined destination history exactly once on its next native-provider prompt. Missing history, lost ownership, or summary failure is an explicit failure, never inferred success.
 
@@ -174,7 +221,7 @@ The design system lives in `.design/crewcode-design-system/`. The canonical CSS 
 
 Renderer components may use Tailwind v4 utilities through the utilities-only integration in `src/renderer/src/styles/tailwind.css`. Preflight must stay disabled so incremental conversions do not reset unrelated app surfaces. Use the `cc-*` semantic Tailwind colors, which map to the canonical live CSS tokens; see `docs/tailwind-renderer.md`.
 
-The Prompt/Skills Studio phone list is an edge-to-edge surface, not a centered percentage-width card. Keep the `.pb` → `.pb-left` → `.pb-inner` container chain at `width: 100%`, `max-width: 100%`, and `min-width: 0`. Do not render the category-chip scroller on phones; retain only its compact management/favorite/layout toolbar. Phone cards must be non-shrinking children of the scrollable flex list, grow to fit their wrapped title and description, and contain overflow without line clamps. The phone detail editor must not offer or render Split mode: resolve a stored desktop Split state to Source, retain explicit Source/Preview choices, and let `.pd-source` fill the remaining body height. Actionable controls remain at least 36px and text inputs remain at the iOS-safe 16px.
+The Prompt/Skills Studio desktop rail keeps its header, filters, and footer fixed while `.pb-list` scrolls independently; preserve the `.pb-left` → `.pb-inner` → `.pb-list` flex-height chain and `min-height: 0` above 768px. The phone list is an edge-to-edge surface, not a centered percentage-width card. Keep the `.pb` → `.pb-left` → `.pb-inner` container chain at `width: 100%`, `max-width: 100%`, and `min-width: 0`. Do not render the category-chip scroller on phones; retain only its compact management/favorite/layout toolbar. Phone cards must be non-shrinking children of the scrollable flex list, grow to fit their wrapped title and description, and contain overflow without line clamps. The phone detail editor must not offer or render Split mode: resolve a stored desktop Split state to Source, retain explicit Source/Preview choices, and let `.pd-source` fill the remaining body height. Actionable controls remain at least 36px and text inputs remain at the iOS-safe 16px.
 
 The composer PromptPicker has separate Prompts and Skills tabs backed by the shared prompt library. Prompt selection inserts into the visible composer (using variable fill when required); Skill selection toggles only the resolved session's `enabledSkillIds`, remains open for multi-select, and never inserts the skill body or mutates a global enable flag. Keep enabled state visible and phone tabs/rows at least 44px/48px respectively.
 
@@ -208,7 +255,7 @@ Three tsconfigs compose via project references:
 
 ## Current state
 
-Read this file only when working on any of the features below and need the Current state of them `CrewCoder provider`, `ACP Grok Build`, `Sidebar Folder Creation`, `Crew Supervisor`, `Delegated Threads`,`Chat Archiving`, `Hide work Logs`, `Realtime Voice Orb`, `Notifcation Sound`, `Agent Messages`, `Agent Task Activity`, `Cusromization Panel`, `Queued Messages`, `Composer Execution Modes & reasoning`, `Claude SDK Global skills isolation`, `Provider Switch Handoff & Compact`, `Chat`, `Drawer session split`, `Markdown Editor`, `Code Editor`, `Workbench Mode`, `Git Workspace/Sidebar`, `Mobile-responsive Pages`, [Current State](docs/current-state.md)
+Read this file only when working on any of the features below and need the Current state of them `CrewCoder provider`, `ACP Grok Build`, `Sidebar Folder Creation`, `Crew Supervisor`, `Delegated Threads`,`Chat Archiving`, `Hide work Logs`, `Realtime Voice Orb`, `Notifcation Sound`, `App updates`, `Agent Messages`, `Agent Task Activity`, `Cusromization Panel`, `Queued Messages`, `Composer Execution Modes & reasoning`, `Claude SDK Global skills isolation`, `Provider Switch Handoff & Compact`, `Chat`, `Drawer session split`, `Markdown Editor`, `Code Editor`, `Workbench Mode`, `Git Workspace/Sidebar`, `Mobile-responsive Pages`, [Current State](docs/current-state.md)
 
 Agent activity must not depend on prompt instructions or provider tool compliance. Every bridge-backed solo, crew-lane, or supervisor dispatch creates a dedicated CrewCode-owned `activity` transcript record for that turn; raw PTY agents are excluded because their terminal outcome is not observable. Advance it only from observed bridge events: `turn_start` begins work, tool categories may update its deterministic phase, and normal `turn_end` completes it. Prompt rejection, abort, stop, bridge error/closure, custody halt, or lost runtime becomes cancelled/interrupted, never success. Terminal activity is immutable, and a persisted running record from another app runtime projects as interrupted. Provider-native todo/plan/task snapshots may replace the generic row only while the CrewCode lifecycle is active; the CrewCode terminal outcome wins over stale native pending/in-progress state.
 
@@ -216,7 +263,7 @@ CrewCoder `crew-tasks` activity remains provider-owned and optional. Preserve th
 
 YuHeard PTY integration must remain bundle-safe. `PtyService` receives the active YuHeard server through an injected accessor and statically imports its shell-wrapper helpers; do not use runtime relative `require('./yuheard-*')` calls from PTY code because electron-vite can move that code into a chunk without emitting the required sibling modules. CLI launch, initial TUI paint, and prompt submission are not completed turns. Codex must use only its exact `approval-requested` and `agent-turn-complete` hook events—never generic PTY idle/BEL heuristics—while output fallback detection remains available for agents without an exact hook. Suppress every YuHeard surface only when the exact completing terminal owns keyboard focus in the focused CrewCode window; a different pane must still alert. See `docs/yuheard.md`.
 
-CrewCoder agent profiles are separate from CrewCode execution modes. Show the desktop model-row profile picker only when the installed CrewCoder provider is active; disable it during a running turn, persist the optional session-scoped `crewcoderMode`, omit `--mode` for Configured default, and pass only `general | crewcoder | plugin | extension` to `crewcoder acp --mode`. A concrete profile locks the underlying CrewCode permission policy to Build and disables Ask/Plan/Build/Full on desktop and phone; Configured default re-enables those controls. Never retain a hidden prior Ask, Plan, or Full Access policy under a concrete profile. A profile change is a launch-flag change, so drop only the idle CrewCoder bridge and native-resume it on the next prompt. Never route Ask/Plan/Build/Full into CrewCoder's `--mode`. The `crewcoder` profile's plan gate is CrewCoder-owned: project `crewcoder_clarify` / `crewcoder_propose_plan` into the activity overlay and send `/approve-plan` as a prompt, never as a tool-permission Allow/Deny. See `docs/crewcoder-provider.md`.
+CrewCoder agent profiles are separate from CrewCode execution modes. Show the desktop model-row profile picker only when the installed CrewCoder provider is active; disable it during a running turn, persist the optional session-scoped `crewcoderMode`, omit `--mode` for Configured default, and pass only `general | crewcoder | plugin | extension` to `crewcoder acp --mode`. A concrete profile locks the underlying CrewCode permission policy to Build and disables Ask/Plan/Build/Full on desktop and phone; Configured default re-enables those controls. Never retain a hidden prior Ask, Plan, or Full Access policy under a concrete profile. When the concrete `crewcoder` profile is active, show the separate desktop approval picker and persist `crewcoderApprovalMode`; expose only CrewCoder's `review`, `always`, `never`, `full-access`, and `sandboxed` values, with `review` as the fail-closed default. Treat approval changes as immutable launch authority: disable them during a running turn, drop only the idle bridge, include the value in custody, and native-resume on the next prompt. Never suppresses prompts but continues to block dangerous calls; Sandboxed applies the native sandbox policy where supported; Full access bypasses CrewCoder approval requests and dangerous-command blocking, so label that risk truthfully and never imply CrewCode Build still interposes. Never route Ask/Plan/Build/Full into CrewCoder's `--mode`. The `crewcoder` profile's plan gate is CrewCoder-owned: project `crewcoder_clarify` / `crewcoder_propose_plan` into the activity overlay and send `/approve-plan` as a prompt, never as a tool-permission Allow/Deny. See `docs/crewcoder-provider.md`.
 
 Provider context handoff is initiated from the Solo Chat header or `/handoff`. Its Used chats tab mirrors the current workspace's live Sessions catalogue across chat tabs; starting either a new or used destination closes the card immediately and moves progress/failure feedback to the destination meter. Preserve each selected destination's owner tab/worktree, existing provider/model/effort locking, and disposable destination-provider summary flow documented in `docs/provider-context-handoff.md`.
 

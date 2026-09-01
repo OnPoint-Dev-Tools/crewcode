@@ -36,13 +36,30 @@ a turn is running so authority cannot change underneath live execution. It
 stays absent for unavailable or inactive providers and from the phone layout,
 where the desktop model-row reveal itself is intentionally hidden.
 
+When the concrete **CrewCoder** profile is selected, the row also shows a
+session-scoped approval picker with all native policies:
+
+- **Review** (`review`) lets safe calls proceed and asks for mutations and dangerous calls.
+- **Always** (`always`) asks for every non-safe call.
+- **Never** (`never`) shows no prompts while continuing to block dangerous calls.
+- **Full access** (`full-access`) accepts calls without prompts.
+- **Sandboxed** (`sandboxed`) shows no prompts and runs non-dangerous calls through the sandbox policy where supported.
+
+Older or invalid persisted values fail closed to Review. Changing the policy
+drops only the idle CrewCoder bridge and native-resumes it on the next prompt;
+both controls are disabled during a running turn. Full access is an explicit
+authority escalation: CrewCoder stops emitting approval requests and permits
+dangerous commands, so CrewCode's permission overlay and dangerous-command
+tripwire cannot interpose on those provider-native calls.
+
 A concrete CrewCoder profile also owns the agent's behavioral mode, so CrewCode
 locks its separate execution policy to **Build** and disables the
-Ask/Plan/Build/Full control. Build remains active underneath as the approval
-gate: writes still require CrewCode's permission overlay instead of becoming
-implicitly Full Access. The phone model menu disables its Mode row for the same
-session. Returning to **Configured default** re-enables the execution-mode
-control; the session remains on Build until the user chooses another policy.
+Ask/Plan/Build/Full control. Under the default Review policy, Build remains the
+CrewCode permission gate. Explicit CrewCoder Full access bypasses that native
+request path and must not be described as Build-protected. The phone model menu
+disables its Mode row for the same session. Returning to **Configured default**
+re-enables the execution-mode control; the session remains on Build until the
+user chooses another policy.
 
 The `crewcoder` profile adds a runtime inspect → clarify → plan → approve
 sequence inside CrewCoder. CrewCode does not enforce that gate; it projects
@@ -50,7 +67,8 @@ sequence inside CrewCoder. CrewCode does not enforce that gate; it projects
 and sends `/approve-plan` as a user prompt when the user clicks **approve plan**
 or picks the CrewCoder slash command. That prompt is not `/approve` and does
 not settle a `session/request_permission` card. After plan approval, CrewCode
-Build permission prompts still apply to mutating tools. Revising a proposed
+handles any permission requests emitted by the selected native approval policy;
+Never, Full access, and Sandboxed may deliberately emit none. Revising a proposed
 plan is a normal composer message; CrewCoder treats that as a new
 `awaiting_plan` cycle rather than approval.
 
@@ -182,8 +200,11 @@ CrewCoder's separate agent-profile `--mode` option (`general`, `crewcoder`,
 `plugin`, `extension`). The selected `Session.crewcoderMode` is the only value
 allowed onto that launch flag. It is process-scoped, whereas CrewCode execution
 mode remains the permission policy described above. A concrete CrewCoder
-profile fixes that policy to Build; it must never inherit a hidden prior Ask,
-Plan, or Full Access value.
+profile fixes that CrewCode policy to Build; it must never inherit a hidden
+prior Ask, Plan, or Full Access value. `Session.crewcoderApprovalMode` is a
+separate native authority value. CrewCode passes only `review`, `always`,
+`never`, `full-access`, or `sandboxed` to `--approval`, defaults
+missing/invalid values to `review`, and records the value in execution custody.
 
 ## Filesystem and SSH behavior
 

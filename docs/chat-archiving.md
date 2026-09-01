@@ -12,6 +12,26 @@ full on-disk transcript all survive.
   surface. The **Archive page** (App menu → Archive) is the one place to see
   them: a single cross-workspace list with search, a workspace filter, per-row
   Restore/Delete, and the retention control.
+- Every archive row shows the chat's **last-used calendar date** as
+  `MM/DD/YYYY`. Archiving does not change that value: a chat last used on
+  `08/28/2026` and archived on `08/30/2026` still displays `08/28/2026`.
+
+## Chat timestamps
+
+Each newly created `Session` records two independent wall-clock values:
+
+- `createdAt` is stamped once when the chat is created.
+- `lastUsedAt` starts at creation and advances only when work is sent through
+  that chat (including normal prompts, follow-ups, voice sends, delegated
+  prompts, browser-grab sends, handoffs, and `/compact`). Opening, renaming,
+  pinning, restoring, or archiving a chat does not advance it.
+
+The Archive page displays and sorts by `lastUsedAt`; `archivedAt` remains
+separate and continues to drive retention. Sessions saved before these fields
+existed are backfilled once from transcript modification times, which are the
+best available evidence of actual activity because archive/restore does not
+rewrite transcripts. If no transcript metadata exists, CrewCode uses the
+archive timestamp or first-launch-after-upgrade time as a non-zero fallback.
 
 ## Retention
 
@@ -71,8 +91,8 @@ of the session in `crewcode:sessionsByTab`.
 
 | File | Role |
 | --- | --- |
-| `src/renderer/src/types/index.ts` | `Session.archived`, `Session.archivedAt`, `archive` tab kind |
-| `src/renderer/src/hooks/useChatSessions.ts` | `setArchived`, `backfillArchivedAt`, live-only accessors, id allocation |
+| `src/renderer/src/types/index.ts` | `Session.createdAt`, `Session.lastUsedAt`, `Session.archived`, `Session.archivedAt`, `archive` tab kind |
+| `src/renderer/src/hooks/useChatSessions.ts` | session timestamp creation/backfill/touch, `setArchived`, `backfillArchivedAt`, live-only accessors, id allocation |
 | `src/renderer/src/hooks/archive-retention.ts` | pure expiry/age rules |
 | `src/renderer/src/hooks/useSettings.tsx` | `archiveRetentionDays` + its fail-safe normalization |
 | `src/renderer/src/App.tsx` | `archiveSession` / `restoreSession` / `renameSession`, live vs archived grouping, page wiring |

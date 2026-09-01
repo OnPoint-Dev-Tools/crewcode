@@ -57,6 +57,8 @@ import {
 
 import { useTweaks }      from './hooks/useTweaks'
 import { useSettings, getCurrentSettings, effectiveShell } from './hooks/useSettings'
+import { useUpdaterNotices } from './hooks/useUpdaterNotices'
+import { requestSettingsSection } from './components/settings/settings-section-focus'
 import { useMcpFileServers } from './hooks/useMcpFileServers'
 import { mergeMcpServers } from './hooks/session-mcp-selection'
 import { useNotifications } from './hooks/useNotifications'
@@ -355,6 +357,17 @@ export default function App() {
   // browser/empty-state settings use this app-level destination.
   const [standaloneSettingsOpen, setStandaloneSettingsOpen] = useState(false)
   useEffect(() => { if (activeWs) setStandaloneSettingsOpen(false) }, [activeWs])
+  const openUpdatesSettings = useCallback(() => {
+    requestSettingsSection('updates')
+    if (!activeWs) {
+      setStandaloneSettingsOpen(true)
+      return
+    }
+    const existing = tabs.find(t => t.kind === 'settings')
+    if (existing) setActiveTabId(existing.id)
+    else handleNewTab('settings')
+  }, [activeWs, tabs, setActiveTabId, handleNewTab])
+  useUpdaterNotices(openUpdatesSettings)
   const [canvasPanesByTab, setCanvasPanesByTab] = useLocalStorageJsonState<Record<string, CanvasPaneState[]>>(WORKBENCH_PANES_STORAGE, {})
   const canvasPaneCounterRef = useRef(0)
   const canvasPaneIds = useMemo(
@@ -727,17 +740,28 @@ export default function App() {
 
   const [github, setGithub] = useState<GitHubStatus | null>(null)
   useEffect(() => {
-    const api = window.electronAPI
-    if (!api || !effectivePath || activeWorkspace.kind === 'folder') { setGithub(null); return }
+    if (!effectivePath || activeWorkspace.kind === 'folder') { setGithub(null); return }
+    const api = getCrewCodeClient()
     let cancelled = false
-    const load = () => {
-      api.githubStatus(effectivePath).then(status => {
-        if (cancelled) return
-        setGithub(status && !('error' in status) ? status : null)
-      }).catch(() => { if (!cancelled) setGithub(null) })
+    let loading = false
+    const publish = (next: GitHubStatus | null): void => {
+      if (cancelled) return
+      setGithub(previous => JSON.stringify(previous) === JSON.stringify(next) ? previous : next)
     }
-    load()
-    const id = window.setInterval(load, 60_000)
+    const load = async (): Promise<void> => {
+      if (loading) return
+      loading = true
+      try {
+        const status = await api.githubStatus(effectivePath)
+        publish(status && !('error' in status) ? status : null)
+      } catch {
+        publish(null)
+      } finally {
+        loading = false
+      }
+    }
+    void load()
+    const id = window.setInterval(() => { void load() }, 60_000)
     return () => { cancelled = true; window.clearInterval(id) }
   }, [effectivePath, activeWorkspace.kind])
 
@@ -1197,6 +1221,15 @@ export default function App() {
     if (ws.loading) return
     chatSessions.backfillArchivedAt()
   }, [ws.loading, chatSessions.backfillArchivedAt])
+
+  useEffect(() => {
+    if (ws.loading) return
+    let cancelled = false
+    void getCrewCodeClient().transcriptsMtimes()
+      .then(mtimes => { if (!cancelled) chatSessions.backfillSessionTimestamps(mtimes) })
+      .catch(() => { if (!cancelled) chatSessions.backfillSessionTimestamps({}) })
+    return () => { cancelled = true }
+  }, [ws.loading, chatSessions.backfillSessionTimestamps])
 
   const renameSession = useCallback((session: Session, label: string) => {
     const next = label.trim()
@@ -1757,6 +1790,7 @@ export default function App() {
     const cwd = session.delegatedWorktreePath ?? workspace.path
     const pane = [...pty.panes].reverse().find(p => p.tabId === session.tabId && p.agentId === session.agentId) ?? null
 
+    chatSessions.touchLastUsed(session.tabId, session.id)
     await sendChatSessionPrompt({
       text,
       activeWs: wsId,
@@ -1786,7 +1820,7 @@ export default function App() {
       sessionHasExistingMessages: (useMessagesStore.getState().messagesByTab[session.id]?.length ?? 0) > 0,
     })
   }, [
-    activeWorkspace, activeWs, agents, appliedSkills.markDelivered, bridges, lastDeliveredMode,
+    activeWorkspace, activeWs, agents, appliedSkills.markDelivered, bridges, chatSessions, lastDeliveredMode,
     markModeDelivered, pty, setMessagesByTab, settings.modePrompts,
     skillsDeliveredTo, workspaceByChatTabId, ws.workspaces,
   ])
@@ -1963,6 +1997,7 @@ export default function App() {
     setActiveTabId(targetTabId)
     chatSessions.activate(targetTabId, targetSessionId)
 
+    chatSessions.touchLastUsed(targetTabId, targetSessionId)
     await sendChatSessionPrompt({
       text: prompt,
       activeWs,
@@ -2463,7 +2498,7 @@ export default function App() {
     chatSessions.activate(session.tabId, session.id)
   }, [chatSessions, jumpToWorkspaceTab, restoreChatTabInWorkspace, workspaceByChatTabId, ws.workspaces])
 
-  const renderTabContent = (tab: Tab | null) => {
+  const renderTabContent = (tab: Tab | null, terminalActive = true) => {
     const tabKind = standaloneSettingsOpen && !activeWs ? 'settings' : (tab?.kind ?? 'chat')
     const tabId = tab?.id ?? activeTabId
     const sessionOwnerTabId = tab?.sessionOwnerTabId ?? tabId
@@ -2958,6 +2993,7 @@ export default function App() {
             panes={tabPanes}
             agents={agents}
             tabKind="terminal"
+            active={terminalActive}
             onSessionDrop={payload => handleSessionDrop(payload, tabId)}
             onClose={pty.close}
             onAddShell={() => pty.addShell(activeWs, tabId, effectivePath, effectiveShell(settings))}
@@ -3018,6 +3054,7 @@ export default function App() {
       case 'start-crew':       startCrewFromAnywhere(); return
       case 'start-canvas':     startCanvasFromAnywhere(); return
       case 'updates':          window.electronAPI?.updaterCheck?.(); return
+      case 'quit-stop-brain':  void window.electronAPI?.brainDesktopStopAndQuit(); return
       case 'docs':             window.electronAPI?.openExternal?.('https://crewcode-docs.logixhub.icu'); return
       case 'toggle-menulet':
         setSystemMonitorOpen(false)
@@ -3644,7 +3681,7 @@ export default function App() {
                     className={isActiveTerminal ? 'terminal-keepalive active' : 'terminal-keepalive hidden'}
                     aria-hidden={isActiveTerminal ? undefined : 'true'}
                   >
-                    {renderTabContent(tab)}
+                    {renderTabContent(tab, isActiveTerminal)}
                   </div>
                 )
               })}

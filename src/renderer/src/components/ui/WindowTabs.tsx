@@ -322,7 +322,7 @@ export const WindowTabs = memo(function WindowTabs({
           onPick={onAppMenuAction}
         />
         <div className="titlebar-spacer" />
-        {getCrewCodeRuntime().kind === 'electron' && (
+        {getCrewCodeRuntime().kind !== 'web' && (
           <div className="winrt">
             <div className="winctrl" onClick={() => window.electronAPI?.minimize()}><Icon name="min" size={14} stroke={1.5} /></div>
             <div className="winctrl" onClick={() => window.electronAPI?.maximize()}><Icon name="max" size={11} stroke={1.5} /></div>

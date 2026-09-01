@@ -18,6 +18,29 @@ Each notification card features:
 - Smooth enter/exit animations with staggered stacking effect
 - Animated progress bar showing remaining time until auto-dismiss
 
+## App updates
+
+Packaged desktop builds surface GitHub Releases through this same bar so you do
+not have to open **Settings → Updates** to learn a newer CrewCode exists.
+
+`useUpdaterNotices` (mounted from `App`) pushes the stored channel/policy to
+main on launch, then listens for `updater:event`:
+
+| Event | Bar | Click |
+| --- | --- | --- |
+| `available` | `CrewCode {version} is available` | Opens Settings and scrolls to **Updates** |
+| `downloaded` | `CrewCode {version} is ready · restart to install` | Same |
+
+Those cards stay until you dismiss them (`duration: 0`). Checking, progress,
+errors, and "already current" stay off the bar so the 30-second launch
+auto-check cannot spam. Repeating the same version/phase does not stack a
+second card; `downloaded` replaces `available` for that version.
+
+This is desktop-only. Browser/Hub sessions never update the Electron binary
+this way, and `npm run dev` still broadcasts `unconfigured` instead of
+polling GitHub. Download and restart remain on the Settings card — the bar
+does not quit the app. See `docs/releasing.md`.
+
 ## Native desktop notifications
 
 Completed agent turns can also send a native OS notification while CrewCode is

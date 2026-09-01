@@ -13,7 +13,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import type { Session, ModeLevel } from '../types'
 import { normalizeModeLevel } from '../app-constants'
 import type { EffortLevel } from '../components/composer/EffortPicker'
-import { normalizeCrewCoderMode } from '../../../shared/crewcoder-types'
+import { normalizeCrewCoderApprovalMode, normalizeCrewCoderMode } from '../../../shared/crewcoder-types'
 
 type SessionsByTab = Record<string, Session[]>
 type ActiveByTab   = Record<string, string>
@@ -76,6 +76,7 @@ function liveSessions(list: Session[]): Session[] {
 }
 
 function freshSession(tabId: string, n: number, d: SessionDefaults, projectName?: string): Session {
+  const now = Date.now()
   return {
     id:      newSessionId(tabId, n),
     tabId,
@@ -88,6 +89,8 @@ function freshSession(tabId: string, n: number, d: SessionDefaults, projectName?
     enabledSkillIds: [],
     modePromptsEnabled: true,
     initialBranch: d.initialBranch?.trim() || undefined,
+    createdAt: now,
+    lastUsedAt: now,
   }
 }
 
@@ -136,6 +139,9 @@ export function migratePersistedSessions(sessionsByTab: Record<string, Persisted
         ? 'build'
         : normalizeModeLevel(session.mode),
       ...(session.crewcoderMode === undefined ? {} : { crewcoderMode: normalizeCrewCoderMode(session.crewcoderMode) }),
+      ...(session.agentId === 'crewcoder'
+        ? { crewcoderApprovalMode: normalizeCrewCoderApprovalMode(session.crewcoderApprovalMode) }
+        : {}),
       enabledSkillIds: session.enabledSkillIds ?? [],
       modePromptsEnabled: session.modePromptsEnabled ?? true,
     })),
@@ -281,6 +287,9 @@ export function useChatSessions(defaults: SessionDefaults) {
       mode:    src.mode,
       effort:  src.effort,
       ...(src.crewcoderMode ? { crewcoderMode: src.crewcoderMode } : {}),
+      ...(src.agentId === 'crewcoder'
+        ? { crewcoderApprovalMode: normalizeCrewCoderApprovalMode(src.crewcoderApprovalMode) }
+        : {}),
       mcpServerIds: [...(src.mcpServerIds ?? [])],
       enabledSkillIds: [...(src.enabledSkillIds ?? [])],
       modePromptsEnabled: src.modePromptsEnabled ?? true,
@@ -333,12 +342,60 @@ export function useChatSessions(defaults: SessionDefaults) {
     setActiveByTab(prev => ({ ...prev, [tabId]: sessionId }))
   }, [])
 
-  const update = useCallback((tabId: string, sessionId: string, patch: Partial<Pick<Session, 'agentId' | 'model' | 'mode' | 'crewcoderMode' | 'effort' | 'label' | 'mcpServerIds' | 'enabledSkillIds' | 'modePromptsEnabled' | 'delegationEnabled' | 'delegationClosedAt' | 'pinned' | 'externalDirectories' | 'initialBranch'>>) => {
+  const update = useCallback((tabId: string, sessionId: string, patch: Partial<Pick<Session, 'agentId' | 'model' | 'mode' | 'crewcoderMode' | 'crewcoderApprovalMode' | 'effort' | 'label' | 'mcpServerIds' | 'enabledSkillIds' | 'modePromptsEnabled' | 'delegationEnabled' | 'delegationClosedAt' | 'pinned' | 'externalDirectories' | 'initialBranch'>>) => {
     if (!tabId) return
     setSessionsByTab(prev => {
       const list = prev[tabId] ?? []
       const next = list.map(s => s.id === sessionId ? { ...s, ...patch } : s)
       return { ...prev, [tabId]: next }
+    })
+  }, [])
+
+  // Sending work to a chat is the canonical "used" event. Merely opening,
+  // renaming, pinning, restoring, or archiving a chat must not move this clock.
+  const touchLastUsed = useCallback((tabId: string, sessionId: string, usedAt = Date.now()) => {
+    if (!tabId || !Number.isFinite(usedAt)) return
+    setSessionsByTab(prev => {
+      const list = prev[tabId] ?? []
+      if (!list.some(s => s.id === sessionId)) return prev
+      return {
+        ...prev,
+        [tabId]: list.map(s => s.id === sessionId
+          ? { ...s, createdAt: s.createdAt ?? usedAt, lastUsedAt: usedAt }
+          : s),
+      }
+    })
+  }, [])
+
+  // Existing sessions predate these fields. Transcript mtimes are the best
+  // available evidence of their last real activity because archive/restore do
+  // not rewrite transcripts. If no transcript exists, archivedAt (or upgrade
+  // time for a blank live chat) is the safest non-zero fallback.
+  const backfillSessionTimestamps = useCallback((transcriptMtimes: Record<string, number>) => {
+    const upgradeTime = Date.now()
+    setSessionsByTab(prev => {
+      let changed = false
+      const next: SessionsByTab = {}
+      for (const [tabId, list] of Object.entries(prev)) {
+        next[tabId] = list.map(s => {
+          if (typeof s.createdAt === 'number' && Number.isFinite(s.createdAt)
+            && typeof s.lastUsedAt === 'number' && Number.isFinite(s.lastUsedAt)) return s
+          const transcriptTime = transcriptMtimes[s.id]
+          const archivedTime = s.archivedAt
+          const inferred = typeof transcriptTime === 'number' && Number.isFinite(transcriptTime)
+            ? transcriptTime
+            : typeof archivedTime === 'number' && Number.isFinite(archivedTime)
+              ? archivedTime
+              : upgradeTime
+          const createdAt = typeof s.createdAt === 'number' && Number.isFinite(s.createdAt) ? s.createdAt : inferred
+          const lastUsedAt = typeof s.lastUsedAt === 'number' && Number.isFinite(s.lastUsedAt)
+            ? s.lastUsedAt
+            : Math.max(createdAt, inferred)
+          changed = true
+          return { ...s, createdAt, lastUsedAt }
+        })
+      }
+      return changed ? next : prev
     })
   }, [])
 
@@ -455,6 +512,6 @@ export function useChatSessions(defaults: SessionDefaults) {
   return useMemo(() => ({
     sessionsByTab, activeByTab,
     getSessions, getAllSessions, getActiveId, getActiveSession,
-    ensureTab, add, restoreRemote, addDelegated, duplicate, activate, update, setArchived, backfillArchivedAt, remove, releaseTab, pruneTabs,
-  }), [sessionsByTab, activeByTab, getSessions, getAllSessions, getActiveId, getActiveSession, ensureTab, add, restoreRemote, addDelegated, duplicate, activate, update, setArchived, backfillArchivedAt, remove, releaseTab, pruneTabs])
+    ensureTab, add, restoreRemote, addDelegated, duplicate, activate, update, touchLastUsed, backfillSessionTimestamps, setArchived, backfillArchivedAt, remove, releaseTab, pruneTabs,
+  }), [sessionsByTab, activeByTab, getSessions, getAllSessions, getActiveId, getActiveSession, ensureTab, add, restoreRemote, addDelegated, duplicate, activate, update, touchLastUsed, backfillSessionTimestamps, setArchived, backfillArchivedAt, remove, releaseTab, pruneTabs])
 }

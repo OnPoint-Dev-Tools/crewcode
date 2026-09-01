@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, readFileSync, rmSync } from 'fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { CustodyJournal, custodyScopeKey, type CustodyRecord } from './custody-journal'
@@ -87,6 +87,19 @@ describe('CustodyJournal restart recovery', () => {
     const restarted = new CustodyJournal(path, 500)
     expect(restarted.get('br-tab1-claude-abc')!.status).toBe('ended')
     expect(restarted.activeHalt('tab1:claude')).toBeNull()
+  })
+
+  it('backfills review into journals written before CrewCoder approval was explicit', () => {
+    const path = journalPath()
+    const first = new CustodyJournal(path, 100)
+    first.open(record({ status: 'ended', turnId: undefined }))
+    const legacy = JSON.parse(readFileSync(path, 'utf8'))
+    delete legacy.records[0].authority.crewcoderApprovalMode
+    writeFileSync(path, JSON.stringify(legacy))
+
+    const restarted = new CustodyJournal(path, 500)
+    expect(restarted.get('br-tab1-claude-abc')?.authority.crewcoderApprovalMode).toBe('review')
+    expect(JSON.parse(readFileSync(path, 'utf8')).records[0].authority.crewcoderApprovalMode).toBe('review')
   })
 
   it('does not resurrect a halt that was already reauthorized', () => {

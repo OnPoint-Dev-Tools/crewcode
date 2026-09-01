@@ -16,7 +16,7 @@ import { ComposerBranchPicker } from '../git/BranchPicker'
 import type { GitBranchRef } from '../git/git-state'
 import { VoiceOrb } from '../voice/VoiceOrb'
 import type { VoiceControlSurface } from '../../../../shared/voice-types'
-import { crewCoderProfileLocksExecutionMode, type CrewCoderMode } from '../../../../shared/crewcoder-types'
+import { crewCoderProfileLocksExecutionMode, type CrewCoderApprovalMode, type CrewCoderMode } from '../../../../shared/crewcoder-types'
 import { ComposerDictationButton } from './ComposerDictationButton'
 import { insertDictationText } from './composer-dictation-text'
 import { MobileComposerActionMenu, MobileComposerModelMenu } from './MobileComposerMenus'
@@ -69,6 +69,8 @@ interface ComposerProps {
   onSelectEffort: (e: EffortLevel) => void
   crewcoderMode?: CrewCoderMode
   onSelectCrewCoderMode: (mode: CrewCoderMode | undefined) => void
+  crewcoderApprovalMode: CrewCoderApprovalMode
+  onSelectCrewCoderApprovalMode: (mode: CrewCoderApprovalMode) => void
 
   mcpEnabled?:     boolean
   mcpServers?:     McpServerConfig[]
@@ -160,7 +162,7 @@ export function Composer({
   sentMessageHistory = [],
   isRunning, onStop, voiceControl, dictationScopeId,
   agents, activeAgentId, onSelectAgent,
-  model, onSelectModel, effort, onSelectEffort, crewcoderMode, onSelectCrewCoderMode,
+  model, onSelectModel, effort, onSelectEffort, crewcoderMode, onSelectCrewCoderMode, crewcoderApprovalMode, onSelectCrewCoderApprovalMode,
   mcpEnabled, mcpServers, selectedMcpIds, onToggleMcp,
   shortcutOverrides,
   attachments: attachmentsProp, onAttachmentsChange,
@@ -742,6 +744,8 @@ export function Composer({
               effort={effort}
               crewcoderMode={crewcoderMode}
               onSelectCrewCoderMode={onSelectCrewCoderMode}
+              crewcoderApprovalMode={crewcoderApprovalMode}
+              onSelectCrewCoderApprovalMode={onSelectCrewCoderApprovalMode}
               crewcoderModeDisabled={isRunning}
               executionModeDisabled={executionModeDisabled}
               mode={mode}

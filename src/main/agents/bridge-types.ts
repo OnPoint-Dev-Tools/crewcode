@@ -137,6 +137,9 @@ export interface BridgeStartOpts {
   // CrewCoder's agent profile, passed as `crewcoder acp --mode`. This is not
   // CrewCode's Ask/Plan/Build/Full execution-permission mode above.
   crewcoderMode?: CrewCoderMode
+  // CrewCoder's native tool-approval policy. Older clients omit it and receive
+  // the fail-closed interactive review default.
+  crewcoderApprovalMode?: import('../../shared/crewcoder-types').CrewCoderApprovalMode
   // Supervisor and other constrained bridge roles can force read-only tools
   // without relying on a chat-mode prompt to behave correctly.
   toolPolicy?: BridgeToolPolicy

@@ -12,6 +12,7 @@ import { isRemoteRoot } from '../remote/ssh-target'
 import { CustodyJournal, custodyScopeKey } from './custody-journal'
 import { normalizeAuthority, violation, type CustodyAuthority, type CustodyViolation } from './custody-invariants'
 import type { BridgeStartOpts } from './bridge-types'
+import { crewCoderApprovalForProfile } from '../../shared/crewcoder-types'
 
 const { app } = electron
 
@@ -39,6 +40,7 @@ export function authorityOf(opts: BridgeStartOpts): CustodyAuthority {
     cwd: opts.cwd,
     mode: opts.mode,
     crewcoderMode: opts.crewcoderMode,
+    crewcoderApprovalMode: crewCoderApprovalForProfile(opts.crewcoderMode, opts.crewcoderApprovalMode),
     toolPolicy: opts.toolPolicy,
     externalDirectories: opts.externalDirectories,
     mcpServers: opts.mcpServers,

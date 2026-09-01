@@ -1,4 +1,4 @@
-import { spawnSync } from 'child_process'
+import { execFile, spawnSync } from 'child_process'
 
 interface GitHubPullRequest {
   number: number
@@ -33,6 +33,37 @@ export interface GhStatusResult {
   error?: string
 }
 
+export interface GitHubCommandResult {
+  status: number | null
+  stdout: string
+  stderr: string
+}
+
+export type GitHubCommandRunner = (
+  command: string,
+  args: string[],
+  cwd?: string,
+) => Promise<GitHubCommandResult>
+
+const GITHUB_COMMAND_TIMEOUT_MS = 15_000
+
+const runGitHubCommand: GitHubCommandRunner = (command, args, cwd) => new Promise(resolve => {
+  execFile(command, args, {
+    cwd,
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: GITHUB_COMMAND_TIMEOUT_MS,
+    maxBuffer: 4 * 1024 * 1024,
+  }, (error, stdout, stderr) => {
+    const code = (error as (NodeJS.ErrnoException & { code?: string | number }) | null)?.code
+    resolve({
+      status: error ? (typeof code === 'number' ? code : null) : 0,
+      stdout: stdout ?? '',
+      stderr: stderr ?? '',
+    })
+  })
+})
+
 export function ghAvailable(): boolean {
   try {
     return spawnSync('gh', ['--version'], { encoding: 'utf8', windowsHide: true }).status === 0
@@ -41,10 +72,11 @@ export function ghAvailable(): boolean {
   }
 }
 
-export function getGhStatus(): GhStatusResult {
-  if (!ghAvailable()) return { available: false, loggedIn: false, user: null, host: null, raw: '', error: 'gh CLI not found in PATH' }
-  const result = spawnSync('gh', ['auth', 'status'], { encoding: 'utf8', windowsHide: true })
-  const raw = (result.stdout ?? '') + (result.stderr ?? '')
+export async function getGhStatus(runCommand: GitHubCommandRunner = runGitHubCommand): Promise<GhStatusResult> {
+  const available = await runCommand('gh', ['--version'])
+  if (available.status !== 0) return { available: false, loggedIn: false, user: null, host: null, raw: '', error: 'gh CLI not found in PATH' }
+  const result = await runCommand('gh', ['auth', 'status'])
+  const raw = result.stdout + result.stderr
   const userMatch = raw.match(/account\s+(\S+)/i) ?? raw.match(/Logged in to\s+(\S+)\s+as\s+(\S+)/i)
   const hostMatch = raw.match(/Logged in to\s+(\S+)/i)
   return {
@@ -64,17 +96,28 @@ export function runGh(cwd: string, args: string[]): { ok: boolean; output: strin
   return { ok: true, output }
 }
 
-export function getGitHubStatus(cwd: string): HeadlessGitHubStatus | { error: string } {
-  if (!ghAvailable()) return { error: 'gh CLI not found' }
-  const remoteResult = spawnSync('git', ['remote', 'get-url', 'origin'], { cwd, encoding: 'utf8', windowsHide: true })
-  const remoteUrl = remoteResult.stdout?.trim() ?? ''
+export async function getGitHubStatus(
+  cwd: string,
+  runCommand: GitHubCommandRunner = runGitHubCommand,
+): Promise<HeadlessGitHubStatus | { error: string }> {
+  const [available, remoteResult] = await Promise.all([
+    runCommand('gh', ['--version'], cwd),
+    runCommand('git', ['remote', 'get-url', 'origin'], cwd),
+  ])
+  if (available.status !== 0) return { error: 'gh CLI not found' }
+  const remoteUrl = remoteResult.stdout.trim()
   if (!remoteUrl.includes('github.com')) return { error: 'not a GitHub repo' }
   const match = remoteUrl.match(/github\.com[:/]([^/]+)\/([^/.]+)(?:\.git)?/)
   if (!match) return { error: 'could not parse GitHub remote URL' }
   const [, owner, repo] = match
 
+  const [prResult, runResult, issueResult] = await Promise.all([
+    runCommand('gh', ['pr', 'list', '--json', 'number,title,headRefName,state,url', '--limit', '20'], cwd),
+    runCommand('gh', ['run', 'list', '--json', 'databaseId,name,status,conclusion,headBranch', '--limit', '10'], cwd),
+    runCommand('gh', ['issue', 'list', '--state', 'open', '--json', 'number', '--limit', '100'], cwd),
+  ])
+
   let prs: GitHubPullRequest[] = []
-  const prResult = spawnSync('gh', ['pr', 'list', '--json', 'number,title,headRefName,state,url', '--limit', '20'], { cwd, encoding: 'utf8', windowsHide: true })
   if (prResult.status === 0 && prResult.stdout) {
     try {
       const raw = JSON.parse(prResult.stdout) as Array<{ number: number; title: string; headRefName: string; state: string; url: string }>
@@ -83,7 +126,6 @@ export function getGitHubStatus(cwd: string): HeadlessGitHubStatus | { error: st
   }
 
   let runs: GitHubRun[] = []
-  const runResult = spawnSync('gh', ['run', 'list', '--json', 'databaseId,name,status,conclusion,headBranch', '--limit', '10'], { cwd, encoding: 'utf8', windowsHide: true })
   if (runResult.status === 0 && runResult.stdout) {
     try {
       const raw = JSON.parse(runResult.stdout) as Array<{ databaseId: number; name: string; status: string; conclusion: string | null; headBranch: string }>
@@ -92,7 +134,6 @@ export function getGitHubStatus(cwd: string): HeadlessGitHubStatus | { error: st
   }
 
   let issues = 0
-  const issueResult = spawnSync('gh', ['issue', 'list', '--state', 'open', '--json', 'number', '--limit', '100'], { cwd, encoding: 'utf8', windowsHide: true })
   if (issueResult.status === 0 && issueResult.stdout) {
     try { issues = (JSON.parse(issueResult.stdout) as unknown[]).length } catch { /* keep zero */ }
   }

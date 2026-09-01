@@ -26,6 +26,42 @@ describe('TranscriptService', () => {
     expect(service.loadAll()).toEqual({ one: [{ text: 'kept' }] })
   })
 
+  it('merges divergent full-array saves without erasing another client turn', () => {
+    const service = new TranscriptService(mkdtempSync(join(tmpdir(), 'crewcode-transcripts-')))
+    const initial = { id: 'initial', kind: 'user', text: 'Start the task' }
+    service.save('shared-thread', [initial, { id: 'desktop-turn', kind: 'assistant', text: 'Desktop result' }])
+
+    // The browser save was formed from the same initial snapshot and did not
+    // yet observe the desktop result.
+    service.save('shared-thread', [initial, { id: 'web-turn', kind: 'user', text: 'Web follow-up' }])
+
+    expect(service.loadAll()['shared-thread']).toEqual([
+      initial,
+      { id: 'desktop-turn', kind: 'assistant', text: 'Desktop result' },
+      { id: 'web-turn', kind: 'user', text: 'Web follow-up' },
+    ])
+  })
+
+  it('replaces a stable message identity instead of duplicating status updates', () => {
+    const service = new TranscriptService(mkdtempSync(join(tmpdir(), 'crewcode-transcripts-')))
+    service.save('shared-thread', [{ id: 'activity-one', kind: 'activity', status: 'running' }])
+    service.save('shared-thread', [{ id: 'activity-one', kind: 'activity', status: 'completed' }])
+
+    expect(service.loadAll()['shared-thread']).toEqual([
+      { id: 'activity-one', kind: 'activity', status: 'completed' },
+    ])
+  })
+
+  it('deduplicates the same renderer row when client display clocks differ', () => {
+    const service = new TranscriptService(mkdtempSync(join(tmpdir(), 'crewcode-transcripts-')))
+    service.save('shared-thread', [{ kind: 'user', text: 'Continue this work', time: '4:10 PM' }])
+    service.save('shared-thread', [{ kind: 'user', text: 'Continue this work', time: '1:10 PM' }])
+
+    expect(service.loadAll()['shared-thread']).toEqual([
+      { kind: 'user', text: 'Continue this work', time: '1:10 PM' },
+    ])
+  })
+
   it('returns bounded recent thread metadata without transcript bodies', () => {
     const service = new TranscriptService(mkdtempSync(join(tmpdir(), 'crewcode-transcripts-')))
     service.save('thread-one', [

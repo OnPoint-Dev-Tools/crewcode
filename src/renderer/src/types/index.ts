@@ -388,6 +388,8 @@ export interface Session {
   mode:    ModeLevel
   /** CrewCoder agent profile; independent from CrewCode execution permissions. */
   crewcoderMode?: import('../../../shared/crewcoder-types').CrewCoderMode
+  /** CrewCoder-native approval policy; defaults to review for older sessions. */
+  crewcoderApprovalMode?: import('../../../shared/crewcoder-types').CrewCoderApprovalMode
   effort:  'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
   // Ids of MCP servers (from Settings → MCP) this session opts into. Empty by
   // default — MCP is never auto-attached. May be absent on sessions persisted
@@ -407,6 +409,11 @@ export interface Session {
   // Pinned sessions sort before unpinned peers in their existing drawer group.
   // Optional for sessions persisted before thread pinning shipped.
   pinned?: boolean
+  // Wall-clock ms when the chat was first created and when it was last used.
+  // Optional only for sessions persisted before chat timestamps shipped; the
+  // session hook backfills those from transcript metadata on first launch.
+  createdAt?: number
+  lastUsedAt?: number
   // Archived sessions are hidden from the normal session list (and from every
   // derived surface: completed chats, recency, agent status) but keep their
   // transcript on disk. Absent on sessions persisted before archiving shipped.
@@ -665,6 +672,7 @@ declare global {
       minimize: () => void
       maximize: () => void
       close:    () => void
+      trayConfigure?: (enabled: boolean) => Promise<{ ok: boolean }>
       setUiZoom: (percent: number) => void
 
       agentRegistry:   () => Promise<AgentInfo[]>
@@ -730,6 +738,7 @@ declare global {
         model?:      string
         mode?:       'ask' | 'plan' | 'build' | 'full'
         crewcoderMode?: import('../../../shared/crewcoder-types').CrewCoderMode
+        crewcoderApprovalMode?: import('../../../shared/crewcoder-types').CrewCoderApprovalMode
         toolPolicy?: 'default' | 'read-only'
         thinking?:   'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
         apiKey?:     string
@@ -896,6 +905,15 @@ declare global {
 
       // Auto-updater
       appBuildInfo:          () => Promise<AppBuildInfo>
+      brainDesktopStatus: (probeHub?: boolean) => Promise<import('../../../shared/brain-desktop-types').BrainDesktopStatus>
+      brainDesktopSetEnabled: (enabled: boolean) => Promise<import('../../../shared/brain-desktop-types').BrainDesktopStatus>
+      brainDesktopStop: () => Promise<import('../../../shared/brain-desktop-types').BrainDesktopStatus>
+      brainDesktopStopAndQuit: () => Promise<{ ok: boolean }>
+      brainDesktopRpc: <T = unknown>(method: string, params: Record<string, unknown>) => Promise<T>
+      brainDesktopUploadAttachment: (root: string, name: string, body: Uint8Array) => Promise<{ rel?: string; error?: string }>
+      onBrainDesktopEvent: (cb: (event: unknown) => void) => () => void
+      continuityStateGet: () => Promise<import('../../../shared/continuity-state-types').ContinuityStateSnapshot>
+      continuityStateUpdate: (values: Record<string, string>) => Promise<import('../../../shared/continuity-state-types').ContinuityStateSnapshot>
       appHomePath:           () => Promise<string>
       updaterCheck:          () => Promise<{ ok: boolean; version?: string | null; error?: string }>
       updaterDownload:       () => Promise<{ ok: boolean; error?: string }>
