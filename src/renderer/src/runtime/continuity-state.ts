@@ -437,11 +437,12 @@ export async function hydrateContinuityState(): Promise<void> {
   }
   try {
     const sessions = parseRecord(values['crewcode:sessionsByTab'])
-    const needsTranscriptTitles = runtime.kind === 'web' && api.transcriptsCatalogue && (
+    const transcriptsCatalogue = api.transcriptsCatalogue
+    const needsTranscriptTitles = runtime.kind === 'web' && transcriptsCatalogue && (
       !values[DESKTOP_CATALOGUE_AUTHORITY_KEY] || catalogueHasRecoveredRows(sessions)
     )
     if (needsTranscriptTitles) {
-      const [workspaces, transcripts] = await Promise.all([api.workspacesList(), api.transcriptsCatalogue()])
+      const [workspaces, transcripts] = await Promise.all([api.workspacesList(), transcriptsCatalogue()])
       values = recoverTranscriptSessions(values, workspaces, transcripts)
     }
   } catch { /* catalogue snapshot still hydrates without transcript recovery */ }
