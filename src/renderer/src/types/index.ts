@@ -16,6 +16,7 @@ import type { WriterBinaryFormat, WriterDocumentExportResult, WriterDocumentImpo
 import type { AppBuildInfo, UpdaterConfig, UpdaterEvent } from '../../../shared/updater-types'
 import type { DelegatedMergeOutcome, DelegationCredentials, DelegationRendererRequest, DelegationResult } from '../../../shared/delegation-types'
 import type { CustodyHaltPayload, CustodyViolation } from '../../../shared/custody-types'
+import type { GitHubCommandResponse, GitHubMergeMethod, GitHubPullRequestCreateContext, GitHubPullRequestCreateOptions, GitHubPullRequestDetail, GitHubPullRequestReviewOptions } from '../../../shared/github-types'
 
 export type { CustodyHaltPayload, CustodyInvariantId, CustodyViolation } from '../../../shared/custody-types'
 
@@ -414,6 +415,9 @@ export interface Session {
   // session hook backfills those from transcript metadata on first launch.
   createdAt?: number
   lastUsedAt?: number
+  // Browser-only transcript recovery fallback. These rows are never persisted
+  // back into the Brain catalogue unless the user actually continues them.
+  continuityRecovered?: true
   // Archived sessions are hidden from the normal session list (and from every
   // derived surface: completed chats, recency, agent status) but keep their
   // transcript on disk. Absent on sessions persisted before archiving shipped.
@@ -477,7 +481,14 @@ export interface GitHubPR {
   title:  string
   state:  'OPEN' | 'CLOSED' | 'MERGED'
   branch: string
+  base?:  string
   url:    string
+  isDraft?: boolean
+  author?: string
+  updatedAt?: string
+  body?: string
+  mergeStateStatus?: string
+  reviewDecision?: string | null
 }
 
 export interface GitHubRun {
@@ -799,6 +810,8 @@ declare global {
 
       // Chat transcripts (authoritative on-disk store)
       transcriptsLoadAll: () => Promise<Record<string, Message[]>>
+      transcriptsLoad:   (scopeId: string) => Promise<Message[]>
+      transcriptsCatalogue?: () => Promise<import('../../../shared/continuity-state-types').ContinuityTranscriptEntry[]>
       transcriptsMtimes:  () => Promise<Record<string, number>>
       transcriptsSave:    (scopeId: string, messages: Message[]) => Promise<{ ok?: boolean; error?: string }>
       transcriptsRemove:  (scopeId: string) => Promise<{ ok?: boolean; error?: string }>
@@ -869,6 +882,9 @@ declare global {
 
       // GitHub
       githubStatus:   (repoPath: string) => Promise<GitHubStatus | { error: string }>
+      githubPrCreateContext: (repoPath: string, base: string) => Promise<GitHubPullRequestCreateContext | { error: string }>
+      githubPrDetail: (repoPath: string, num: number) => Promise<GitHubPullRequestDetail | { error: string }>
+      githubPrDiff: (repoPath: string, num: number) => Promise<{ ok: boolean; patch: string; error?: string }>
 
       // Git
       gitStatus:   (cwd: string) => Promise<GitStatus & { ok?: boolean; error?: string }>
@@ -914,6 +930,7 @@ declare global {
       onBrainDesktopEvent: (cb: (event: unknown) => void) => () => void
       continuityStateGet: () => Promise<import('../../../shared/continuity-state-types').ContinuityStateSnapshot>
       continuityStateUpdate: (values: Record<string, string>) => Promise<import('../../../shared/continuity-state-types').ContinuityStateSnapshot>
+      continuityDesktopSeed?: (values: Record<string, string>) => Promise<import('../../../shared/continuity-state-types').ContinuityStateSnapshot>
       appHomePath:           () => Promise<string>
       updaterCheck:          () => Promise<{ ok: boolean; version?: string | null; error?: string }>
       updaterDownload:       () => Promise<{ ok: boolean; error?: string }>
@@ -926,9 +943,13 @@ declare global {
       ghLoginStart:  () => Promise<{ ok: boolean; error?: string }>
       ghLoginCancel: () => Promise<{ ok: boolean }>
       ghLogout:      () => Promise<{ ok: boolean; error?: string }>
-      ghPrCreate:    (cwd: string) => Promise<{ ok: boolean; output: string; error?: string }>
-      ghPrMerge:     (cwd: string, num: number) => Promise<{ ok: boolean; output: string; error?: string }>
-      ghPrApprove:   (cwd: string, num: number) => Promise<{ ok: boolean; output: string; error?: string }>
+      ghPrCreate:    (cwd: string, options: GitHubPullRequestCreateOptions) => Promise<GitHubCommandResponse>
+      ghPrMerge:     (cwd: string, num: number, method: GitHubMergeMethod) => Promise<GitHubCommandResponse>
+      ghPrApprove:   (cwd: string, num: number) => Promise<GitHubCommandResponse>
+      ghPrUpdateBranch: (cwd: string, num: number) => Promise<GitHubCommandResponse>
+      ghPrComment:   (cwd: string, num: number, body: string) => Promise<GitHubCommandResponse>
+      ghPrClose:     (cwd: string, num: number) => Promise<GitHubCommandResponse>
+      ghPrReview:    (cwd: string, num: number, options: GitHubPullRequestReviewOptions) => Promise<GitHubCommandResponse>
       ghRepoCreate:  (cwd: string, opts: { name: string; visibility: 'private' | 'public'; description?: string }) => Promise<{ ok: boolean; output: string; error?: string }>
       onGhAuthEvent: (cb: (event: GhAuthEvent) => void) => () => void
 

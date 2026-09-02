@@ -31,7 +31,7 @@ export function Sessions({ sessions, active, onActivate, onAdd, onRemove, onRowC
     <div className="sessions">
       {sessions.map(s => {
         const activity = sessionActivity?.[s.id]
-        const completedAt = sessionCompletedAt?.[s.id]
+        const completedAt = sessionCompletedAt?.[s.id] ?? s.lastUsedAt
         const elapsed = completedAt != null && now != null ? formatElapsed(now - completedAt) : ''
         // Writer threads sit in the same drawer list as plain chats but reopen a
         // document workspace, so they carry a marker instead of looking identical.

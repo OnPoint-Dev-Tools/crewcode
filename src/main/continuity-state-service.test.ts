@@ -2,9 +2,22 @@ import { existsSync, mkdtempSync, readFileSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { describe, expect, it } from 'vitest'
+import { DESKTOP_CATALOGUE_AUTHORITY_KEY } from '../shared/continuity-state-types'
 import { ContinuityStateService, continuityStatePath } from './continuity-state-service'
 
 describe('ContinuityStateService', () => {
+  it('allows only owner-loopback seeding to establish desktop catalogue authority', () => {
+    const path = continuityStatePath(mkdtempSync(join(tmpdir(), 'crewcode-continuity-')))
+    const service = new ContinuityStateService(path)
+    expect(() => service.update({ [DESKTOP_CATALOGUE_AUTHORITY_KEY]: JSON.stringify({ version: 1, source: 'desktop' }) }))
+      .toThrow('continuity key is not allowed')
+
+    const seeded = service.seedDesktopCatalogue({
+      'crewcode:sessionsByTab': JSON.stringify({ chat: [{ id: 'chat' }] }),
+    })
+    expect(seeded.values[DESKTOP_CATALOGUE_AUTHORITY_KEY]).toBe(JSON.stringify({ version: 1, source: 'desktop' }))
+    expect(new ContinuityStateService(path).snapshot().values).toEqual(seeded.values)
+  })
   it('merges allowlisted catalogue patches and persists owner-only state', () => {
     const root = mkdtempSync(join(tmpdir(), 'crewcode-continuity-'))
     const path = continuityStatePath(root)

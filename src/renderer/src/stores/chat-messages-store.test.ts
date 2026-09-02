@@ -13,6 +13,7 @@ function installLocalStorage(initial: Record<string, string> = {}) {
 }
 
 interface ElectronApiStub {
+  transcriptsLoad?: ReturnType<typeof vi.fn>
   transcriptsLoadAll: ReturnType<typeof vi.fn>
   transcriptsSave: ReturnType<typeof vi.fn>
   transcriptsRemove: ReturnType<typeof vi.fn>
@@ -39,13 +40,20 @@ function installLifecycleGlobals(electronAPI?: ElectronApiStub) {
   return { windowListeners, documentListeners, documentStub }
 }
 
-function installElectronApi(loadAll: Record<string, unknown[]> = {}): ElectronApiStub {
-  return {
+function installElectronApi(
+  loadAll: Record<string, unknown[]> = {},
+  loadByScope?: Record<string, unknown[]>,
+): ElectronApiStub {
+  const api: ElectronApiStub = {
     transcriptsLoadAll: vi.fn(() => Promise.resolve(loadAll)),
     transcriptsSave: vi.fn(() => Promise.resolve({ ok: true })),
     transcriptsRemove: vi.fn(() => Promise.resolve({ ok: true })),
     transcriptsSaveSyncBatch: vi.fn(() => true),
   }
+  if (loadByScope) {
+    api.transcriptsLoad = vi.fn((scopeId: string) => Promise.resolve(loadByScope[scopeId] ?? []))
+  }
+  return api
 }
 
 async function loadStore() {
@@ -300,6 +308,77 @@ describe('chat-messages-store persistence', () => {
     expect(useMessagesStore.getState().messagesByTab['remote-session']?.[0]).toMatchObject({
       text: 'finished while browser was away',
     })
+  })
+
+  it('hydrates only active and requested scopes when scoped transcript RPC is available', async () => {
+    vi.useRealTimers()
+    installLocalStorage({
+      'crewcode:activeSessionByTab': JSON.stringify({ workspace: 'active-session' }),
+    })
+    const api = installElectronApi(
+      { 'must-not-load': [{ kind: 'user', text: 'whole-store response' }] },
+      {
+        'active-session': [{ kind: 'agent', blocks: [], text: 'active history', time: '5:04 PM' }],
+        'cold-session': [{ kind: 'user', text: 'loaded on demand', time: '5:05 PM' }],
+      },
+    )
+    installLifecycleGlobals(api)
+    const { hydrateMessagesForScope, useMessagesStore } = await loadStore()
+
+    await vi.waitFor(() => expect(api.transcriptsLoad).toHaveBeenCalledWith('active-session'))
+    expect(api.transcriptsLoadAll).not.toHaveBeenCalled()
+    expect(useMessagesStore.getState().messagesByTab['active-session']?.[0]).toMatchObject({
+      text: 'active history',
+    })
+    expect(useMessagesStore.getState().messagesByTab['cold-session']).toBeUndefined()
+
+    await hydrateMessagesForScope('cold-session')
+    expect(api.transcriptsLoad).toHaveBeenCalledWith('cold-session')
+    expect(useMessagesStore.getState().messagesByTab['cold-session']?.[0]).toMatchObject({
+      text: 'loaded on demand',
+    })
+  })
+
+  it('keeps restored transcript errors silent and emits only newly appended live errors', async () => {
+    vi.useRealTimers()
+    installLocalStorage()
+    const api = installElectronApi({}, {
+      'cold-session': [
+        { kind: 'system', tone: 'error', text: 'historical failure', time: '5:06 PM' },
+      ],
+    })
+    installLifecycleGlobals(api)
+    const { hydrateMessagesForScope, subscribeLiveChatNotices, useMessagesStore } = await loadStore()
+    const notices: Array<{ scopeId: string; type: string; text: string }> = []
+    const unsubscribe = subscribeLiveChatNotices(notice => notices.push(notice))
+
+    await hydrateMessagesForScope('cold-session')
+    expect(notices).toEqual([])
+
+    useMessagesStore.getState().setMessagesForTab('cold-session', messages => [
+      ...messages,
+      { kind: 'system', tone: 'error', text: 'new live failure', time: '5:07 PM' },
+    ])
+
+    expect(notices).toEqual([
+      { scopeId: 'cold-session', type: 'error', text: 'new live failure' },
+    ])
+    unsubscribe()
+  })
+
+  it('does not reinterpret a whole-map transcript replacement as live notification events', async () => {
+    installLocalStorage()
+    installLifecycleGlobals()
+    const { subscribeLiveChatNotices, useMessagesStore } = await loadStore()
+    const notices: Array<{ scopeId: string; type: string; text: string }> = []
+    const unsubscribe = subscribeLiveChatNotices(notice => notices.push(notice))
+
+    useMessagesStore.getState().setMessagesByTab({
+      restored: [{ kind: 'system', tone: 'error', text: 'restored error', time: '5:08 PM' }],
+    })
+
+    expect(notices).toEqual([])
+    unsubscribe()
   })
 
   it('hydration never clobbers an in-memory scope that is already longer', async () => {

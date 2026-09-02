@@ -2,7 +2,6 @@ import { spawnSync, spawn } from 'child_process'
 import { existsSync, readFileSync, readdirSync } from 'fs'
 import { delimiter, dirname, isAbsolute, join } from 'path'
 import os from 'os'
-import { net } from 'electron'
 import { getSpawnArgsForWindows } from '../win32-utils'
 import { registerContextWindow } from './model-context'
 
@@ -685,7 +684,7 @@ async function detectOllama(): Promise<DetectedModel[]> {
   const raw  = process.env.OLLAMA_HOST || '127.0.0.1:11434'
   const base = /^https?:\/\//i.test(raw) ? raw.replace(/\/+$/, '') : `http://${raw.replace(/\/+$/, '')}`
   try {
-    const r = await net.fetch(`${base}/api/tags`)
+    const r = await fetch(`${base}/api/tags`, { signal: AbortSignal.timeout(5_000) })
     if (!r.ok) return []
     const json = await r.json() as { models?: Array<{ name?: string; model?: string }> }
     const out: DetectedModel[] = []
@@ -704,7 +703,7 @@ async function detectOllama(): Promise<DetectedModel[]> {
 // OpenRouter publishes its full model catalog over HTTP (no key required).
 async function detectOpenrouter(): Promise<DetectedModel[]> {
   try {
-    const r = await net.fetch('https://openrouter.ai/api/v1/models')
+    const r = await fetch('https://openrouter.ai/api/v1/models', { signal: AbortSignal.timeout(8_000) })
     if (!r.ok) return []
     const json = await r.json() as { data?: Array<{ id?: string; name?: string; context_length?: number; top_provider?: { context_length?: number } }> }
     const out: DetectedModel[] = []

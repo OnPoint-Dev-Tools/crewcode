@@ -15,6 +15,8 @@ Update corresponding Docs in [CrewCode Docs](/docs/), and [AGENTS.md](/AGENTS.md
 Git Workspace changed-file rows support stage/unstage controls and a context
 menu for stage, stage-all, unstage, and explicitly confirmed discard actions.
 
+GitHub pull-request creation, review, and management stay inside Git Workspace/Git Sidebar through the typed CrewCode client. Preserve the single-PR Branches → Details → Review creation flow, measured base-relative evidence, the one-selected-PR sidebar, real on-demand detail/diff/check evidence, PierreDiff per-file review, overall review submission, explicit merge confirmation, and merge/squash/rebase choices. Read methods remain registered-root `workspace:read`; mutations require `workspace:write`. Never expose GitHub credentials to the renderer/browser, fabricate inline comments, or infer a merge from silence. Crew integration remains a separate provenance-journal and behavioral-verification workflow. See `docs/github-pull-requests.md`.
+
 Desktop system-tray behavior is opt-in. When enabled, closing the window hides
 it while app-owned work continues; the tray must expose explicit Open and Quit
 actions, and Quit must pass through normal cleanup. Disabling the preference
@@ -25,6 +27,12 @@ Chat sessions persist independent `createdAt`, `lastUsedAt`, and `archivedAt`
 timestamps. Advance `lastUsedAt` only when work is sent through the chat; the
 Archive page displays it as `MM/DD/YYYY`, while retention continues to use only
 `archivedAt`.
+
+Global chat notifications are live-event-only. Never replay historical errors,
+agent exits, or replies from the L1 cache, L2 transcript hydration, continuity
+reconciliation, startup, or session switching. Preserve global delivery for
+newly appended live errors and active-scope delivery for live agent-exit
+warnings. See `docs/notifications.md`.
 
 Inactive standalone terminal tabs stay mounted to preserve their PTYs, but must
 pass `active={false}` through `TermColumn` to `XTermPane`. Buffer their output
@@ -175,19 +183,54 @@ authoritative for routed workspaces, transcripts, replay/resume state, terminals
 agents, and the allowlisted workspace/chat catalogue; Electron retains native-only
 integrations through the composite client. Seed only missing Brain state, preserve
 provider-specific resume keys, and alias legacy `thread:` replay to `web:` without
-overwriting existing Brain data. Normal desktop close must not stop the Brain; only an
+overwriting existing Brain data. Newer desktop transcript shards merge into existing
+Brain shards by message identity. Continuity catalogue patches include session
+completion timestamps so web drawer rows can show the same elapsed labels. Normal desktop close must not stop the Brain; only an
 explicit Stop Brain/Quit-and-stop action withdraws remote availability. Serialize
 prompts FIFO within one conversation while allowing different conversations to run in
 parallel, and merge divergent full transcript saves instead of letting stale clients
 clobber observed turns. Keep Hub scopes/registered-root checks intact and never treat
-this as file synchronization. Keep the pre-React startup surface present while Electron
+this as file synchronization. Never hydrate the aggregate `transcripts.loadAll` result
+over a Brain/Hub relay; load bounded per-scope tails for active/L1 conversations and
+hydrate cold scopes on demand while keeping full shards authoritative on the Brain.
+The 32-scope startup hydration must retain encryption and control-frame headroom under
+the Hub's shared 8 MiB connection burst; keep remote scope tails at or below 96 KiB
+unless the aggregate relay-budget test and transport budget are changed together.
+Keep the pre-React startup surface present while Electron
 probes, attaches to, and hydrates from an enabled Brain; startup status is observational
 and must never imply attachment success before it is observed. Desktop & Web Settings
 must probe and show the Hub's observed canonical browser/passkey origin without exposing
 its machine credential; never substitute the enrollment address for an observed browser
 origin or imply that enabling Brain starts or proves reachability of the separate Hub
-service. See
+service. Browser adapters must return real disposer functions for unconditional shared
+subscriptions whose desktop event source is absent, and must keep optional desktop-only
+capabilities genuinely absent; never let a generic unsupported-method Proxy turn an
+optional capability probe into a throwing function. See
 `docs/desktop-web-continuity.md`.
+
+Continuity catalogue hydration must merge desktop-only session/tab identities into a
+Brain catalogue without replacing genuine identities the Brain already owns, once
+desktop catalogue authority exists. Until that marker is present, or while the Brain
+still contains transcript-derived recovered rows, Electron reseeds the exact desktop
+names, active selection, tab-key order, and per-tab session order; drop unmatched
+recovered navigation rows while preserving transcript shards, and retain genuine
+web-created sessions. If catalogue records are missing, recover only
+registered-workspace solo chats from bounded metadata-only transcript
+scope/timestamp/provider/title hints; store those fallback rows oldest-first so the
+drawer reverse matches desktop recency; retitle dated Recovered chat rows from the
+four-word first-prompt hint; never transfer transcript bodies or provider-native
+resume ids for catalogue recovery, and never materialize crew lane scopes as solo
+sessions. Recovered rows stay browser-local and must not enter
+Brain continuity patches unless a real user send promotes the row. Only owner-loopback
+desktop control may establish the persisted desktop-catalogue authority marker; generic
+browser continuity RPC must not forge it. The marker and exact desktop repair apply only
+to optional Electron-to-Brain attachment. Do not change standalone Hub,
+`hub --local-brain`, manually started Brain, or web-only behavior to require desktop
+state. Browser provider availability/model discovery must
+read the Brain registry even when desktop path overrides are unsupported. Automatic
+headless registry probes must use asynchronous filesystem/child-process APIs and retain
+login/interactive-shell plus common install-location parity. Browser `delegation.*`
+RPC remains session-bound and requires the existing Brain-local `agent` scope.
 
 Source-checkout remote-access scripts are `npm run enroll -- --hub <origin>`, `npm run
 brain`, and `npm run hub:mobile`. Keep mobile Hub fail-closed around an existing

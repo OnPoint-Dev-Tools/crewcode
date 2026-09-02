@@ -80,6 +80,26 @@ export function getUsageSnapshot(tabAgentKey: string): UsageSnapshot | undefined
   return read().usage?.[tabAgentKey]
 }
 
+/** Secret-free hints for rebuilding a renderer catalogue from authoritative
+ * transcript scopes. Provider-native resume ids never leave this store. */
+export function getSessionHints(scopeIds: readonly string[]): Record<string, { agentId: string; model?: string }> {
+  const store = read()
+  const hints: Record<string, { agentId: string; model?: string }> = {}
+  // Object insertion order gives the most recently introduced provider for a
+  // scope the final say when a conversation has switched providers.
+  for (const scopeId of scopeIds) {
+    const prefix = `${scopeId}:`
+    for (const key of Object.keys(store.sessions)) {
+      if (!key.startsWith(prefix)) continue
+      const agentId = key.slice(prefix.length)
+      if (!agentId) continue
+      const model = store.usage?.[key]?.model
+      hints[scopeId] = { agentId, ...(model ? { model } : {}) }
+    }
+  }
+  return hints
+}
+
 export function clearUsageSnapshot(tabAgentKey: string): void {
   const store = read()
   if (!store.usage || !(tabAgentKey in store.usage)) return

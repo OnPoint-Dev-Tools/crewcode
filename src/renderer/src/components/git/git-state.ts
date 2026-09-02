@@ -1,7 +1,7 @@
 /* Data contract for the Git Sidebar — see crewcode-git-sidebar/HANDOFF.md §3.
  * The renderer component is dumb: the shape below is produced by useGitSidebar
  * from the real git + GitHub IPC layer. */
-import type { ReactNode } from 'react'
+import type { GitHubMergeMethod, GitHubPullRequestCreateOptions, GitHubPullRequestReviewOptions } from '../../../../shared/github-types'
 
 export type ChangeStatus = 'M' | 'A' | 'D' | 'R' | 'U' // U = unmerged (conflict)
 export type CheckState   = 'ok' | 'f' | 'p' | 's'      // pass / fail / pending / skipped
@@ -51,7 +51,9 @@ export interface GitPrRef {
   checks?:  CheckState[]
   reviews?: Array<{ user: string; state: 'ok' | 'req' }>
   expanded?: boolean
-  desc?:    ReactNode
+  body?:    string
+  mergeStateStatus?: string
+  reviewDecision?: string | null
   runs?:    Array<{ name: string; state: CheckState; dur: string }>
 }
 
@@ -92,12 +94,19 @@ export interface GitState {
   hasUpstream?:    boolean   // false when the current branch has not been pushed/tracked
   /** Settings-selected branch used as the review/comparison base. */
   comparisonRef?:  string
+  /** Default pull-request target captured from Settings or the primary branch. */
+  defaultBase?:    string
 }
 
 export interface GitPublishOpts {
   name:        string
   visibility:  'private' | 'public'
   description?: string
+}
+
+export interface GitActionOutcome {
+  ok: boolean
+  error?: string
 }
 
 export interface GitSidebarWorkspace {
@@ -150,10 +159,14 @@ export interface GitSidebarHandlers {
   onContinueMerge?:   () => void
 
   // Pull requests
-  onCreatePR?:  () => void
+  onCreatePR?:  (options: GitHubPullRequestCreateOptions) => Promise<GitActionOutcome>
   onOpenPR?:    (num: number) => void
-  onMergePR?:   (num: number) => void
+  onMergePR?:   (num: number, method: GitHubMergeMethod) => Promise<GitActionOutcome>
   onApprovePR?: (num: number) => void
+  onUpdatePRBranch?: (num: number) => Promise<GitActionOutcome>
+  onCommentPR?: (num: number, body: string) => Promise<boolean>
+  onClosePR?: (num: number) => Promise<GitActionOutcome>
+  onReviewPR?: (num: number, options: GitHubPullRequestReviewOptions) => Promise<GitActionOutcome>
 
   // Publish flow — for folders/repos with no remote
   onInitRepo?:  () => void                    // git init a non-repo folder

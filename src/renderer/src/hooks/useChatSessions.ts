@@ -94,21 +94,7 @@ function freshSession(tabId: string, n: number, d: SessionDefaults, projectName?
   }
 }
 
-const TITLE_STOP_WORDS = new Set(['a', 'an', 'and', 'are', 'can', 'for', 'from', 'how', 'i', 'in', 'is', 'it', 'of', 'on', 'or', 'please', 'the', 'this', 'to', 'with'])
-
-export function titleFromFirstMessage(text: string): string {
-  const words = text
-    .replace(/`{1,3}[^`]*`{1,3}/g, ' ')
-    .replace(/https?:\/\/\S+/g, ' ')
-    .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
-    .split(/\s+/)
-    .map(w => w.trim().replace(/^-+|-+$/g, ''))
-    .filter(Boolean)
-    .filter(w => !TITLE_STOP_WORDS.has(w.toLowerCase()))
-    .slice(0, 4)
-
-  return words.join(' ')
-}
+export { titleFromFirstMessage } from '../../../shared/chat-title'
 
 function readJSON<T>(key: string, fallback: T): T {
   try {
@@ -361,7 +347,7 @@ export function useChatSessions(defaults: SessionDefaults) {
       return {
         ...prev,
         [tabId]: list.map(s => s.id === sessionId
-          ? { ...s, createdAt: s.createdAt ?? usedAt, lastUsedAt: usedAt }
+          ? { ...s, createdAt: s.createdAt ?? usedAt, lastUsedAt: usedAt, continuityRecovered: undefined }
           : s),
       }
     })

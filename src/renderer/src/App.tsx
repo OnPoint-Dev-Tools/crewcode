@@ -103,7 +103,7 @@ import { playNotificationSound, usesNativeNotificationSound } from './notificati
 import { playSelectionSpeech, useSelectionSpeechState } from './voice/selection-speech-playback'
 import { resolveSelectedWorktree, worktreeSelectionKey } from './surface-worktree-selection'
 import { isSurfaceOpen, setSurfaceOpen, type SurfaceOpenState } from './surface-ui-state'
-import { getCrewCodeClient } from './runtime/crewcode-client'
+import { getCrewCodeClient, getCrewCodeRuntime } from './runtime/crewcode-client'
 
 import type { Message, TweakConfig, AgentInfo, AgentProviderId, ModeLevel, Session, Tab, GitHubStatus, Command } from './types'
 import type { PluginOpenContext, RegisteredPluginBrowserAction, RegisteredPluginChatAction, RegisteredPluginChatHeaderItem, RegisteredPluginEditorAction, RegisteredPluginGitLens, RegisteredPluginMissionWidget, RegisteredPluginSidebarPanel, RegisteredPluginStatusItem, RegisteredPluginTab, RegisteredPluginTerminalWatcher } from '../../shared/plugin-types'
@@ -891,6 +891,10 @@ export default function App() {
     // bridges and pty spawns use the user's chosen binary from the first call.
     const overrides = settings.agentPathOverrides ?? {}
     const applyOverrides = async () => {
+      // Detached Brain discovery belongs to the Brain process. Browser clients
+      // cannot set executable paths, and attempting the unsupported call used
+      // to reject this chain before agents.registry ever ran.
+      if (getCrewCodeRuntime().kind !== 'electron') return
       const entries = Object.entries(overrides).filter(([, p]) => typeof p === 'string' && p !== '')
       for (const [id, p] of entries) {
         await api.agentSetPath(id, p)

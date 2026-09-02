@@ -62,6 +62,42 @@ describe('TranscriptService', () => {
     ])
   })
 
+  it('loads one bounded recent scope without aggregating the transcript store', () => {
+    const service = new TranscriptService(mkdtempSync(join(tmpdir(), 'crewcode-transcripts-')))
+    service.save('large-thread', [
+      { id: 'old', kind: 'user', text: 'older history remains authoritative' },
+      { id: 'oversize', kind: 'toolcall', result: 'x'.repeat(600 * 1024) },
+      { id: 'new', kind: 'assistant', text: 'recent history crosses the relay' },
+    ])
+    service.save('unrelated-thread', [{ kind: 'user', text: 'do not aggregate me' }])
+
+    const scoped = service.loadScope('large-thread')
+    expect(Buffer.byteLength(JSON.stringify(scoped))).toBeLessThanOrEqual(96 * 1024)
+    expect(scoped).toEqual([
+      { id: 'old', kind: 'user', text: 'older history remains authoritative' },
+      { id: 'new', kind: 'assistant', text: 'recent history crosses the relay' },
+    ])
+    expect(service.loadAll()['large-thread']).toHaveLength(3)
+  })
+
+  it('keeps a full 32-scope startup hydration below the relay burst budget', () => {
+    const service = new TranscriptService(mkdtempSync(join(tmpdir(), 'crewcode-transcripts-')))
+    const responses: unknown[] = []
+    for (let index = 0; index < 32; index += 1) {
+      const scopeId = `startup-${index}`
+      service.save(scopeId, Array.from({ length: 40 }, (_, message) => ({
+        id: `${scopeId}-${message}`,
+        kind: 'assistant',
+        text: 'x'.repeat(16 * 1024),
+      })))
+      responses.push(service.loadScope(scopeId))
+    }
+
+    const totalBytes = responses.reduce<number>((total, response) => total + Buffer.byteLength(JSON.stringify(response)), 0)
+    expect(totalBytes).toBeLessThanOrEqual(3 * 1024 * 1024)
+    expect(service.loadAll()['startup-0']).toHaveLength(40)
+  })
+
   it('returns bounded recent thread metadata without transcript bodies', () => {
     const service = new TranscriptService(mkdtempSync(join(tmpdir(), 'crewcode-transcripts-')))
     service.save('thread-one', [
@@ -79,5 +115,20 @@ describe('TranscriptService', () => {
     expect(JSON.stringify(recent)).not.toContain('private response')
     expect(service.recent(1)).toHaveLength(1)
     expect(service.recent(0)).toEqual([])
+  })
+
+  it('catalogues scope metadata without returning transcript bodies', async () => {
+    const service = new TranscriptService(mkdtempSync(join(tmpdir(), 'crewcode-transcripts-')))
+    service.save('workspace-chat', [{ kind: 'user', text: 'please fix the recovered chat drawer order now' }])
+
+    const catalogue = await service.catalogue()
+    expect(catalogue).toEqual([
+      expect.objectContaining({
+        scopeId: 'workspace-chat',
+        updatedAt: expect.any(Number),
+        titleHint: 'fix recovered chat drawer',
+      }),
+    ])
+    expect(JSON.stringify(catalogue)).not.toContain('please fix the recovered chat drawer order now')
   })
 })

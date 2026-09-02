@@ -9,7 +9,9 @@
 
 import { create } from 'zustand'
 import { useShallow } from 'zustand/react/shallow'
+import { useEffect } from 'react'
 import type { Message } from '../types'
+import { getCrewCodeClient } from '../runtime/crewcode-client'
 
 const STORAGE_KEY = 'crewcode:messagesByTab'
 
@@ -35,19 +37,80 @@ interface MessagesState {
   setMessagesForTab: (tabId: string, updater: (prev: Message[]) => Message[]) => void
 }
 
+export interface LiveChatNotice {
+  scopeId: string
+  type: 'warning' | 'error'
+  text: string
+}
+
+type LiveChatNoticeListener = (notice: LiveChatNotice) => void
+const liveChatNoticeListeners = new Set<LiveChatNoticeListener>()
+let liveMessageMutationDepth = 0
+
+/**
+ * Subscribe to notification-worthy messages observed as live appends.
+ *
+ * Persisted L1 state exists before subscribers mount, and L2 hydration is
+ * explicitly suppressed below. This keeps transcript restoration separate
+ * from the live event channel that owns notification-bar entries.
+ */
+export function subscribeLiveChatNotices(listener: LiveChatNoticeListener): () => void {
+  liveChatNoticeListeners.add(listener)
+  return () => liveChatNoticeListeners.delete(listener)
+}
+
+function emitLiveChatNotices(
+  nextByScope: Record<string, Message[]>,
+  previousByScope: Record<string, Message[]>,
+): void {
+  if (liveChatNoticeListeners.size === 0) return
+  for (const [scopeId, next] of Object.entries(nextByScope)) {
+    const previous = previousByScope[scopeId] ?? EMPTY
+    if (next.length <= previous.length) continue
+
+    // A live append preserves every existing message object. A transcript
+    // replacement/reconciliation does not, so never reinterpret it as events.
+    let appended = true
+    for (let i = 0; i < previous.length; i += 1) {
+      if (next[i] !== previous[i]) { appended = false; break }
+    }
+    if (!appended) continue
+
+    for (let i = previous.length; i < next.length; i += 1) {
+      const message = next[i]
+      if (message.kind !== 'system') continue
+      const text = message.text.trim()
+      if (!text) continue
+      const type = message.tone === 'error'
+        ? 'error' as const
+        : message.tone === 'info' && text.startsWith('agent exited')
+          ? 'warning' as const
+          : null
+      if (!type) continue
+      for (const listener of liveChatNoticeListeners) listener({ scopeId, type, text })
+    }
+  }
+}
+
 export const useMessagesStore = create<MessagesState>((set) => ({
   messagesByTab: loadInitial(),
   setMessagesByTab: (value) =>
     set((s) => ({
       messagesByTab: typeof value === 'function' ? value(s.messagesByTab) : value,
     })),
-  setMessagesForTab: (tabId, updater) =>
-    set((s) => {
-      const prevMessages = s.messagesByTab[tabId] ?? EMPTY
-      const nextMessages = updater(prevMessages)
-      if (nextMessages === prevMessages) return s
-      return { messagesByTab: { ...s.messagesByTab, [tabId]: nextMessages } }
-    }),
+  setMessagesForTab: (tabId, updater) => {
+    liveMessageMutationDepth += 1
+    try {
+      set((s) => {
+        const prevMessages = s.messagesByTab[tabId] ?? EMPTY
+        const nextMessages = updater(prevMessages)
+        if (nextMessages === prevMessages) return s
+        return { messagesByTab: { ...s.messagesByTab, [tabId]: nextMessages } }
+      })
+    } finally {
+      liveMessageMutationDepth -= 1
+    }
+  },
 }))
 
 // ─── Persistence ─────────────────────────────────────────────────────────────
@@ -64,8 +127,10 @@ export const useMessagesStore = create<MessagesState>((set) => ({
 //
 //   L2 — on-disk transcript store (main process, `transcript-store.ts`). The
 //        authoritative, unbounded source of truth: one file per scope, full rich
-//        history. Hydrated into the store on launch (backfilling anything L1
-//        evicted) and written back on the same settle/debounce cadence, with a
+//        history. Active/L1 scopes hydrate per scope; cold scopes hydrate when
+//        opened. Brain relay responses are bounded tails, while local Electron IPC
+//        returns the full scope. Writes still merge into the full authoritative shard,
+//        with the same settle/debounce cadence and a
 //        synchronous batch on window teardown so an abrupt quit can't drop the
 //        last turn. Because L2 exists, an L1 eviction is no longer data loss.
 
@@ -246,10 +311,18 @@ const DELTA_FLUSH_MS = 2000
 // Scopes whose threads changed since the last disk write. Suppressed during
 // hydration so loading from disk doesn't immediately echo back as writes.
 const dirtyScopes = new Set<string>()
-let hydrating = false
+let hydrationDepth = 0
+
+function isHydrating(): boolean {
+  return hydrationDepth > 0
+}
 
 function transcriptApi() {
-  return typeof window !== 'undefined' ? window.electronAPI : undefined
+  try {
+    return getCrewCodeClient()
+  } catch {
+    return typeof window !== 'undefined' ? window.electronAPI : undefined
+  }
 }
 
 /** Defer work to an idle slice so serialization doesn't land mid-frame. Falls
@@ -334,7 +407,7 @@ useMessagesStore.subscribe((state, prev) => {
     if (state.messagesByTab[scope] !== prev.messagesByTab[scope]) {
       touchSeq += 1
       scopeLastTouched.set(scope, touchSeq)
-      if (!hydrating) dirtyScopes.add(scope)
+      if (!isHydrating()) dirtyScopes.add(scope)
       const messages = state.messagesByTab[scope] ?? EMPTY
       const nextToken = durabilityToken(messages)
       durabilityByScope.set(scope, nextToken)
@@ -350,7 +423,11 @@ useMessagesStore.subscribe((state, prev) => {
     }
   }
 
-  if (hydrating) return
+  if (isHydrating()) return
+
+  // Only the per-scope mutation path represents live chat activity. Whole-map
+  // replacements restore/reconcile history and must always remain silent.
+  if (liveMessageMutationDepth > 0) emitLiveChatNotices(state.messagesByTab, prev.messagesByTab)
 
   // Growing turns stay memory-only. Synchronous localStorage serialization and
   // full-transcript IPC cloning were the visible hitch on every structural row.
@@ -364,18 +441,61 @@ useMessagesStore.subscribe((state, prev) => {
   }
 })
 
-// On launch, backfill from the authoritative disk store. L1 painted instantly
-// from localStorage; disk fills any scope L1 evicted and restores full history
-// for scopes L1 trimmed. Never clobber an in-memory scope that is already longer
-// (a turn that arrived — and is only in L1 — during this async load wins).
+// On launch, refresh active/L1 scopes from the authoritative disk store one at a
+// time. Cold scopes load when opened. The Brain adapter returns a bounded tail to
+// keep each encrypted relay response below its frame limit; local Electron returns
+// the full scope, and the full shard remains authoritative on disk.
+// Never clobber an in-memory scope that is already longer (a turn that arrived —
+// and is only in L1 — during this async load wins).
+const hydratedDiskScopes = new Set<string>()
+const hydratingDiskScopes = new Map<string, Promise<void>>()
+
+function initialHydrationScopes(): string[] {
+  const scopes = new Set(Object.keys(useMessagesStore.getState().messagesByTab))
+  try {
+    const active = JSON.parse(localStorage.getItem('crewcode:activeSessionByTab') ?? '{}') as Record<string, unknown>
+    for (const scopeId of Object.values(active)) if (typeof scopeId === 'string' && scopeId) scopes.add(scopeId)
+  } catch { /* malformed navigation cache is ignored */ }
+  return [...scopes].slice(0, 32)
+}
+
+export async function hydrateMessagesForScope(scopeId: string): Promise<void> {
+  if (!scopeId || hydratedDiskScopes.has(scopeId)) return
+  const existing = hydratingDiskScopes.get(scopeId)
+  if (existing) return existing
+  const api = transcriptApi()
+  if (!api?.transcriptsLoad) return
+  const loading = (async () => {
+    let messages: Message[]
+    try { messages = await api.transcriptsLoad(scopeId) } catch { return }
+    hydratedDiskScopes.add(scopeId)
+    if (!Array.isArray(messages) || messages.length === 0) return
+    hydrationDepth += 1
+    try {
+      useMessagesStore.getState().setMessagesByTab(prev => {
+        if ((prev[scopeId]?.length ?? 0) > messages.length) return prev
+        return { ...prev, [scopeId]: messages }
+      })
+    } finally {
+      hydrationDepth -= 1
+    }
+  })().finally(() => hydratingDiskScopes.delete(scopeId))
+  hydratingDiskScopes.set(scopeId, loading)
+  return loading
+}
+
 export async function hydrateMessagesFromBackend(): Promise<void> {
   const api = transcriptApi()
+  if (api?.transcriptsLoad) {
+    for (const scopeId of initialHydrationScopes()) await hydrateMessagesForScope(scopeId)
+    return
+  }
   if (!api?.transcriptsLoadAll) return
   let disk: Record<string, Message[]>
   try { disk = await api.transcriptsLoadAll() } catch { return }
   if (!disk || Object.keys(disk).length === 0) return
 
-  hydrating = true
+  hydrationDepth += 1
   try {
     useMessagesStore.getState().setMessagesByTab((prev) => {
       const next = { ...prev }
@@ -390,7 +510,7 @@ export async function hydrateMessagesFromBackend(): Promise<void> {
       return changed ? next : prev
     })
   } finally {
-    hydrating = false
+    hydrationDepth -= 1
   }
 }
 
@@ -426,6 +546,7 @@ if (typeof document !== 'undefined') {
 /** Subscribe to a single scope's messages. A streaming token re-renders only the
  *  components reading that scope, not the whole tree. */
 export function useMessagesForScope(scopeId: string): Message[] {
+  useEffect(() => { void hydrateMessagesForScope(scopeId) }, [scopeId])
   return useMessagesStore((s) => s.messagesByTab[scopeId] ?? EMPTY)
 }
 

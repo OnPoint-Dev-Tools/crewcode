@@ -84,6 +84,27 @@ describe('desktop Brain lifecycle', () => {
     } finally { rmSync(root, { recursive: true, force: true }) }
   })
 
+  it('merges a newer desktop transcript into an existing Brain shard', () => {
+    const { root, desktop, brain } = fixture()
+    try {
+      mkdirSync(join(desktop, 'transcripts'))
+      mkdirSync(join(brain, 'runtime', 'transcripts'), { recursive: true })
+      writeFileSync(join(brain, 'runtime', 'transcripts', 'transcript.one.json'), JSON.stringify({
+        scopeId: 'one',
+        messages: [{ kind: 'user', text: 'seeded turn' }],
+      }))
+      writeFileSync(join(desktop, 'transcripts', 'transcript.one.json'), JSON.stringify({
+        scopeId: 'one',
+        messages: [{ kind: 'user', text: 'seeded turn' }, { kind: 'user', text: 'desktop turn from today' }],
+      }))
+      seedBrainRuntime(desktop, brain)
+      const merged = JSON.parse(readFileSync(join(brain, 'runtime', 'transcripts', 'transcript.one.json'), 'utf8')) as {
+        messages: Array<{ text: string }>
+      }
+      expect(merged.messages.map(message => message.text)).toEqual(['seeded turn', 'desktop turn from today'])
+    } finally { rmSync(root, { recursive: true, force: true }) }
+  })
+
   it('starts, probes, and explicitly stops the detached Brain', async () => {
     const { root, desktop, brain } = fixture()
     const descriptor = connection()

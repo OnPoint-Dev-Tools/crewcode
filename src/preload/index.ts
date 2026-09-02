@@ -73,6 +73,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   continuityStateGet: () => ipcRenderer.invoke('brain:desktopRpc', 'continuity.get', {}),
   continuityStateUpdate: (values: Record<string, string>) => ipcRenderer.invoke('brain:desktopRpc', 'continuity.update', { values }),
+  continuityDesktopSeed: (values: Record<string, string>) => ipcRenderer.invoke('brain:desktopRpc', 'desktop.continuity.seedCatalogue', { values }),
   // Native Chromium page zoom, matching VS Code/Electron behavior. Unlike CSS
   // `zoom`, this updates the web contents viewport and relayouts the app.
   setUiZoom: (percent: number): void =>
@@ -281,6 +282,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // ─── Chat transcripts (authoritative on-disk store) ───────────
   transcriptsLoadAll: () => ipcRenderer.invoke('transcripts:loadAll'),
+  transcriptsLoad: (scopeId: string) => ipcRenderer.invoke('transcripts:load', scopeId),
   transcriptsMtimes:  () => ipcRenderer.invoke('transcripts:mtimes'),
   transcriptsSave:    (scopeId: string, messages: unknown[]) => ipcRenderer.invoke('transcripts:save', scopeId, messages),
   transcriptsRemove:  (scopeId: string) => ipcRenderer.invoke('transcripts:remove', scopeId),
@@ -413,6 +415,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ─── GitHub status (requires gh CLI) ──────────────────────────
   githubStatus: (repoPath: string) =>
     ipcRenderer.invoke('github:status', repoPath),
+  githubPrCreateContext: (repoPath: string, base: string) =>
+    ipcRenderer.invoke('github:prCreateContext', repoPath, base),
+  githubPrDetail: (repoPath: string, num: number) =>
+    ipcRenderer.invoke('github:prDetail', repoPath, num),
+  githubPrDiff: (repoPath: string, num: number) =>
+    ipcRenderer.invoke('github:prDiff', repoPath, num),
 
   // ─── Git (status, staging, commit, push, pull, etc.) ──────────
   gitStatus:   (cwd: string) =>
@@ -497,9 +505,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ghLoginStart:   () => ipcRenderer.invoke('gh:loginStart'),
   ghLoginCancel:  () => ipcRenderer.invoke('gh:loginCancel'),
   ghLogout:       () => ipcRenderer.invoke('gh:logout'),
-  ghPrCreate:     (cwd: string) => ipcRenderer.invoke('gh:prCreate', cwd),
-  ghPrMerge:      (cwd: string, num: number) => ipcRenderer.invoke('gh:prMerge', cwd, num),
+  ghPrCreate:     (cwd: string, options: import('../shared/github-types').GitHubPullRequestCreateOptions) => ipcRenderer.invoke('gh:prCreate', cwd, options),
+  ghPrMerge:      (cwd: string, num: number, method: import('../shared/github-types').GitHubMergeMethod) => ipcRenderer.invoke('gh:prMerge', cwd, num, method),
   ghPrApprove:    (cwd: string, num: number) => ipcRenderer.invoke('gh:prApprove', cwd, num),
+  ghPrUpdateBranch: (cwd: string, num: number) => ipcRenderer.invoke('gh:prUpdateBranch', cwd, num),
+  ghPrComment:    (cwd: string, num: number, body: string) => ipcRenderer.invoke('gh:prComment', cwd, num, body),
+  ghPrClose:      (cwd: string, num: number) => ipcRenderer.invoke('gh:prClose', cwd, num),
+  ghPrReview:     (cwd: string, num: number, options: import('../shared/github-types').GitHubPullRequestReviewOptions) => ipcRenderer.invoke('gh:prReview', cwd, num, options),
   ghRepoCreate:   (cwd: string, opts: { name: string; visibility: 'private' | 'public'; description?: string }) =>
     ipcRenderer.invoke('gh:repoCreate', cwd, opts),
   onGhAuthEvent: (cb: (event: unknown) => void) => {

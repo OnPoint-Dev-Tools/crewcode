@@ -22,11 +22,11 @@ import { startRemoteAccessServer } from './remote-access-server'
 const READ_METHODS = new Set([
   'workspaces.list', 'workspaces.inspectPath', 'fs.readDir', 'fs.readFile', 'fs.readDataUrl', 'fs.listFiles',
   'git.status', 'git.diff', 'git.log', 'git.branches', 'git.remotes', 'worktrees.list',
-  'github.status', 'gh.status',
+  'github.status', 'github.prCreateContext', 'github.prDetail', 'github.prDiff', 'gh.status',
   'continuity.get',
 ])
 const WRITE_METHOD_PREFIXES = ['workspaces.', 'fs.', 'git.', 'worktrees.', 'gh.']
-const AGENT_METHOD_PREFIXES = ['bridge.', 'agents.', 'transcripts.', 'mcp.', 'voice.']
+const AGENT_METHOD_PREFIXES = ['bridge.', 'agents.', 'transcripts.', 'mcp.', 'voice.', 'delegation.']
 
 interface RelaySession {
   connectionId: string
@@ -192,24 +192,38 @@ export async function startBrainRelay(options: BrainRelayOptions): Promise<Runni
     const plaintext = session.outboundQueue[0]
     if (!plaintext) return
     const sequence = session.brainSequence
-    let encoded: string
-    try {
-      const frame: HubRelayControlFrame = {
-        type: 'encrypted',
-        connectionId: session.connectionId,
-        sequence,
-        ciphertext: session.cipher.encryptBrain(sequence, JSON.stringify(plaintext)),
-      }
-      encoded = JSON.stringify(frame)
-    } catch {
+    const descriptor = plaintext.type === 'rpcResult'
+      ? `RPC result ${plaintext.response.id}`
+      : plaintext.type === 'event' ? `${plaintext.channel} event` : plaintext.type
+    const closeForFrameFailure = (operation: string, cause: unknown): void => {
       session.outboundQueue.length = 0
+      const detail = cause instanceof Error && cause.message
+        ? cause.message.replace(/[\r\n]/g, ' ').slice(0, 160)
+        : 'unknown failure'
       activeRelay.send(JSON.stringify({
         type: 'close', connectionId: session.connectionId,
-        reason: `Brain could not serialize encrypted frame ${sequence}`,
+        reason: `Brain could not ${operation} encrypted frame ${sequence} (${descriptor}): ${detail}`,
       } satisfies HubRelayControlFrame))
       releaseSession(session.connectionId)
+    }
+    let plaintextJson: string
+    try {
+      plaintextJson = JSON.stringify(plaintext)
+    } catch (cause) {
+      closeForFrameFailure('serialize', cause)
       return
     }
+    let ciphertext: string
+    try {
+      ciphertext = session.cipher.encryptBrain(sequence, plaintextJson)
+    } catch (cause) {
+      closeForFrameFailure('encrypt', cause)
+      return
+    }
+    const frame: HubRelayControlFrame = {
+      type: 'encrypted', connectionId: session.connectionId, sequence, ciphertext,
+    }
+    const encoded = JSON.stringify(frame)
     session.outboundSending = true
     activeRelay.send(encoded, error => {
       session.outboundSending = false

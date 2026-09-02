@@ -25,7 +25,8 @@ import { PtyService } from './pty-service'
 import { AgentBridgeService, webConversationKey, type AgentPathResolver } from './agents/bridge-service'
 import { headlessAgentRegistry, listHeadlessAgentModels } from './headless-agent-resolver'
 import { readMcpConfig } from './mcp-config-service'
-import { getGhStatus, getGitHubStatus, runGh } from './github-service'
+import { getGhStatus, getGitHubStatus, getPullRequestCreateContext, getPullRequestDetail, getPullRequestDiff, pullRequestActionArgs, pullRequestCommentArgs, pullRequestCreateArgs, pullRequestMergeArgs, pullRequestReviewArgs, runGh } from './github-service'
+import type { GitHubMergeMethod, GitHubPullRequestCreateOptions, GitHubPullRequestReviewOptions } from '../shared/github-types'
 import { RemoteGhService } from './remote-gh-service'
 import { RemoteEditorLanguageServer } from './remote-editor-language-server'
 import { RemoteEditorFileWatch } from './remote-editor-file-watch'
@@ -39,6 +40,7 @@ import { GitService } from './git-service'
 import type { BridgeEvent, BridgeStartOpts, HandoffPromptOptions, PromptOptions } from './agents/bridge-types'
 import { isCrewCoderApprovalMode, isCrewCoderMode } from '../shared/crewcoder-types'
 import { getAgentKey, setAgentKey } from './agents/agent-keys'
+import { getSessionHints } from './agents/sessionStore'
 import { WebSocketServer, WebSocket } from 'ws'
 import { ContinuityStateService, continuityStatePath } from './continuity-state-service'
 
@@ -316,8 +318,14 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
       return { ...result, audio: Buffer.from(result.audio).toString('base64') }
     }],
     ['transcripts.loadAll', () => transcriptService.loadAll()],
+    ['transcripts.load', params => transcriptService.loadScope(String(params.scopeId ?? ''))],
     ['transcripts.mtimes', () => transcriptService.mtimes()],
     ['transcripts.recent', params => transcriptService.recent(Number(params.limit ?? 5))],
+    ['transcripts.catalogue', async params => {
+      const entries = await transcriptService.catalogue(Number(params.limit ?? 2_000))
+      const hints = getSessionHints(entries.map(entry => entry.scopeId))
+      return entries.map(entry => ({ ...entry, ...hints[entry.scopeId] }))
+    }],
     ['transcripts.save', params => transcriptService.save(String(params.scopeId ?? ''), params.messages)],
     ['transcripts.saveBatch', params => transcriptService.saveBatch(params.entries as TranscriptBatchEntry[])],
     ['transcripts.remove', params => transcriptService.remove(String(params.scopeId ?? ''))],
@@ -446,10 +454,23 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
     ['git.fetch', params => gitService.simple(registeredRoot({ root: params.cwd }), 'fetch')],
     ['git.init', params => gitService.simple(registeredRoot({ root: params.cwd }), 'init')],
     ['github.status', params => getGitHubStatus(registeredRoot({ root: params.cwd }))],
+    ['github.prCreateContext', params => getPullRequestCreateContext(registeredRoot({ root: params.cwd }), String(params.base ?? ''))],
+    ['github.prDetail', params => getPullRequestDetail(registeredRoot({ root: params.cwd }), Number(params.number))],
+    ['github.prDiff', params => getPullRequestDiff(registeredRoot({ root: params.cwd }), Number(params.number))],
     ['gh.status', () => getGhStatus()],
-    ['gh.prCreate', params => runGh(registeredRoot({ root: params.cwd }), ['pr', 'create', '--fill'])],
-    ['gh.prMerge', params => runGh(registeredRoot({ root: params.cwd }), ['pr', 'merge', String(Number(params.number)), '--squash'])],
-    ['gh.prApprove', params => runGh(registeredRoot({ root: params.cwd }), ['pr', 'review', String(Number(params.number)), '--approve'])],
+    ['gh.prCreate', params => {
+      try { return runGh(registeredRoot({ root: params.cwd }), pullRequestCreateArgs(params.options as GitHubPullRequestCreateOptions)) }
+      catch (error) { return { ok: false, output: '', error: error instanceof Error ? error.message : String(error) } }
+    }],
+    ['gh.prMerge', params => {
+      try { return runGh(registeredRoot({ root: params.cwd }), pullRequestMergeArgs(Number(params.number), String(params.method) as GitHubMergeMethod)) }
+      catch (error) { return { ok: false, output: '', error: error instanceof Error ? error.message : String(error) } }
+    }],
+    ['gh.prApprove', params => runGh(registeredRoot({ root: params.cwd }), pullRequestActionArgs('approve', Number(params.number)))],
+    ['gh.prUpdateBranch', params => runGh(registeredRoot({ root: params.cwd }), pullRequestActionArgs('update-branch', Number(params.number)))],
+    ['gh.prComment', params => runGh(registeredRoot({ root: params.cwd }), pullRequestCommentArgs(Number(params.number), String(params.body ?? '')))],
+    ['gh.prClose', params => runGh(registeredRoot({ root: params.cwd }), pullRequestActionArgs('close', Number(params.number)))],
+    ['gh.prReview', params => runGh(registeredRoot({ root: params.cwd }), pullRequestReviewArgs(Number(params.number), params.options as GitHubPullRequestReviewOptions))],
     ['gh.loginStart', () => remoteGh.login()],
     ['gh.loginCancel', () => remoteGh.cancel()],
     ['gh.repoCreate', params => remoteGh.createRepository(registeredRoot({ root: params.cwd }), params.options as Parameters<RemoteGhService['createRepository']>[1])],
@@ -565,7 +586,7 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
           }
           if (body.method === 'agent.setKey') {
             setAgentKey(String(params.id ?? ''), typeof params.key === 'string' ? params.key : null)
-            sendJson(response, 200, { ok: true, result: { ok: true, registry: headlessAgentRegistry() } })
+            sendJson(response, 200, { ok: true, result: { ok: true, registry: await headlessAgentRegistry() } })
             return
           }
           if (body.method === 'voice.setProviderKey') {
@@ -573,6 +594,10 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
             if (!provider) { sendJson(response, 400, { error: remoteError('INVALID_REQUEST', 'invalid voice provider') }); return }
             setVoiceProviderKey(provider, typeof params.key === 'string' ? params.key : null)
             sendJson(response, 200, { ok: true, result: { ok: true, availability: voiceProviderAvailability() } })
+            return
+          }
+          if (body.method === 'continuity.seedCatalogue') {
+            sendJson(response, 200, { ok: true, result: continuityState.seedDesktopCatalogue(params.values) })
             return
           }
           sendJson(response, 400, { error: remoteError('UNSUPPORTED', 'desktop Brain control method is unsupported') })

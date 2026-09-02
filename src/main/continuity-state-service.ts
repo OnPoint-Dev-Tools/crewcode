@@ -1,14 +1,20 @@
 import { randomBytes } from 'crypto'
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
 import { dirname, join } from 'path'
-import type { ContinuityStateSnapshot } from '../shared/continuity-state-types'
+import {
+  DESKTOP_CATALOGUE_AUTHORITY_KEY,
+  DESKTOP_CATALOGUE_AUTHORITY_VALUE,
+  type ContinuityStateSnapshot,
+} from '../shared/continuity-state-types'
 
 const ALLOWED_KEYS = new Set([
   'crewcode:sessionsByTab',
   'crewcode:activeSessionByTab',
   'crewcode:workspaceTabs:v1',
   'crewcode:activeWorkspaceId',
+  'crewcode:sessionCompletedAt:v1',
 ])
+const PERSISTED_KEYS = new Set([...ALLOWED_KEYS, DESKTOP_CATALOGUE_AUTHORITY_KEY])
 const MAX_VALUE_BYTES = 2 * 1024 * 1024
 
 interface PersistedContinuityState {
@@ -34,10 +40,26 @@ export class ContinuityStateService {
   }
 
   update(values: unknown): ContinuityStateSnapshot {
+    return this.updateAllowed(values, ALLOWED_KEYS)
+  }
+
+  /** Owner-loopback control only. Browser RPC cannot establish desktop
+   * catalogue authority by including the internal marker in continuity.update. */
+  seedDesktopCatalogue(values: unknown): ContinuityStateSnapshot {
+    const supplied = values && typeof values === 'object' && !Array.isArray(values)
+      ? values as Record<string, unknown>
+      : values
+    return this.updateAllowed({
+      ...(supplied && typeof supplied === 'object' ? supplied : {}),
+      [DESKTOP_CATALOGUE_AUTHORITY_KEY]: DESKTOP_CATALOGUE_AUTHORITY_VALUE,
+    }, PERSISTED_KEYS)
+  }
+
+  private updateAllowed(values: unknown, allowedKeys: ReadonlySet<string>): ContinuityStateSnapshot {
     if (!values || typeof values !== 'object' || Array.isArray(values)) throw new Error('continuity values must be an object')
     const patch: Record<string, string> = {}
     for (const [key, value] of Object.entries(values as Record<string, unknown>)) {
-      if (!ALLOWED_KEYS.has(key) || typeof value !== 'string') throw new Error(`continuity key is not allowed: ${key}`)
+      if (!allowedKeys.has(key) || typeof value !== 'string') throw new Error(`continuity key is not allowed: ${key}`)
       if (Buffer.byteLength(value) > MAX_VALUE_BYTES) throw new Error(`continuity value exceeds ${MAX_VALUE_BYTES} bytes: ${key}`)
       // Validate JSON-bearing keys before persisting them. activeWorkspaceId is
       // intentionally a plain opaque id.
@@ -62,7 +84,7 @@ export class ContinuityStateService {
       if (value.version !== 1 || !Number.isSafeInteger(value.revision) || !Number.isFinite(value.updatedAt) || !value.values || typeof value.values !== 'object') return emptyState()
       const values: Record<string, string> = {}
       for (const [key, entry] of Object.entries(value.values)) {
-        if (ALLOWED_KEYS.has(key) && typeof entry === 'string' && Buffer.byteLength(entry) <= MAX_VALUE_BYTES) values[key] = entry
+        if (PERSISTED_KEYS.has(key) && typeof entry === 'string' && Buffer.byteLength(entry) <= MAX_VALUE_BYTES) values[key] = entry
       }
       return { version: 1, revision: Number(value.revision), updatedAt: Number(value.updatedAt), values }
     } catch { return emptyState() }

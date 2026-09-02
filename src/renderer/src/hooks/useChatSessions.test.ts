@@ -332,6 +332,29 @@ describe('chat session archiving', () => {
     hook.unmount()
   })
 
+  it('promotes a recovered browser fallback when the user sends work', () => {
+    const data = new Map<string, string>()
+    data.set('crewcode:sessionsByTab', JSON.stringify({
+      'chat-a': [{
+        id: 'chat-a', tabId: 'chat-a', label: 'Recovered', agentId: 'codex', model: '',
+        mode: 'build', effort: 'medium', mcpServerIds: [], enabledSkillIds: [],
+        continuityRecovered: true, createdAt: 1_000, lastUsedAt: 1_000,
+      }],
+    }))
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => data.get(key) ?? null,
+      setItem: (key: string, value: string) => { data.set(key, value) },
+    })
+    const hook = renderHook(() => useChatSessions({
+      agentId: 'codex', model: '', mode: 'build', effort: 'medium',
+    }), undefined)
+
+    act(() => { hook.result.current.touchLastUsed('chat-a', 'chat-a', 2_000) })
+    expect(hook.result.current.getActiveSession('chat-a')).toMatchObject({ lastUsedAt: 2_000 })
+    expect(hook.result.current.getActiveSession('chat-a')?.continuityRecovered).toBeUndefined()
+    hook.unmount()
+  })
+
   it('backfills legacy timestamps from transcript activity', () => {
     const data = new Map<string, string>()
     data.set('crewcode:sessionsByTab', JSON.stringify({

@@ -5,6 +5,7 @@ import { GitSidebar, type GitSidebarProps } from './GitSidebar'
 import { BranchPickerPanel, CreateBranchModal } from './BranchPicker'
 import { GitPageChanges } from './GitPageChanges'
 import { GitPageCommit } from './GitPageCommit'
+import { PullRequestModal } from './PullRequestModal'
 
 function remoteWebUrl(remote: string): string | null {
   if (!remote) return null
@@ -32,6 +33,7 @@ export function GitPage(props: GitSidebarProps) {
   const [branchOpen, setBranchOpen] = useState(false)
   const [branchQuery, setBranchQuery] = useState('')
   const [createBranchOpen, setCreateBranchOpen] = useState(false)
+  const [createPrOpen, setCreatePrOpen] = useState(false)
   const [menu, setMenu] = useState<{ top: number; left: number } | null>(null)
   const moreRef = useRef<HTMLButtonElement>(null)
 
@@ -46,7 +48,7 @@ export function GitPage(props: GitSidebarProps) {
     { label: 'pull', icon: 'arrowDown' as const, run: onPull },
     { label: 'push', icon: 'arrowUp' as const, run: onPush },
     { label: 'sync', icon: 'refresh' as const, run: onSync },
-    { label: 'create pull request', icon: 'gitPullRequest' as const, run: onCreatePR, disabled: !webUrl },
+    { label: 'create pull request', icon: 'gitPullRequest' as const, run: () => setCreatePrOpen(true), disabled: !webUrl },
     { label: 'open on github', icon: 'github' as const, run: openOnGitHub, disabled: !webUrl },
     { label: 'open terminal here', icon: 'terminal' as const, run: () => onOpenTerminal?.(workspace.path), disabled: !onOpenTerminal },
     { label: 'copy branch name', icon: 'copy' as const, run: () => window.electronAPI?.clipboardWriteText(workspace.branch) },
@@ -101,6 +103,16 @@ export function GitPage(props: GitSidebarProps) {
           sourceBranch={workspace.branch}
           onCreate={onCreateBranch}
           onClose={() => setCreateBranchOpen(false)}
+        />
+        <PullRequestModal
+          open={createPrOpen}
+          repoPath={workspace.path}
+          head={workspace.branch}
+          branches={(state.branches || []).map(branch => branch.name.replace(/^origin\//, ''))}
+          defaultBase={state.defaultBase || state.comparisonRef || 'main'}
+          defaultTitle={state.history?.[0]?.msg || workspace.branch.replace(/[-_/]+/g, ' ')}
+          onCreate={async options => (await onCreatePR?.(options))?.ok ?? false}
+          onClose={() => setCreatePrOpen(false)}
         />
 
         {menu && createPortal(

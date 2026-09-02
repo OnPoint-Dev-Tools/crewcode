@@ -8,6 +8,7 @@ import type { Worktree, GitHubRun } from '../types'
 import type {
   GitState, GitChange, GitConflict, GitPrRef, GitHistoryEntry,
   GitBranchRef, GitWorktreeRef, GitBanner, ChangeStatus, CheckState, GitSidebarHandlers,
+  GitActionOutcome,
 } from '../components/git/git-state'
 import { getCrewCodeClient } from '../runtime/crewcode-client'
 
@@ -50,10 +51,6 @@ function runState(r: GitHubRun): CheckState {
   if (r.conclusion === 'success') return 'ok'
   if (r.conclusion === 'failure' || r.conclusion === 'cancelled') return 'f'
   return 's'
-}
-
-function firstWebUrl(text: string | undefined): string | null {
-  return text?.match(/https?:\/\/\S+/)?.[0] ?? null
 }
 
 function githubPrUrl(remoteUrl: string, num: number): string | null {
@@ -148,13 +145,16 @@ export function useGitSidebar(args: UseGitSidebarArgs): UseGitSidebarResult {
             const prRuns = runs.filter(r => r.branch === pr.branch)
             return {
               num:     pr.number,
-              status:  pr.state === 'OPEN' ? 'open' : pr.state === 'MERGED' ? 'merged' : 'closed',
+              status:  pr.state === 'MERGED' ? 'merged' : pr.state === 'CLOSED' ? 'closed' : pr.isDraft ? 'draft' : 'open',
               title:   pr.title,
               head:    pr.branch,
-              base:    'main',
-              author:  '',
-              updated: '',
+              base:    pr.base || comparisonRef || mainBranch,
+              author:  pr.author || '',
+              updated: pr.updatedAt || '',
               url:     pr.url,
+              body:    pr.body,
+              mergeStateStatus: pr.mergeStateStatus,
+              reviewDecision: pr.reviewDecision,
               checks:  prRuns.map(runState),
               runs:    prRuns.map(r => ({ name: r.name, state: runState(r), dur: '' })),
             }
@@ -261,6 +261,7 @@ export function useGitSidebar(args: UseGitSidebarArgs): UseGitSidebarResult {
       hasRemote,
       hasUpstream: stOk ? st!.hasUpstream : true,
       comparisonRef,
+      defaultBase: comparisonRef || mainBranch,
     })
   }, [repoPath, workspacePath, mainBranch, comparisonRef, currentWorktreeId])
 
@@ -295,6 +296,28 @@ export function useGitSidebar(args: UseGitSidebarArgs): UseGitSidebarResult {
     }
     await refresh(opts)
     return ok
+  }, [showBanner, refresh])
+
+  const runPrAction = useCallback(async (
+    pending: string,
+    fn: () => Promise<ActionResult>,
+    okText: string,
+  ): Promise<GitActionOutcome> => {
+    showBanner({ kind: '', text: pending, spinning: true, auto: 0 })
+    try {
+      const result = await fn()
+      if (result?.error) {
+        showBanner({ kind: 'err', text: result.error, auto: 7000 })
+        return { ok: false, error: result.error }
+      }
+      showBanner({ kind: result?.warn ? 'warn' : '', text: result?.warn ?? okText, auto: result?.warn ? 7000 : 3000 })
+      await refresh({ github: true })
+      return { ok: true }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      showBanner({ kind: 'err', text: message, auto: 7000 })
+      return { ok: false, error: message }
+    }
   }, [showBanner, refresh])
 
   /** Resolve a worktree id (incl. the synthetic primary) to its path + branch. */
@@ -488,19 +511,17 @@ export function useGitSidebar(args: UseGitSidebarArgs): UseGitSidebarResult {
     onAbortMerge:    () => runAction('aborting merge…',  () => window.electronAPI!.gitMergeAbort(repoPath),    'merge aborted'),
     onContinueMerge: () => runAction('continuing merge…', () => window.electronAPI!.gitMergeContinue(repoPath), 'merge committed'),
 
-    onCreatePR:  () => runAction(
-      'opening PR…',
-      async () => {
-        const result = await window.electronAPI!.ghPrCreate(repoPath)
-        const url = result.ok ? firstWebUrl(result.output) : null
-        if (url) window.electronAPI?.openExternal(url)
-        return result
-      },
-      'PR opened',
-      { github: true },
+    onCreatePR:  (options) => runPrAction(
+      'creating pull request…',
+      () => getCrewCodeClient().ghPrCreate(repoPath, options),
+      options.draft ? 'draft pull request created' : 'pull request created',
     ),
-    onMergePR:   (num) => runAction(`merging #${num}…`,  () => window.electronAPI!.ghPrMerge(repoPath, num),   `#${num} merged`,   { github: true }),
+    onMergePR:   (num, method) => runPrAction(`merging #${num} with ${method}…`,  () => getCrewCodeClient().ghPrMerge(repoPath, num, method),   `#${num} merged with ${method}`),
     onApprovePR: (num) => runAction(`approving #${num}…`, () => window.electronAPI!.ghPrApprove(repoPath, num), `#${num} approved`, { github: true }),
+    onUpdatePRBranch: (num) => runPrAction(`updating #${num}…`, () => getCrewCodeClient().ghPrUpdateBranch(repoPath, num), `#${num} updated`),
+    onCommentPR: (num, body) => runAction(`commenting on #${num}…`, () => getCrewCodeClient().ghPrComment(repoPath, num, body), `comment added to #${num}`, { github: true }),
+    onClosePR: (num) => runPrAction(`closing #${num}…`, () => getCrewCodeClient().ghPrClose(repoPath, num), `#${num} closed`),
+    onReviewPR: (num, options) => runPrAction(`submitting review for #${num}…`, () => getCrewCodeClient().ghPrReview(repoPath, num, options), `review submitted for #${num}`),
     onOpenPR: (num) => {
       const pr = prsRef.current.find(p => p.num === num)
       const url = pr?.url ?? githubPrUrl(ghRef.current.remoteUrl, num)
@@ -522,7 +543,7 @@ export function useGitSidebar(args: UseGitSidebarArgs): UseGitSidebarResult {
       { github: true },
     ),
   }), [repoPath, workspacePath, mainBranch, runAction, resolveWt, showBanner,
-       onSwitchWorktree, onAskAgent, onWorktreesChanged, onRequestGitAuth, onRequestSigningPassphrase])
+       onSwitchWorktree, onAskAgent, onWorktreesChanged, onRequestGitAuth, onRequestSigningPassphrase, runPrAction])
 
   // Action banner takes precedence over the derived conflict banner.
   const mergedState = useMemo(

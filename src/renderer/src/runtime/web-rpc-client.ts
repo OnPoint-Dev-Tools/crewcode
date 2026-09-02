@@ -194,6 +194,7 @@ export function createWebCrewCodeClient(sessionOrTransport: string | WebClientTr
     onMcpChanged: noSubscription,
     onPluginsChanged: noSubscription,
     onNotificationClick: noSubscription,
+    onYuheardState: noSubscription,
     onDelegationRequest: callback => { delegationListeners.add(callback); ensureEvents(); return () => delegationListeners.delete(callback) },
     onKeybindsChanged: noSubscription,
     onEditorFileChanged: callback => { editorFileListeners.add(callback); ensureEvents(); return () => editorFileListeners.delete(callback) },
@@ -206,6 +207,10 @@ export function createWebCrewCodeClient(sessionOrTransport: string | WebClientTr
     updaterDownload: async () => ({ ok: false, error: 'updates are desktop-only' }),
     updaterQuitAndInstall: async () => ({ ok: false, error: 'updates are desktop-only' }),
     appBuildInfo: async () => ({ version: 'web', buildHash: 'web', packaged: false }),
+    // Keep optional desktop-only capability probes genuinely absent. A throwing
+    // fallback function makes `typeof api.trayConfigure === 'function'` true and
+    // incorrectly mounts the tray preference in a browser.
+    trayConfigure: undefined,
     // These desktop integrations are deliberately inert in a browser. Defining
     // them explicitly matters because the Proxy fallback is a function, so
     // optional method checks would otherwise invoke a rejected Promise.
@@ -263,6 +268,8 @@ export function createWebCrewCodeClient(sessionOrTransport: string | WebClientTr
       onUpdate: () => () => undefined,
     },
     transcriptsLoadAll: () => rpc('transcripts.loadAll', {}),
+    transcriptsLoad: scopeId => rpc('transcripts.load', { scopeId }),
+    transcriptsCatalogue: () => rpc('transcripts.catalogue', { limit: 2_000 }),
     transcriptsMtimes: () => rpc('transcripts.mtimes', {}),
     transcriptsSave: (scopeId, messages) => rpc('transcripts.save', { scopeId, messages }),
     transcriptsRemove: scopeId => rpc('transcripts.remove', { scopeId }),
@@ -346,10 +353,17 @@ export function createWebCrewCodeClient(sessionOrTransport: string | WebClientTr
     // clients never receive its token, and every repo operation remains confined
     // to a registered workspace root.
     githubStatus: repoPath => rpc('github.status', { cwd: repoPath }),
+    githubPrCreateContext: (repoPath, base) => rpc('github.prCreateContext', { cwd: repoPath, base }),
+    githubPrDetail: (repoPath, number) => rpc('github.prDetail', { cwd: repoPath, number }),
+    githubPrDiff: (repoPath, number) => rpc('github.prDiff', { cwd: repoPath, number }),
     ghStatus: () => rpc('gh.status', {}),
-    ghPrCreate: cwd => rpc('gh.prCreate', { cwd }),
-    ghPrMerge: (cwd, number) => rpc('gh.prMerge', { cwd, number }),
+    ghPrCreate: (cwd, options) => rpc('gh.prCreate', { cwd, options }),
+    ghPrMerge: (cwd, number, method) => rpc('gh.prMerge', { cwd, number, method }),
     ghPrApprove: (cwd, number) => rpc('gh.prApprove', { cwd, number }),
+    ghPrUpdateBranch: (cwd, number) => rpc('gh.prUpdateBranch', { cwd, number }),
+    ghPrComment: (cwd, number, body) => rpc('gh.prComment', { cwd, number, body }),
+    ghPrClose: (cwd, number) => rpc('gh.prClose', { cwd, number }),
+    ghPrReview: (cwd, number, options) => rpc('gh.prReview', { cwd, number, options }),
     ghLoginStart: () => rpc('gh.loginStart', {}),
     ghLoginCancel: () => rpc('gh.loginCancel', {}),
     ghLogout: async () => ({ ok: false, error: 'Remote logout is disabled; manage gh credentials from the Brain' }),
@@ -420,13 +434,13 @@ const BRAIN_BACKED_METHODS = new Set([
   'workspacesList', 'workspacesAdd', 'workspacesRemove', 'workspacesPin', 'workspacesRename', 'workspacesSetFolder',
   'workspacesCloneRepo', 'workspacesInitProject',
   'agentRegistry', 'agentListModels',
-  'transcriptsLoadAll', 'transcriptsMtimes', 'transcriptsSave', 'transcriptsRemove', 'transcriptsSaveSyncBatch',
+  'transcriptsLoadAll', 'transcriptsLoad', 'transcriptsCatalogue', 'transcriptsMtimes', 'transcriptsSave', 'transcriptsRemove', 'transcriptsSaveSyncBatch',
   'continuityStateGet', 'continuityStateUpdate',
   'worktreeList', 'worktreeCreate', 'worktreeRemove',
   'fsReadDir', 'fsListFiles', 'fsReadFile', 'fsReadDataUrl', 'fsWriteFile', 'fsFormat', 'fsMkdir', 'fsDelete', 'fsRename', 'fsCopyFile', 'fsMove',
   'gitStatus', 'gitStage', 'gitStageAll', 'gitUnstage', 'gitDiscard', 'gitDiff', 'gitChangesVsRef', 'gitDiffVsRef', 'gitLog',
   'gitBranches', 'gitRemotes', 'gitCommit', 'gitPush', 'gitPull', 'gitFetch', 'gitCheckout', 'gitCreateBranch', 'gitMerge', 'gitMergeAbort', 'gitMergeContinue', 'gitResolveConflict', 'gitInit',
-  'githubStatus', 'ghStatus', 'ghPrCreate', 'ghPrMerge', 'ghPrApprove', 'ghLoginStart', 'ghLoginCancel', 'ghRepoCreate', 'onGhAuthEvent',
+  'githubStatus', 'githubPrCreateContext', 'githubPrDetail', 'githubPrDiff', 'ghStatus', 'ghPrCreate', 'ghPrMerge', 'ghPrApprove', 'ghPrUpdateBranch', 'ghPrComment', 'ghPrClose', 'ghPrReview', 'ghLoginStart', 'ghLoginCancel', 'ghRepoCreate', 'onGhAuthEvent',
   'ptyCreate', 'ptyWrite', 'ptyResize', 'ptyKill', 'onPtyData', 'onPtyDataForPane', 'onPtyExit',
   'bridgeStart', 'bridgePrompt', 'bridgeCompact', 'bridgeResetSession', 'bridgeHandoff', 'bridgeRemoveFollowUp', 'bridgeRespondUserRequest', 'bridgeSetMode', 'bridgeAbort', 'bridgeStop', 'onBridgeEvent',
   'delegationEnable', 'delegationDisable', 'delegationRespond', 'onDelegationRequest',
@@ -461,6 +475,7 @@ export function createBrainAttachedCrewCodeClient(local: CrewCodeClient): CrewCo
     agentGetKey: id => local.brainDesktopRpc('desktop.agent.getKey', { id }),
     agentSetKey: (id, key) => local.brainDesktopRpc('desktop.agent.setKey', { id, key }),
     voiceSetProviderKey: (provider, key) => local.brainDesktopRpc('desktop.voice.setProviderKey', { provider, key }),
+    continuityDesktopSeed: values => local.brainDesktopRpc('desktop.continuity.seedCatalogue', { values }),
   }
   // Electron contextBridge exposes `local` as a frozen proxy whose methods are
   // non-configurable data properties. Using it as this Proxy's target and then

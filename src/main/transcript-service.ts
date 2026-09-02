@@ -1,6 +1,8 @@
 import { createHash } from 'crypto'
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync, promises as fsp } from 'fs'
 import { dirname, join } from 'path'
+import { titleFromFirstMessage } from '../shared/chat-title'
+import type { ContinuityTranscriptEntry } from '../shared/continuity-state-types'
 
 type TranscriptMessage = Record<string, unknown>
 
@@ -21,10 +23,53 @@ export interface RecentTranscriptSummary {
 }
 
 const FILE_PREFIX = 'transcript.'
+// Startup may hydrate up to 32 L1 scopes over one relay connection. Keep their
+// combined plaintext below 3 MiB so encryption/base64 framing and the other
+// startup RPCs retain headroom inside the Hub's shared 8 MiB burst budget.
+const MAX_SCOPE_LOAD_BYTES = 96 * 1024
+const MAX_CATALOGUE_ENTRIES = 2_000
+const SCOPE_HEADER_BYTES = 4 * 1024
+const TITLE_HINT_MAX = 80
+
+function decodeJsonString(raw: string): string | undefined {
+  try {
+    const parsed = JSON.parse(`"${raw}"`) as unknown
+    return typeof parsed === 'string' ? parsed : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** First user prompt from the shard header only — never a transcript body. */
+function titleHintFromHeader(header: string): string | undefined {
+  const match = header.match(/"kind"\s*:\s*"user"[\s\S]{0,800}?"text"\s*:\s*"((?:\\.|[^"\\])*)"/)
+    ?? header.match(/"role"\s*:\s*"user"[\s\S]{0,800}?"text"\s*:\s*"((?:\\.|[^"\\])*)"/)
+  if (!match) return undefined
+  const text = decodeJsonString(match[1]!)?.trim()
+  if (!text) return undefined
+  const title = titleFromFirstMessage(text).trim()
+  return title ? title.slice(0, TITLE_HINT_MAX) : undefined
+}
 
 function normalizeMessages(value: unknown): TranscriptMessage[] {
   if (!Array.isArray(value)) return []
   return value.filter((message): message is TranscriptMessage => !!message && typeof message === 'object')
+}
+
+function boundedMessageTail(value: unknown): TranscriptMessage[] {
+  const messages = normalizeMessages(value)
+  const tail: TranscriptMessage[] = []
+  let bytes = 2
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    let encoded: string
+    try { encoded = JSON.stringify(messages[index]) } catch { continue }
+    const nextBytes = Buffer.byteLength(encoded) + (tail.length ? 1 : 0)
+    if (nextBytes > MAX_SCOPE_LOAD_BYTES) continue
+    if (bytes + nextBytes > MAX_SCOPE_LOAD_BYTES) break
+    tail.unshift(messages[index]!)
+    bytes += nextBytes
+  }
+  return tail
 }
 
 function messageIdentity(message: TranscriptMessage): string {
@@ -92,6 +137,16 @@ export class TranscriptService {
     return join(this.directory, `${FILE_PREFIX}${digest}.json`)
   }
 
+  loadScope(scopeId: string): TranscriptMessage[] {
+    if (!scopeId) return []
+    try {
+      const parsed = JSON.parse(readFileSync(this.pathFor(scopeId), 'utf8')) as TranscriptFile
+      return parsed?.scopeId === scopeId ? boundedMessageTail(parsed.messages) : []
+    } catch {
+      return []
+    }
+  }
+
   loadAll(): Record<string, TranscriptMessage[]> {
     const transcripts: Record<string, TranscriptMessage[]> = {}
     const mtimes: Record<string, number> = {}
@@ -111,6 +166,39 @@ export class TranscriptService {
   mtimes(): Record<string, number> {
     if (!this.mtimeByScope) this.loadAll()
     return { ...(this.mtimeByScope ?? {}) }
+  }
+
+  /** Metadata-only catalogue for recovery after a renderer catalogue was lost.
+   * Reads only the small scope-id header plus file metadata, never message bodies. */
+  async catalogue(limit = MAX_CATALOGUE_ENTRIES): Promise<ContinuityTranscriptEntry[]> {
+    const boundedLimit = Math.max(0, Math.min(MAX_CATALOGUE_ENTRIES, Math.floor(limit)))
+    if (boundedLimit === 0) return []
+    let names: string[]
+    try { names = (await fsp.readdir(this.directory)).filter(name => name.startsWith(FILE_PREFIX) && name.endsWith('.json')) } catch { return [] }
+    const entries = await Promise.all(names.map(async name => {
+      const fullPath = join(this.directory, name)
+      let handle: Awaited<ReturnType<typeof fsp.open>> | null = null
+      try {
+        handle = await fsp.open(fullPath, 'r')
+        const header = Buffer.alloc(SCOPE_HEADER_BYTES)
+        const { bytesRead } = await handle.read(header, 0, header.byteLength, 0)
+        const match = header.subarray(0, bytesRead).toString('utf8').match(/^\{"scopeId":("(?:\\.|[^"\\])*")/)
+        if (!match) return null
+        const scopeId = JSON.parse(match[1]!) as unknown
+        if (typeof scopeId !== 'string' || !scopeId) return null
+        const stat = await handle.stat()
+        const titleHint = titleHintFromHeader(header.subarray(0, bytesRead).toString('utf8'))
+        return { scopeId, updatedAt: stat.mtimeMs, ...(titleHint ? { titleHint } : {}) } satisfies ContinuityTranscriptEntry
+      } catch {
+        return null
+      } finally {
+        await handle?.close().catch(() => undefined)
+      }
+    }))
+    return entries
+      .filter((entry): entry is ContinuityTranscriptEntry => entry !== null)
+      .sort((left, right) => right.updatedAt - left.updatedAt)
+      .slice(0, boundedLimit)
   }
 
   /** Small metadata-only view for mobile dashboards; never returns transcript bodies. */

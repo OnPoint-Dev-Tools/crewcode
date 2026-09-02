@@ -1,11 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
 
-vi.mock('electron', () => ({
-  net: {
-    fetch: vi.fn(),
-  },
-}))
-
 import { contextWindowFor } from './model-context'
 import { applyPiEnabledModelScope, modelsFromPiEnabledModelPatterns, parseContextWindowToken, parsePiListing, registerDetectedModelContextWindows } from './model-detect'
 

@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'child_process'
 import { createHash } from 'crypto'
-import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'fs'
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import WebSocket from 'ws'
 import type { BrainDesktopConnection, BrainDesktopStatus } from '../shared/brain-desktop-types'
@@ -13,6 +13,7 @@ import {
   writeBrainDesktopEnabled,
 } from './brain-desktop-rendezvous'
 import { defaultBrainDataDir, loadMachineCredentialIfPresent, machineCredentialPath, normalizeHubUrl } from './hub-machine-enrollment'
+import { mergeTranscriptMessages } from './transcript-service'
 
 const START_TIMEOUT_MS = 12_000
 const POLL_MS = 150
@@ -64,10 +65,48 @@ function seedBrainConversationAliases(desktopDataDir: string, runtimeDir: string
   }
 }
 
+function transcriptMessages(value: unknown): Parameters<typeof mergeTranscriptMessages>[0] {
+  if (!Array.isArray(value)) return []
+  return value.filter((message): message is Record<string, unknown> => !!message && typeof message === 'object')
+}
+
+/** Fold newer desktop shards into Brain without replacing Brain-only turns. */
+function mergeDesktopTranscripts(desktopDataDir: string, runtimeDir: string): void {
+  const sourceDir = join(desktopDataDir, 'transcripts')
+  const targetDir = join(runtimeDir, 'transcripts')
+  if (!existsSync(sourceDir)) return
+  mkdirSync(targetDir, { recursive: true, mode: 0o700 })
+  for (const name of readdirSync(sourceDir)) {
+    if (!name.startsWith('transcript.') || !name.endsWith('.json')) continue
+    const source = join(sourceDir, name)
+    const target = join(targetDir, name)
+    if (!existsSync(target)) {
+      copyFileSync(source, target)
+      continue
+    }
+    const sourceStat = statSync(source)
+    const targetStat = statSync(target)
+    if (sourceStat.mtimeMs <= targetStat.mtimeMs && sourceStat.size <= targetStat.size) continue
+    try {
+      const incoming = JSON.parse(readFileSync(source, 'utf8')) as { scopeId?: unknown; messages?: unknown }
+      const current = JSON.parse(readFileSync(target, 'utf8')) as { scopeId?: unknown; messages?: unknown }
+      const scopeId = typeof incoming.scopeId === 'string' ? incoming.scopeId
+        : typeof current.scopeId === 'string' ? current.scopeId : ''
+      if (!scopeId) continue
+      writeFileSync(target, JSON.stringify({
+        scopeId,
+        messages: mergeTranscriptMessages(transcriptMessages(current.messages), transcriptMessages(incoming.messages)),
+      }), { encoding: 'utf8', mode: 0o600 })
+    } catch { /* leave the Brain shard in place */ }
+  }
+}
+
 /**
  * Seeds a new Brain runtime once. Existing Brain-owned state always wins; this
  * avoids turning every desktop launch into a two-way filesystem replication
  * race. After attachment, both desktop and web write only to the Brain store.
+ * Transcript shards are the exception: a newer desktop copy is merged into the
+ * Brain file so work done before attachment is not stuck on the seed snapshot.
  */
 export function seedBrainRuntime(desktopDataDir: string, brainDataDir: string): void {
   const runtimeDir = join(brainDataDir, 'runtime')
@@ -77,11 +116,12 @@ export function seedBrainRuntime(desktopDataDir: string, brainDataDir: string): 
     const target = join(runtimeDir, name)
     if (existsSync(source) && !existsSync(target)) copyFileSync(source, target)
   }
-  for (const name of ['transcripts', 'conversations']) {
-    const source = join(desktopDataDir, name)
-    const target = join(runtimeDir, name)
-    if (existsSync(source) && !existsSync(target)) cpSync(source, target, { recursive: true, errorOnExist: false })
+  const conversations = join(desktopDataDir, 'conversations')
+  const conversationsTarget = join(runtimeDir, 'conversations')
+  if (existsSync(conversations) && !existsSync(conversationsTarget)) {
+    cpSync(conversations, conversationsTarget, { recursive: true, errorOnExist: false })
   }
+  mergeDesktopTranscripts(desktopDataDir, runtimeDir)
   seedBrainConversationAliases(desktopDataDir, runtimeDir)
 }
 
@@ -105,6 +145,7 @@ export class BrainDesktopService {
 
   async initialize(): Promise<BrainDesktopStatus> {
     if (!readBrainDesktopEnabled(this.preferencesPath)) return this.status()
+    seedBrainRuntime(this.options.desktopDataDir, this.dataDir)
     const live = await this.liveConnection()
     if (!live && existsSync(machineCredentialPath(this.dataDir))) {
       try { await this.start() } catch { /* status reports the actionable failure */ }
@@ -164,12 +205,12 @@ export class BrainDesktopService {
   }
 
   async start(): Promise<BrainDesktopConnection> {
+    seedBrainRuntime(this.options.desktopDataDir, this.dataDir)
     const existing = await this.liveConnection()
     if (existing) { void this.ensureEventSocket(); return existing }
     if (!existsSync(machineCredentialPath(this.dataDir))) {
       throw new Error('Enroll this machine with a CrewCode Hub before starting the background Brain.')
     }
-    seedBrainRuntime(this.options.desktopDataDir, this.dataDir)
     const args = this.options.packaged
       ? ['brain', '--data-dir', this.dataDir, '--desktop-background']
       : [this.options.brainEntry, 'brain', '--data-dir', this.dataDir, '--desktop-background']
