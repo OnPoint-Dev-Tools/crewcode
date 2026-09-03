@@ -158,7 +158,9 @@ misrepresented as independent merge rules.
 Merging always requires an explicit in-card confirmation. CrewCode refreshes
 the selected PR's check and merge context before presenting that confirmation,
 names the exact head commit, and asks GitHub to reject the operation if the head
-changes. Choose one of the methods supported by GitHub:
+changes. If GitHub's merge-requirements query fails, the inspector reports the
+failure and directs the user to **Checks** for the exact error instead of
+silently ignoring the merge action. Choose one of the methods supported by GitHub:
 
 - **Create merge commit** preserves the branch commits and adds a merge commit.
 - **Squash and merge** combines the pull request into one commit.

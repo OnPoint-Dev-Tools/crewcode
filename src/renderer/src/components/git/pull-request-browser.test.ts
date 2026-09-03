@@ -117,6 +117,7 @@ describe('repository pull request browser', () => {
     expect(browser).toContain('Load job log')
     expect(browser).toContain('Rerun failed jobs')
     expect(browser).toContain('Confirm rerun')
+    expect(browser).toContain('Could not load current merge requirements')
     expect(browser).toContain("performMergeAutomation('enable')")
     expect(browser).toContain("performMergeAutomation('queue')")
     expect(browser).toContain('onMerge?.(number, mergeMethod, checksContext?.headCommitId)')

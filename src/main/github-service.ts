@@ -372,7 +372,7 @@ const CHECKS_CONTEXT_QUERY = `query CrewCodePullRequestChecks($owner:String!,$re
       statusCheckRollup { contexts(first:100) { nodes {
         __typename
         ... on CheckRun {
-          id databaseId name status conclusion isRequired detailsUrl permalink startedAt completedAt title summary text
+          id databaseId name status conclusion isRequired(pullRequestNumber:$number) detailsUrl permalink startedAt completedAt title summary text
           steps(first:100) { nodes { name number status conclusion startedAt completedAt } pageInfo { hasNextPage } }
           annotations(first:50) { nodes {
             annotationLevel path message title rawDetails blobUrl
@@ -380,7 +380,7 @@ const CHECKS_CONTEXT_QUERY = `query CrewCodePullRequestChecks($owner:String!,$re
           } pageInfo { hasNextPage } }
           checkSuite { app { name } workflowRun { databaseId runAttempt url workflow { name } } }
         }
-        ... on StatusContext { id context state description isRequired targetUrl createdAt updatedAt }
+        ... on StatusContext { id context state description isRequired(pullRequestNumber:$number) targetUrl createdAt updatedAt }
       } } }
     }
   }

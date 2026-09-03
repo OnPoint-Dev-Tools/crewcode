@@ -705,7 +705,10 @@ export function PullRequestBrowser({
     setMutation({ kind: 'Load merge requirements', number: targetNumber })
     try {
       const evidence = await loadChecksContext(targetNumber, true)
-      if (!evidence) return
+      if (!evidence) {
+        setNotice({ kind: 'error', text: `Could not load current merge requirements for #${targetNumber}. Open Checks for the GitHub error, then retry.` })
+        return
+      }
       if (evidence.headCommitId !== targetHead) {
         await refreshSelectedEvidence(targetNumber)
         setNotice({ kind: 'error', text: `The head commit for #${targetNumber} changed while merge requirements loaded. Review the refreshed evidence before continuing.` })

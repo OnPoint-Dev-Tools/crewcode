@@ -11,6 +11,8 @@
 [![X](https://img.shields.io/badge/X-@OnPointTools-000000.svg)](https://x.com/OnPointTools)
 [![YouTube](https://img.shields.io/badge/YouTube-@CjWisdom-FF0000.svg)](https://www.youtube.com/@CjWisdom)
 
+**[Want to continue where you left off — from any browser? Jump to the setup →](#continue-your-work-from-anywhere)**
+
 </div>
 
 <div align="center">
@@ -181,6 +183,38 @@ Plugin agent providers support `mock`, `exec`, and `http` runtimes, so you can c
 - Auto-update channels: stable, beta, nightly
 - Configurable agent launch paths and shell preferences
 - Remote hosting: Remote file editing,terminal, and agents connection to host
+
+## Continue your work from anywhere
+
+Leave your PC running at home and pick up exactly where you left off from a browser —
+or run CrewCode headless on a VPS, NAS, or always-on server so your agents are always
+reachable.
+
+- **Desktop & web continuity (Background Brain):** enable **Settings → Desktop & Web** on an enrolled machine and CrewCode keeps a detached Brain running even after the Electron window closes. Desktop and browser share the same machine-authoritative workspaces, chat sessions, transcripts, terminals, and agents — provider resume state carries over, so you continue the same conversation instead of starting from scratch.
+- **Self-hosted Hub:** one always-on `crewcode hub` gives you a single passkey-secured dashboard of all your enrolled machines. Brains connect outbound-only, so your dev machines need no open inbound ports. The relay is end-to-end encrypted — the Hub never sees your code, prompts, transcripts, or terminal output, and files never leave the machine they live on.
+- **Always available:** run `crewcode brain` on a VPS or home server with explicit workspace roots and your workspaces are reachable from any device, anytime.
+- **Phone access:** the Hub's mobile dashboard lists your online machines and recent threads, with a QR-assisted setup over Tailscale HTTPS.
+- **Secure by default:** remote authority is off until you grant explicit workspace roots and scopes; pairing codes and connection tickets are short-lived and single-use; sign-in is passkey-based; provider API keys never leave the Brain's machine.
+
+```bash
+# On the always-on Hub host (VPS, NAS, or home server):
+node bin/crewcode-server.mjs hub --local-brain \
+  --host 0.0.0.0 --public-origin https://your-hub.example
+
+# On each development machine, enroll once and enable Background Brain
+# in Settings → Desktop & Web (or run a headless Brain yourself):
+node bin/crewcode-server.mjs enroll --hub https://your-hub.example
+npm run brain
+```
+
+For a single machine with no Hub, `npm run serve` exposes the same web client over
+loopback, LAN, or a Tailscale tailnet behind a one-time pairing URL.
+
+This is a preview feature with documented first-release limits. See
+[web remote access](./docs/web-remote-access.md) for deployment profiles, the Hub
+security model, and direct-server mode, and
+[desktop & web continuity](./docs/desktop-web-continuity.md) for how desktop state and
+the Brain stay in sync.
 
 ## Best fit today
 
