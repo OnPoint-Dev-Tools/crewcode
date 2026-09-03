@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { join } from 'node:path'
 
 afterEach(() => {
   vi.doUnmock('fs')
@@ -8,8 +9,9 @@ afterEach(() => {
 
 describe('headless agent registry', () => {
   it('discovers Codex from Bun cache installs without a synchronous shell probe', async () => {
+    const expectedPath = join('/home/test', '.cache', '.bun', 'bin', 'codex')
     const access = vi.fn(async (candidate: string) => {
-      if (candidate === '/home/test/.cache/.bun/bin/codex') return
+      if (candidate === expectedPath) return
       throw new Error('missing')
     })
     vi.doMock('os', async importOriginal => ({
@@ -28,7 +30,7 @@ describe('headless agent registry', () => {
     const registry = await headlessAgentRegistry()
     expect(registry.find(agent => agent.id === 'codex')).toMatchObject({
       available: true,
-      path: '/home/test/.cache/.bun/bin/codex',
+      path: expectedPath,
     })
   })
 

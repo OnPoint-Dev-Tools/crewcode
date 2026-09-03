@@ -160,6 +160,9 @@ describe('non-blocking GitHub status', () => {
       checks: [{ id: 'CR_1', name: 'test', suiteName: 'CI', isRequired: true, runId: 11, runAttempt: 2, jobId: 22,
         steps: [{ name: 'npm test', conclusion: 'FAILURE' }], annotations: [{ path: 'src/a.ts', startLine: 17, endLine: 18, message: 'Expected true' }] }],
     })
+    expect(run).toHaveBeenCalledWith('gh', expect.arrayContaining([
+      expect.stringContaining('isRequired(pullRequestNumber:$number)'),
+    ]), '/repo')
 
     const logRun: GitHubCommandRunner = vi.fn(async (_command, args) => {
       if (args[0] === 'repo') return result('o/r\n')
