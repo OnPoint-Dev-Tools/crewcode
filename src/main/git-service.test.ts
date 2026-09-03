@@ -58,4 +58,23 @@ describe('GitService', () => {
     expect(await service.checkout(root, '--upload-pack=bad', true)).toEqual({ error: 'invalid branch name' })
     expect(await service.checkout(root, 'feature/web', true)).toEqual({ ok: true })
   })
+
+  it('keeps merge-in-progress visible after the final conflict is staged', async () => {
+    const root = repo()
+    const service = new GitService()
+    const original = execFileSync('git', ['branch', '--show-current'], { cwd: root, encoding: 'utf8' }).trim()
+    execFileSync('git', ['checkout', '-b', 'base'], { cwd: root })
+    writeFileSync(join(root, 'README.md'), 'base change\n')
+    execFileSync('git', ['commit', '-am', 'base change'], { cwd: root })
+    execFileSync('git', ['checkout', original], { cwd: root })
+    writeFileSync(join(root, 'README.md'), 'head change\n')
+    execFileSync('git', ['commit', '-am', 'head change'], { cwd: root })
+    try { execFileSync('git', ['merge', 'base'], { cwd: root, stdio: 'pipe' }) } catch { /* expected conflict */ }
+
+    expect(await service.status(root)).toMatchObject({ ok: true, mergeInProgress: true })
+    expect(await service.resolveConflict(root, 'README.md', 'ours')).toEqual({ ok: true })
+    expect(await service.status(root)).toMatchObject({ ok: true, mergeInProgress: true, unstaged: [] })
+    expect(await service.mergeContinue(root)).toMatchObject({ ok: true })
+    expect(await service.status(root)).toMatchObject({ ok: true, mergeInProgress: false })
+  })
 })

@@ -417,10 +417,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('github:status', repoPath),
   githubPrCreateContext: (repoPath: string, base: string) =>
     ipcRenderer.invoke('github:prCreateContext', repoPath, base),
+  githubPrCatalogue: (repoPath: string) =>
+    ipcRenderer.invoke('github:prCatalogue', repoPath),
   githubPrDetail: (repoPath: string, num: number) =>
     ipcRenderer.invoke('github:prDetail', repoPath, num),
   githubPrDiff: (repoPath: string, num: number) =>
     ipcRenderer.invoke('github:prDiff', repoPath, num),
+  githubPrReviewContext: (repoPath: string, num: number) =>
+    ipcRenderer.invoke('github:prReviewContext', repoPath, num),
+  githubPrManagementContext: (repoPath: string, num: number) =>
+    ipcRenderer.invoke('github:prManagementContext', repoPath, num),
+  githubPrChecksContext: (repoPath: string, num: number) =>
+    ipcRenderer.invoke('github:prChecksContext', repoPath, num),
+  githubPrCheckLog: (repoPath: string, num: number, headCommitId: string, runId: number, jobId: number) =>
+    ipcRenderer.invoke('github:prCheckLog', repoPath, num, headCommitId, runId, jobId),
+  githubAvatar: (repoPath: string, login: string) =>
+    ipcRenderer.invoke('github:avatar', repoPath, login),
 
   // ─── Git (status, staging, commit, push, pull, etc.) ──────────
   gitStatus:   (cwd: string) =>
@@ -506,12 +518,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ghLoginCancel:  () => ipcRenderer.invoke('gh:loginCancel'),
   ghLogout:       () => ipcRenderer.invoke('gh:logout'),
   ghPrCreate:     (cwd: string, options: import('../shared/github-types').GitHubPullRequestCreateOptions) => ipcRenderer.invoke('gh:prCreate', cwd, options),
-  ghPrMerge:      (cwd: string, num: number, method: import('../shared/github-types').GitHubMergeMethod) => ipcRenderer.invoke('gh:prMerge', cwd, num, method),
+  ghPrMerge:      (cwd: string, num: number, method: import('../shared/github-types').GitHubMergeMethod, headCommitId?: string) => ipcRenderer.invoke('gh:prMerge', cwd, num, method, headCommitId),
   ghPrApprove:    (cwd: string, num: number) => ipcRenderer.invoke('gh:prApprove', cwd, num),
   ghPrUpdateBranch: (cwd: string, num: number) => ipcRenderer.invoke('gh:prUpdateBranch', cwd, num),
+  ghPrReady:      (cwd: string, num: number) => ipcRenderer.invoke('gh:prReady', cwd, num),
+  ghPrDraft:      (cwd: string, num: number) => ipcRenderer.invoke('gh:prDraft', cwd, num),
+  ghPrReopen:     (cwd: string, num: number) => ipcRenderer.invoke('gh:prReopen', cwd, num),
+  ghPrEdit:       (cwd: string, num: number, options: import('../shared/github-types').GitHubPullRequestEditOptions) => ipcRenderer.invoke('gh:prEdit', cwd, num, options),
+  ghPrMetadata:   (cwd: string, num: number, options: import('../shared/github-types').GitHubPullRequestMetadataOptions) => ipcRenderer.invoke('gh:prMetadata', cwd, num, options),
+  ghPrCheckRerun: (cwd: string, num: number, options: import('../shared/github-types').GitHubPullRequestCheckRerunOptions) => ipcRenderer.invoke('gh:prCheckRerun', cwd, num, options),
+  ghPrMergeAutomation: (cwd: string, num: number, options: import('../shared/github-types').GitHubPullRequestMergeAutomationOptions) => ipcRenderer.invoke('gh:prMergeAutomation', cwd, num, options),
+  ghPrPrepareConflictResolution: (cwd: string, head: string, base: string) => ipcRenderer.invoke('gh:prPrepareConflictResolution', cwd, head, base),
   ghPrComment:    (cwd: string, num: number, body: string) => ipcRenderer.invoke('gh:prComment', cwd, num, body),
   ghPrClose:      (cwd: string, num: number) => ipcRenderer.invoke('gh:prClose', cwd, num),
   ghPrReview:     (cwd: string, num: number, options: import('../shared/github-types').GitHubPullRequestReviewOptions) => ipcRenderer.invoke('gh:prReview', cwd, num, options),
+  ghPrViewedFile: (cwd: string, num: number, options: import('../shared/github-types').GitHubPullRequestViewedFileOptions) => ipcRenderer.invoke('gh:prViewedFile', cwd, num, options),
+  ghPrReviewThread: (cwd: string, num: number, threadId: string, resolved: boolean) => ipcRenderer.invoke('gh:prReviewThread', cwd, num, threadId, resolved),
   ghRepoCreate:   (cwd: string, opts: { name: string; visibility: 'private' | 'public'; description?: string }) =>
     ipcRenderer.invoke('gh:repoCreate', cwd, opts),
   onGhAuthEvent: (cb: (event: unknown) => void) => {

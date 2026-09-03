@@ -297,8 +297,11 @@ async function reconcileIntegrationRecord(record: CrewIntegrationJournalRecord):
 export function registerGitIpc(): void {
   ipcMain.handle('git:status', async (_e, cwd: string) => {
     try {
-      const { stdout } = await runGit(cwd, ['status', '--porcelain=v1', '-b'])
-      return { ok: true, ...parseStatus(stdout) }
+      const [{ stdout }, mergeInProgress] = await Promise.all([
+        runGit(cwd, ['status', '--porcelain=v1', '-b']),
+        runGit(cwd, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']).then(() => true).catch(() => false),
+      ])
+      return { ok: true, ...parseStatus(stdout), mergeInProgress }
     } catch (err: unknown) {
       return { error: (err as Error).message }
     }

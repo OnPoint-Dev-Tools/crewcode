@@ -1004,6 +1004,7 @@ export function ChatPane({
             width={gitWidth}
             {...git.handlers}
             onOpenFileDiff={onOpenGitFileDiff}
+            onOpenConflictFile={onOpenFile}
             onOpenTerminal={openTerminalForPath}
             pluginGitLenses={pluginGitLenses}
             onPluginGitLens={onPluginGitLens}

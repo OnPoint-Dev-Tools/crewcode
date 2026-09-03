@@ -2813,6 +2813,7 @@ export default function App() {
           chatTargets={gitChatTargets}
           {...git.handlers}
           onOpenFileDiff={openGitFileDiff}
+          onOpenConflictFile={openFileInEditor}
           onOpenTerminal={(path) => {
             const termTabId = handleNewTab('terminal')
             if (termTabId) pty.addShell(activeWs, termTabId, path, effectiveShell(settings))
@@ -2905,6 +2906,7 @@ export default function App() {
               chatTargets={gitChatTargets}
               {...git.handlers}
               onOpenFileDiff={openGitFileDiff}
+              onOpenConflictFile={openFileInEditor}
               onOpenTerminal={(path) => {
                 const termTabId = handleNewTab('terminal')
                 if (termTabId) pty.addShell(activeWs, termTabId, path, effectiveShell(settings))

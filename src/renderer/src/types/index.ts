@@ -16,7 +16,7 @@ import type { WriterBinaryFormat, WriterDocumentExportResult, WriterDocumentImpo
 import type { AppBuildInfo, UpdaterConfig, UpdaterEvent } from '../../../shared/updater-types'
 import type { DelegatedMergeOutcome, DelegationCredentials, DelegationRendererRequest, DelegationResult } from '../../../shared/delegation-types'
 import type { CustodyHaltPayload, CustodyViolation } from '../../../shared/custody-types'
-import type { GitHubCommandResponse, GitHubMergeMethod, GitHubPullRequestCreateContext, GitHubPullRequestCreateOptions, GitHubPullRequestDetail, GitHubPullRequestReviewOptions } from '../../../shared/github-types'
+import type { GitHubCommandResponse, GitHubMergeMethod, GitHubPullRequestCreateContext, GitHubPullRequestCreateOptions, GitHubPullRequestDetail, GitHubPullRequestReviewContext, GitHubPullRequestReviewOptions, GitHubPullRequestViewedFileOptions } from '../../../shared/github-types'
 
 export type { CustodyHaltPayload, CustodyInvariantId, CustodyViolation } from '../../../shared/custody-types'
 
@@ -570,6 +570,7 @@ export interface GitStatus {
   staged:   GitStatusFile[]
   unstaged: GitStatusFile[]
   untracked: GitStatusFile[]
+  mergeInProgress?: boolean
 }
 
 // ─── Command palette ─────────────────────────────────────────────────────────
@@ -883,8 +884,14 @@ declare global {
       // GitHub
       githubStatus:   (repoPath: string) => Promise<GitHubStatus | { error: string }>
       githubPrCreateContext: (repoPath: string, base: string) => Promise<GitHubPullRequestCreateContext | { error: string }>
+      githubPrCatalogue: (repoPath: string) => Promise<import('../../../shared/github-types').GitHubPullRequestCatalogue | { error: string }>
       githubPrDetail: (repoPath: string, num: number) => Promise<GitHubPullRequestDetail | { error: string }>
       githubPrDiff: (repoPath: string, num: number) => Promise<{ ok: boolean; patch: string; error?: string }>
+      githubPrReviewContext: (repoPath: string, num: number) => Promise<GitHubPullRequestReviewContext | { error: string }>
+      githubPrManagementContext: (repoPath: string, num: number) => Promise<import('../../../shared/github-types').GitHubPullRequestManagementContext | { error: string }>
+      githubPrChecksContext: (repoPath: string, num: number) => Promise<import('../../../shared/github-types').GitHubPullRequestChecksContext | { error: string }>
+      githubPrCheckLog: (repoPath: string, num: number, headCommitId: string, runId: number, jobId: number) => Promise<import('../../../shared/github-types').GitHubPullRequestCheckLogResult>
+      githubAvatar: (repoPath: string, login: string) => Promise<{ ok: boolean; dataUrl?: string; error?: string }>
 
       // Git
       gitStatus:   (cwd: string) => Promise<GitStatus & { ok?: boolean; error?: string }>
@@ -944,12 +951,22 @@ declare global {
       ghLoginCancel: () => Promise<{ ok: boolean }>
       ghLogout:      () => Promise<{ ok: boolean; error?: string }>
       ghPrCreate:    (cwd: string, options: GitHubPullRequestCreateOptions) => Promise<GitHubCommandResponse>
-      ghPrMerge:     (cwd: string, num: number, method: GitHubMergeMethod) => Promise<GitHubCommandResponse>
+      ghPrMerge:     (cwd: string, num: number, method: GitHubMergeMethod, headCommitId?: string) => Promise<GitHubCommandResponse>
       ghPrApprove:   (cwd: string, num: number) => Promise<GitHubCommandResponse>
       ghPrUpdateBranch: (cwd: string, num: number) => Promise<GitHubCommandResponse>
+      ghPrReady:     (cwd: string, num: number) => Promise<GitHubCommandResponse>
+      ghPrDraft:     (cwd: string, num: number) => Promise<GitHubCommandResponse>
+      ghPrReopen:    (cwd: string, num: number) => Promise<GitHubCommandResponse>
+      ghPrEdit:      (cwd: string, num: number, options: import('../../../shared/github-types').GitHubPullRequestEditOptions) => Promise<GitHubCommandResponse>
+      ghPrMetadata:  (cwd: string, num: number, options: import('../../../shared/github-types').GitHubPullRequestMetadataOptions) => Promise<GitHubCommandResponse>
+      ghPrCheckRerun: (cwd: string, num: number, options: import('../../../shared/github-types').GitHubPullRequestCheckRerunOptions) => Promise<GitHubCommandResponse>
+      ghPrMergeAutomation: (cwd: string, num: number, options: import('../../../shared/github-types').GitHubPullRequestMergeAutomationOptions) => Promise<GitHubCommandResponse>
+      ghPrPrepareConflictResolution: (cwd: string, head: string, base: string) => Promise<import('../../../shared/github-types').GitHubPullRequestConflictPreparationResult>
       ghPrComment:   (cwd: string, num: number, body: string) => Promise<GitHubCommandResponse>
       ghPrClose:     (cwd: string, num: number) => Promise<GitHubCommandResponse>
       ghPrReview:    (cwd: string, num: number, options: GitHubPullRequestReviewOptions) => Promise<GitHubCommandResponse>
+      ghPrViewedFile: (cwd: string, num: number, options: GitHubPullRequestViewedFileOptions) => Promise<GitHubCommandResponse>
+      ghPrReviewThread: (cwd: string, num: number, threadId: string, resolved: boolean) => Promise<GitHubCommandResponse>
       ghRepoCreate:  (cwd: string, opts: { name: string; visibility: 'private' | 'public'; description?: string }) => Promise<{ ok: boolean; output: string; error?: string }>
       onGhAuthEvent: (cb: (event: GhAuthEvent) => void) => () => void
 

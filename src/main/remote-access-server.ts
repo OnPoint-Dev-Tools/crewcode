@@ -25,8 +25,8 @@ import { PtyService } from './pty-service'
 import { AgentBridgeService, webConversationKey, type AgentPathResolver } from './agents/bridge-service'
 import { headlessAgentRegistry, listHeadlessAgentModels } from './headless-agent-resolver'
 import { readMcpConfig } from './mcp-config-service'
-import { getGhStatus, getGitHubStatus, getPullRequestCreateContext, getPullRequestDetail, getPullRequestDiff, pullRequestActionArgs, pullRequestCommentArgs, pullRequestCreateArgs, pullRequestMergeArgs, pullRequestReviewArgs, runGh } from './github-service'
-import type { GitHubMergeMethod, GitHubPullRequestCreateOptions, GitHubPullRequestReviewOptions } from '../shared/github-types'
+import { getGhStatus, getGitHubAvatar, getGitHubStatus, getPullRequestCatalogue, getPullRequestCheckLog, getPullRequestChecksContext, getPullRequestCreateContext, getPullRequestDetail, getPullRequestDiff, getPullRequestManagementContext, getPullRequestReviewContext, preparePullRequestConflictResolution, pullRequestActionArgs, pullRequestCommentArgs, pullRequestCreateArgs, pullRequestEditArgs, pullRequestMergeArgs, pullRequestMetadataArgs, pullRequestReviewArgs, rerunPullRequestCheck, runGh, submitPullRequestReview, updatePullRequestMergeAutomation, updatePullRequestReviewThread, updatePullRequestViewedFile } from './github-service'
+import type { GitHubMergeMethod, GitHubPullRequestCheckRerunOptions, GitHubPullRequestCreateOptions, GitHubPullRequestEditOptions, GitHubPullRequestMergeAutomationOptions, GitHubPullRequestMetadataOptions, GitHubPullRequestReviewOptions, GitHubPullRequestViewedFileOptions } from '../shared/github-types'
 import { RemoteGhService } from './remote-gh-service'
 import { RemoteEditorLanguageServer } from './remote-editor-language-server'
 import { RemoteEditorFileWatch } from './remote-editor-file-watch'
@@ -455,22 +455,42 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
     ['git.init', params => gitService.simple(registeredRoot({ root: params.cwd }), 'init')],
     ['github.status', params => getGitHubStatus(registeredRoot({ root: params.cwd }))],
     ['github.prCreateContext', params => getPullRequestCreateContext(registeredRoot({ root: params.cwd }), String(params.base ?? ''))],
+    ['github.prCatalogue', params => getPullRequestCatalogue(registeredRoot({ root: params.cwd }))],
     ['github.prDetail', params => getPullRequestDetail(registeredRoot({ root: params.cwd }), Number(params.number))],
     ['github.prDiff', params => getPullRequestDiff(registeredRoot({ root: params.cwd }), Number(params.number))],
+    ['github.prReviewContext', params => getPullRequestReviewContext(registeredRoot({ root: params.cwd }), Number(params.number))],
+    ['github.prManagementContext', params => getPullRequestManagementContext(registeredRoot({ root: params.cwd }), Number(params.number))],
+    ['github.prChecksContext', params => getPullRequestChecksContext(registeredRoot({ root: params.cwd }), Number(params.number))],
+    ['github.prCheckLog', params => getPullRequestCheckLog(registeredRoot({ root: params.cwd }), Number(params.number), String(params.headCommitId ?? ''), Number(params.runId), Number(params.jobId))],
+    ['github.avatar', params => getGitHubAvatar(registeredRoot({ root: params.cwd }), String(params.login ?? ''))],
     ['gh.status', () => getGhStatus()],
     ['gh.prCreate', params => {
       try { return runGh(registeredRoot({ root: params.cwd }), pullRequestCreateArgs(params.options as GitHubPullRequestCreateOptions)) }
       catch (error) { return { ok: false, output: '', error: error instanceof Error ? error.message : String(error) } }
     }],
     ['gh.prMerge', params => {
-      try { return runGh(registeredRoot({ root: params.cwd }), pullRequestMergeArgs(Number(params.number), String(params.method) as GitHubMergeMethod)) }
+      try { return runGh(registeredRoot({ root: params.cwd }), pullRequestMergeArgs(Number(params.number), String(params.method) as GitHubMergeMethod, typeof params.headCommitId === 'string' ? params.headCommitId : undefined)) }
       catch (error) { return { ok: false, output: '', error: error instanceof Error ? error.message : String(error) } }
     }],
     ['gh.prApprove', params => runGh(registeredRoot({ root: params.cwd }), pullRequestActionArgs('approve', Number(params.number)))],
     ['gh.prUpdateBranch', params => runGh(registeredRoot({ root: params.cwd }), pullRequestActionArgs('update-branch', Number(params.number)))],
+    ['gh.prReady', params => runGh(registeredRoot({ root: params.cwd }), pullRequestActionArgs('ready', Number(params.number)))],
+    ['gh.prDraft', params => runGh(registeredRoot({ root: params.cwd }), pullRequestActionArgs('draft', Number(params.number)))],
+    ['gh.prReopen', params => runGh(registeredRoot({ root: params.cwd }), pullRequestActionArgs('reopen', Number(params.number)))],
+    ['gh.prEdit', params => runGh(registeredRoot({ root: params.cwd }), pullRequestEditArgs(Number(params.number), params.options as GitHubPullRequestEditOptions))],
+    ['gh.prMetadata', params => runGh(registeredRoot({ root: params.cwd }), pullRequestMetadataArgs(Number(params.number), params.options as GitHubPullRequestMetadataOptions))],
+    ['gh.prCheckRerun', params => rerunPullRequestCheck(registeredRoot({ root: params.cwd }), Number(params.number), params.options as GitHubPullRequestCheckRerunOptions)],
+    ['gh.prMergeAutomation', params => updatePullRequestMergeAutomation(registeredRoot({ root: params.cwd }), Number(params.number), params.options as GitHubPullRequestMergeAutomationOptions)],
+    ['gh.prPrepareConflictResolution', params => preparePullRequestConflictResolution(registeredRoot({ root: params.cwd }), String(params.head ?? ''), String(params.base ?? ''))],
     ['gh.prComment', params => runGh(registeredRoot({ root: params.cwd }), pullRequestCommentArgs(Number(params.number), String(params.body ?? '')))],
     ['gh.prClose', params => runGh(registeredRoot({ root: params.cwd }), pullRequestActionArgs('close', Number(params.number)))],
-    ['gh.prReview', params => runGh(registeredRoot({ root: params.cwd }), pullRequestReviewArgs(Number(params.number), params.options as GitHubPullRequestReviewOptions))],
+    ['gh.prReview', params => {
+      const cwd = registeredRoot({ root: params.cwd })
+      const options = params.options as GitHubPullRequestReviewOptions
+      return options.comments?.length ? submitPullRequestReview(cwd, Number(params.number), options) : runGh(cwd, pullRequestReviewArgs(Number(params.number), options))
+    }],
+    ['gh.prViewedFile', params => updatePullRequestViewedFile(registeredRoot({ root: params.cwd }), Number(params.number), params.options as GitHubPullRequestViewedFileOptions)],
+    ['gh.prReviewThread', params => updatePullRequestReviewThread(registeredRoot({ root: params.cwd }), Number(params.number), String(params.threadId ?? ''), params.resolved === true)],
     ['gh.loginStart', () => remoteGh.login()],
     ['gh.loginCancel', () => remoteGh.cancel()],
     ['gh.repoCreate', params => remoteGh.createRepository(registeredRoot({ root: params.cwd }), params.options as Parameters<RemoteGhService['createRepository']>[1])],

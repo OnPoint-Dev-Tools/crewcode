@@ -8,7 +8,7 @@ import { createPortal } from 'react-dom'
 import { Icon } from '../ui/Icon'
 import { PublishModal } from './PublishModal'
 import { PullRequestModal } from './PullRequestModal'
-import { PullRequestReview } from './PullRequestReview'
+import { PullRequestBrowser } from './PullRequestBrowser'
 import type {
   GitState, GitChange, GitConflict, GitBranchRef, GitWorktreeRef, GitPrRef,
   GitHistoryEntry, GitBanner, GitSidebarWorkspace, GitSidebarHandlers,
@@ -406,9 +406,10 @@ interface ConflictsBodyProps {
   onResolve?: (opts: { file: string; strategy: 'ours' | 'theirs' | 'editor' | 'agent'; targetTabId?: string }) => void
   onAbort?:   () => void
   onContinue?: () => void
+  onOpenFile?: (path: string) => void
 }
 
-function ConflictsBody({ conflicts, branch, chatTargets = [], onResolve, onAbort, onContinue }: ConflictsBodyProps) {
+function ConflictsBody({ conflicts, branch, chatTargets = [], onResolve, onAbort, onContinue, onOpenFile }: ConflictsBodyProps) {
   // Which conflict row's "ask agent" menu is open (by path). Only relevant when
   // there are chat tabs to choose between; otherwise the button resolves directly.
   const [agentMenuFor, setAgentMenuFor] = useState<string | null>(null)
@@ -438,7 +439,7 @@ function ConflictsBody({ conflicts, branch, chatTargets = [], onResolve, onAbort
       <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)',
                     fontFamily: 'var(--font-family-mono)', fontSize: 11, color: 'var(--muted-foreground)' }}>
         Merge in progress on <code style={{ color: 'var(--foreground)' }}>{branch}</code>.
-        Resolve each file, then continue.
+        {conflicts.length > 0 ? ' Resolve each file, then continue.' : ' All conflicts are resolved; continue to create the merge commit.'}
       </div>
       <div className="gs-conflicts">
         {conflicts.map(c => (
@@ -449,7 +450,7 @@ function ConflictsBody({ conflicts, branch, chatTargets = [], onResolve, onAbort
               {c.hunks > 0 && <span className="lines">{c.hunks} hunk{c.hunks === 1 ? '' : 's'}</span>}
             </div>
             <div className="gs-conflict-actions">
-              <button className="gs-btn tiny" onClick={() => onResolve?.({ file: c.path, strategy: 'editor' })}>
+              <button className="gs-btn tiny" onClick={() => onOpenFile?.(c.path)}>
                 <Icon name="gitCompare" />open merge editor
               </button>
               <button className="gs-btn tiny ghost" onClick={() => onResolve?.({ file: c.path, strategy: 'ours' })}>
@@ -619,77 +620,39 @@ interface PullRequestsBodyProps {
   branch:      string
   hasUnpushed: boolean
   onCreate?:   () => void
-  onOpen?:     (num: number) => void
-  onReviewOpen?: (pr: GitPrRef) => void
+  onBrowse?:   () => void
 }
 
-function PullRequestsBody({ prs, branch, hasUnpushed, onCreate, onOpen, onReviewOpen }: PullRequestsBodyProps) {
+function PullRequestsBody({ prs, branch, hasUnpushed, onCreate, onBrowse }: PullRequestsBodyProps) {
   const branchPr = prs.find(p => p.head === branch)
-    const [selectedNum, setSelectedNum] = useState<number | null>(branchPr?.num ?? prs[0]?.num ?? null)
-  const selectedPr = prs.find(p => p.num === selectedNum) ?? branchPr ?? prs[0] ?? null
+  const statusName = (status: GitPrRef['status']): React.ComponentProps<typeof Icon>['name'] =>
+    status === 'open' ? 'circleDot' : status === 'merged' ? 'merged' : status === 'draft' ? 'gitPullRequest' : 'x'
+  const passed = branchPr?.checks?.filter(check => check === 'ok').length ?? 0
+  const failed = branchPr?.checks?.filter(check => check === 'f').length ?? 0
 
-  useEffect(() => {
-    if (branchPr) setSelectedNum(branchPr.num)
-  }, [branch, branchPr?.num])
-
-  useEffect(() => {
-      if (!selectedPr && prs[0]) setSelectedNum(prs[0].num)
-    }, [prs, selectedPr])
-
-    const statusName = (status: GitPrRef['status']): React.ComponentProps<typeof Icon>['name'] =>
-      status === 'open' ? 'circleDot' : status === 'merged' ? 'merged' : status === 'draft' ? 'gitPullRequest' : 'x'
-    const passed = selectedPr?.checks?.filter(check => check === 'ok').length ?? 0
-    const failed = selectedPr?.checks?.filter(check => check === 'f').length ?? 0
-    const pending = selectedPr?.checks?.filter(check => check === 'p').length ?? 0
-
-    if (!selectedPr) {
-      return (
-        <div className="pr-single-empty">
-          <span><Icon name="gitPullRequest" size={18} /></span>
-          <strong>No open pull requests</strong>
-          <p>Create one PR for <code>{branch}</code> and keep the full review inside CrewCode.</p>
-          <button className="gs-btn primary" onClick={onCreate}><Icon name="plus" size={11} />Create pull request</button>
-        </div>
-      )
-    }
-
+  if (!branchPr) {
     return (
-      <div className="pr-single">
-        {prs.length > 1 && (
-          <label className="pr-single-picker">
-            <span>Pull request</span>
-            <select value={selectedPr.num} onChange={event => setSelectedNum(Number(event.target.value))}>
-              {prs.map(pr => <option key={pr.num} value={pr.num}>#{pr.num} · {pr.title}</option>)}
-            </select>
-          </label>
-        )}
-
-        <div className="pr-single-identity">
-          <div className="pr-single-state"><Icon name={statusName(selectedPr.status)} size={11} />{selectedPr.status}<code>#{selectedPr.num}</code></div>
-          <h3>{selectedPr.title}</h3>
-          <p><strong>{selectedPr.author || 'unknown'}</strong> wants to merge</p>
-          <div className="pr-single-route"><code>{selectedPr.head}</code><Icon name="chevRight" size={10} /><code>{selectedPr.base}</code></div>
-        </div>
-
-        <div className="pr-single-evidence">
-          <div><span>Checks</span><strong className={failed ? 'bad' : ''}>{failed ? `${failed} failing` : selectedPr.checks?.length ? `${passed}/${selectedPr.checks.length} passed` : 'None'}</strong></div>
-          <div><span>Pending</span><strong>{pending}</strong></div>
-          <div><span>Merge state</span><strong className={selectedPr.mergeStateStatus?.toLowerCase()}>{(selectedPr.mergeStateStatus ?? 'unknown').toLowerCase().replaceAll('_', ' ')}</strong></div>
-        </div>
-
-        <div className={`pr-single-description ${selectedPr.body ? '' : 'empty'}`}>{selectedPr.body || 'No description provided.'}</div>
-
-        <div className="pr-single-actions">
-          <button className="gs-btn primary" onClick={() => onReviewOpen?.(selectedPr)}><Icon name="inspection" size={11} />Review in CrewCode</button>
-          <button className="gs-btn ghost" onClick={() => onOpen?.(selectedPr.num)}><Icon name="external" size={10} />GitHub</button>
-        </div>
-
-        <div className="pr-single-new">
-          <span>{hasUnpushed ? `${branch} has unpushed commits` : `Working on ${branch}`}</span>
-          <button onClick={onCreate}><Icon name="plus" size={10} />New PR</button>
-        </div>
+      <div className="pr-single-empty">
+        <span><Icon name="gitPullRequest" size={18} /></span>
+        <strong>No pull request for {branch}</strong>
+        <p>{prs.length ? `${prs.length} other repository pull request${prs.length === 1 ? '' : 's'} available.` : 'Create a pull request when this branch is ready.'}</p>
+        <div className="pr-single-actions compact"><button className="gs-btn ghost" onClick={onBrowse}><Icon name="inspection" size={11} />Browse pull requests</button><button className="gs-btn primary" onClick={onCreate}><Icon name="plus" size={11} />Create pull request</button></div>
       </div>
     )
+  }
+
+  return (
+    <div className="pr-single compact">
+      <div className="pr-single-identity">
+        <div className="pr-single-state"><Icon name={statusName(branchPr.status)} size={11} />{branchPr.status}<code>#{branchPr.num}</code></div>
+        <h3>{branchPr.title}</h3>
+        <div className="pr-single-route"><code>{branchPr.head}</code><Icon name="chevRight" size={10} /><code>{branchPr.base}</code></div>
+        <div className="pr-single-summary"><span className={failed ? 'bad' : ''}>{failed ? `${failed} checks failing` : branchPr.checks?.length ? `${passed}/${branchPr.checks.length} checks passed` : 'No checks reported'}</span><span>{(branchPr.mergeStateStatus ?? 'merge state unknown').toLowerCase().replaceAll('_', ' ')}</span></div>
+      </div>
+      <div className="pr-single-actions compact"><button className="gs-btn primary" onClick={onBrowse}><Icon name="inspection" size={11} />Open PR workspace</button><button className="gs-btn ghost" onClick={onCreate}><Icon name="plus" size={10} />New PR</button></div>
+      <div className="pr-single-new"><span>{hasUnpushed ? `${branch} has unpushed commits` : `Working on ${branch}`}</span><span>{prs.length} repository PR{prs.length === 1 ? '' : 's'}</span></div>
+    </div>
+  )
 }
 
 /* ---------- History ---------- */
@@ -729,6 +692,8 @@ export interface GitSidebarProps extends GitSidebarHandlers {
   onPluginGitLens?: (target: { pluginId: string; sidebarPanel?: string; tab?: string; command?: string }) => void
   /** Mobile overlay close action. Omitted for the persistent desktop/sidebar page variants. */
   onClose?: () => void
+  /** Open a conflicted file in CrewCode's editable Code Editor. */
+  onOpenConflictFile?: (path: string) => void
 }
 
 export function GitSidebar({
@@ -742,22 +707,24 @@ export function GitSidebar({
   onStageFile, onUnstageFile, onStageAll, onUnstageAll, onDiscardFile, onOpenFileDiff, onCommit,
   onCreateWorktree, onSwitchWorktree, onMergeWorktree, onRemoveWorktree,
   onResolveConflict, onAbortMerge, onContinueMerge,
-  onCreatePR, onOpenPR, onMergePR,
-  onUpdatePRBranch, onClosePR, onReviewPR,
+  onCreatePR, onMergePR,
+  onUpdatePRBranch, onReadyPR, onDraftPR, onReopenPR, onEditPR, onMetadataPR, onRerunPRCheck, onMergeAutomationPR, onPreparePRConflicts, onClosePR, onReviewPR,
   onInitRepo, onPublish,
   onOpenTerminal,
+  onOpenConflictFile,
   pluginGitLenses = [],
   onPluginGitLens,
   onClose,
 }: GitSidebarProps) {
   const hasConflicts = (state.conflicts || []).length > 0
+  const mergeInProgress = state.mergeInProgress === true
   // A remote can exist after a partial publish while the branch was never pushed.
   const needsPublish = state.hasRemote === false || state.hasUpstream === false
   const notRepo      = state.isRepo === false
   const noCommits    = (state.history || []).length === 0
   const [publishOpen, setPublishOpen] = useState(false)
   const [prCreateOpen, setPrCreateOpen] = useState(false)
-  const [reviewPr, setReviewPr] = useState<GitPrRef | null>(null)
+  const [prBrowserOpen, setPrBrowserOpen] = useState(false)
 
   // Open which cards by default — conflicts always; changes when dirty; others closed.
   const [open, setOpen] = useState({
@@ -878,7 +845,7 @@ export function GitSidebar({
           </GsCard>
         )}
 
-        {hasConflicts && (
+        {(hasConflicts || mergeInProgress) && (
           <GsCard
             icon="alert"
             title="Conflicts"
@@ -894,6 +861,7 @@ export function GitSidebar({
               onResolve={onResolveConflict}
               onAbort={onAbortMerge}
               onContinue={onContinueMerge}
+              onOpenFile={onOpenConflictFile}
             />
           </GsCard>
         )}
@@ -968,8 +936,7 @@ export function GitSidebar({
             branch={workspace.branch}
             hasUnpushed={state.ahead > 0}
             onCreate={() => setPrCreateOpen(true)}
-            onOpen={onOpenPR}
-            onReviewOpen={setReviewPr}
+            onBrowse={() => setPrBrowserOpen(true)}
           />
         </GsCard>
 
@@ -1007,15 +974,23 @@ export function GitSidebar({
         onCreate={async options => (await onCreatePR?.(options))?.ok ?? false}
         onClose={() => setPrCreateOpen(false)}
       />
-      <PullRequestReview
-        open={!!reviewPr}
+      <PullRequestBrowser
+        open={prBrowserOpen}
         repoPath={workspace.path}
-        pr={reviewPr}
+        currentBranch={workspace.branch}
         onMerge={onMergePR}
         onUpdateBranch={onUpdatePRBranch}
+         onReady={onReadyPR}
+         onDraft={onDraftPR}
+         onReopen={onReopenPR}
+         onEdit={onEditPR}
+         onMetadata={onMetadataPR}
+         onRerunCheck={onRerunPRCheck}
+         onMergeAutomation={onMergeAutomationPR}
+        onPrepareConflicts={onPreparePRConflicts}
         onClosePr={onClosePR}
         onReview={onReviewPR}
-        onClose={() => setReviewPr(null)}
+        onClose={() => setPrBrowserOpen(false)}
       />
     </aside>
   )

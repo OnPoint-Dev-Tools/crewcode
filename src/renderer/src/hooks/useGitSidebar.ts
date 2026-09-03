@@ -252,6 +252,7 @@ export function useGitSidebar(args: UseGitSidebarArgs): UseGitSidebarResult {
       branches,
       changes,
       conflicts,
+      mergeInProgress: stOk ? st!.mergeInProgress === true : false,
       worktrees,
       prs:       ghRef.current.prs,
       history,
@@ -516,9 +517,32 @@ export function useGitSidebar(args: UseGitSidebarArgs): UseGitSidebarResult {
       () => getCrewCodeClient().ghPrCreate(repoPath, options),
       options.draft ? 'draft pull request created' : 'pull request created',
     ),
-    onMergePR:   (num, method) => runPrAction(`merging #${num} with ${method}…`,  () => getCrewCodeClient().ghPrMerge(repoPath, num, method),   `#${num} merged with ${method}`),
+    onMergePR:   (num, method, headCommitId) => runPrAction(`merging #${num} with ${method}…`,  () => getCrewCodeClient().ghPrMerge(repoPath, num, method, headCommitId),   `#${num} merged with ${method}`),
     onApprovePR: (num) => runAction(`approving #${num}…`, () => window.electronAPI!.ghPrApprove(repoPath, num), `#${num} approved`, { github: true }),
     onUpdatePRBranch: (num) => runPrAction(`updating #${num}…`, () => getCrewCodeClient().ghPrUpdateBranch(repoPath, num), `#${num} updated`),
+    onReadyPR: (num) => runPrAction(`marking #${num} ready for review…`, () => getCrewCodeClient().ghPrReady(repoPath, num), `#${num} is ready for review`),
+    onDraftPR: (num) => runPrAction(`converting #${num} to draft…`, () => getCrewCodeClient().ghPrDraft(repoPath, num), `#${num} is now a draft`),
+    onReopenPR: (num) => runPrAction(`reopening #${num}…`, () => getCrewCodeClient().ghPrReopen(repoPath, num), `#${num} reopened`),
+    onEditPR: (num, options) => runPrAction(`updating #${num}…`, () => getCrewCodeClient().ghPrEdit(repoPath, num, options), `#${num} details updated`),
+    onMetadataPR: (num, options) => runPrAction(`${options.operation === 'add' ? 'adding' : 'removing'} ${options.kind} on #${num}…`, () => getCrewCodeClient().ghPrMetadata(repoPath, num, options), `#${num} ${options.kind} updated`),
+    onRerunPRCheck: (num, options) => runPrAction(`requesting check rerun for #${num}…`, () => getCrewCodeClient().ghPrCheckRerun(repoPath, num, options), `check rerun requested for #${num}`),
+    onMergeAutomationPR: (num, options) => runPrAction(`${options.action === 'disable' ? 'disabling auto-merge' : options.action === 'queue' ? 'submitting to merge queue' : 'enabling auto-merge'} for #${num}…`, () => getCrewCodeClient().ghPrMergeAutomation(repoPath, num, options), `merge automation updated for #${num}`),
+    onPreparePRConflicts: async (head, base) => {
+      showBanner({ kind: '', text: `merging origin/${base} into ${head}…`, spinning: true, auto: 0 })
+      try {
+        const result = await getCrewCodeClient().ghPrPrepareConflictResolution(repoPath, head, base)
+        if (!result.ok) showBanner({ kind: 'err', text: result.error || 'Could not start conflict resolution', auto: 8000 })
+        else if (result.status === 'conflicts') showBanner({ kind: 'warn', text: `merge started · ${result.conflicts.length} conflict${result.conflicts.length === 1 ? '' : 's'} to resolve`, auto: 0 })
+        else if (result.status === 'ready-to-continue') showBanner({ kind: 'warn', text: 'all conflicts resolved · continue the merge', auto: 0 })
+        else showBanner({ kind: '', text: `${base} merged locally · push ${head} to update the PR`, auto: 0 })
+        await refresh({ github: false })
+        return result
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        showBanner({ kind: 'err', text: message, auto: 8000 })
+        return { ok: false, conflicts: [], output: '', error: message }
+      }
+    },
     onCommentPR: (num, body) => runAction(`commenting on #${num}…`, () => getCrewCodeClient().ghPrComment(repoPath, num, body), `comment added to #${num}`, { github: true }),
     onClosePR: (num) => runPrAction(`closing #${num}…`, () => getCrewCodeClient().ghPrClose(repoPath, num), `#${num} closed`),
     onReviewPR: (num, options) => runPrAction(`submitting review for #${num}…`, () => getCrewCodeClient().ghPrReview(repoPath, num, options), `review submitted for #${num}`),
@@ -543,7 +567,7 @@ export function useGitSidebar(args: UseGitSidebarArgs): UseGitSidebarResult {
       { github: true },
     ),
   }), [repoPath, workspacePath, mainBranch, runAction, resolveWt, showBanner,
-       onSwitchWorktree, onAskAgent, onWorktreesChanged, onRequestGitAuth, onRequestSigningPassphrase, runPrAction])
+       onSwitchWorktree, onAskAgent, onWorktreesChanged, onRequestGitAuth, onRequestSigningPassphrase, runPrAction, refresh])
 
   // Action banner takes precedence over the derived conflict banner.
   const mergedState = useMemo(

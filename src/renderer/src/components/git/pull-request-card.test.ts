@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 
 const sidebar = readFileSync(fileURLToPath(new URL('./GitSidebar.tsx', import.meta.url)), 'utf8')
 const modal = readFileSync(fileURLToPath(new URL('./PullRequestModal.tsx', import.meta.url)), 'utf8')
-const review = readFileSync(fileURLToPath(new URL('./PullRequestReview.tsx', import.meta.url)), 'utf8')
+const browser = readFileSync(fileURLToPath(new URL('./PullRequestBrowser.tsx', import.meta.url)), 'utf8')
 const hook = readFileSync(fileURLToPath(new URL('../../hooks/useGitSidebar.ts', import.meta.url)), 'utf8')
 
 describe('in-app pull request card', () => {
@@ -18,17 +18,27 @@ describe('in-app pull request card', () => {
   })
 
   it('offers every supported merge method behind explicit confirmation', () => {
-    expect(review).toContain('<option value="merge">Create merge commit</option>')
-    expect(review).toContain('<option value="squash">Squash and merge</option>')
-    expect(review).toContain('<option value="rebase">Rebase and merge</option>')
-    expect(review).toContain('Confirm merge')
+    expect(browser).toContain('<option value="merge">Create merge commit</option>')
+    expect(browser).toContain('<option value="squash">Squash and merge</option>')
+    expect(browser).toContain('<option value="rebase">Rebase and merge</option>')
+    expect(browser).toContain('Confirm merge')
+    expect(browser).toContain('Mark ready for review')
+    expect(browser).toContain('Draft pull requests cannot be merged.')
+    expect(browser).toContain('Merge #{selected?.number}')
   })
 
-  it('keeps common review actions in the card', () => {
-    expect(sidebar).toContain('Review in CrewCode')
-    expect(review).toContain('Submit review')
-    expect(review).toContain('Request changes')
-    expect(review).toContain('Close pull request')
-    expect(review).toContain('<PierreDiff patch={selectedPatch}')
+  it('keeps common review actions in the canonical browser workspace', () => {
+    expect(sidebar).toContain('Open PR workspace')
+    expect(sidebar).toContain('<PullRequestBrowser')
+    expect(sidebar).not.toContain('<PullRequestReview')
+    expect(browser).toContain('Submit review')
+    expect(browser).toContain('Request changes')
+    expect(browser).toContain('Write a review summary before submitting.')
+    expect(browser).toContain('GitHub does not allow an author to approve their own pull request.')
+    expect(browser).toContain('Resolve conflicts in CrewCode')
+    expect(browser).toContain('It refuses a different branch or any uncommitted changes.')
+    expect(sidebar).toContain('onOpenFile?.(c.path)')
+    expect(browser).toContain('Close pull request')
+    expect(browser).toContain('<PierreDiff patch={selectedPatch}')
   })
 })

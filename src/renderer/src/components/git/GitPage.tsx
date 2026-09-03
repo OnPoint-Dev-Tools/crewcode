@@ -6,6 +6,7 @@ import { BranchPickerPanel, CreateBranchModal } from './BranchPicker'
 import { GitPageChanges } from './GitPageChanges'
 import { GitPageCommit } from './GitPageCommit'
 import { PullRequestModal } from './PullRequestModal'
+import { PullRequestBrowser } from './PullRequestBrowser'
 
 function remoteWebUrl(remote: string): string | null {
   if (!remote) return null
@@ -21,7 +22,8 @@ export function GitPage(props: GitSidebarProps) {
   const {
     workspace, state, onCommit, onPush, onPull, onFetch, onSync, onStageFile, onUnstageFile,
     onStageAll, onUnstageAll, onDiscardFile,
-    onCheckoutBranch, onCreateBranch, onCreatePR, onOpenTerminal,
+    onCheckoutBranch, onCreateBranch, onCreatePR, onMergePR, onUpdatePRBranch,
+    onReadyPR, onDraftPR, onReopenPR, onEditPR, onMetadataPR, onRerunPRCheck, onMergeAutomationPR, onPreparePRConflicts, onClosePR, onReviewPR, onOpenTerminal,
   } = props
   const staged = (state.changes || []).filter(change => change.staged).length
   const unstaged = Math.max(0, (state.changes || []).length - staged)
@@ -34,6 +36,7 @@ export function GitPage(props: GitSidebarProps) {
   const [branchQuery, setBranchQuery] = useState('')
   const [createBranchOpen, setCreateBranchOpen] = useState(false)
   const [createPrOpen, setCreatePrOpen] = useState(false)
+  const [prBrowserOpen, setPrBrowserOpen] = useState(false)
   const [menu, setMenu] = useState<{ top: number; left: number } | null>(null)
   const moreRef = useRef<HTMLButtonElement>(null)
 
@@ -70,6 +73,7 @@ export function GitPage(props: GitSidebarProps) {
           <p>{workspace.path}</p>
         </div>
         <div className="git-page-header-tools" aria-label="Git actions">
+          <button type="button" className="git-page-pr-browser-button" onClick={() => setPrBrowserOpen(true)} disabled={!webUrl}><Icon name="gitPullRequest" size={12} />Pull requests</button>
           <div className="git-page-sync-strip" aria-label="Git sync status">
             <span><Icon name="arrowUp" size={10} />{state.ahead || 0}</span>
             <span><Icon name="arrowDown" size={10} />{state.behind || 0}</span>
@@ -113,6 +117,24 @@ export function GitPage(props: GitSidebarProps) {
           defaultTitle={state.history?.[0]?.msg || workspace.branch.replace(/[-_/]+/g, ' ')}
           onCreate={async options => (await onCreatePR?.(options))?.ok ?? false}
           onClose={() => setCreatePrOpen(false)}
+        />
+        <PullRequestBrowser
+          open={prBrowserOpen}
+          repoPath={workspace.path}
+          currentBranch={workspace.branch}
+          onMerge={onMergePR}
+          onUpdateBranch={onUpdatePRBranch}
+          onReady={onReadyPR}
+          onDraft={onDraftPR}
+          onReopen={onReopenPR}
+          onEdit={onEditPR}
+          onMetadata={onMetadataPR}
+          onRerunCheck={onRerunPRCheck}
+          onMergeAutomation={onMergeAutomationPR}
+          onPrepareConflicts={onPreparePRConflicts}
+          onClosePr={onClosePR}
+          onReview={onReviewPR}
+          onClose={() => setPrBrowserOpen(false)}
         />
 
         {menu && createPortal(

@@ -22,7 +22,7 @@ import { startRemoteAccessServer } from './remote-access-server'
 const READ_METHODS = new Set([
   'workspaces.list', 'workspaces.inspectPath', 'fs.readDir', 'fs.readFile', 'fs.readDataUrl', 'fs.listFiles',
   'git.status', 'git.diff', 'git.log', 'git.branches', 'git.remotes', 'worktrees.list',
-  'github.status', 'github.prCreateContext', 'github.prDetail', 'github.prDiff', 'gh.status',
+  'github.status', 'github.prCreateContext', 'github.prCatalogue', 'github.prDetail', 'github.prDiff', 'github.prReviewContext', 'github.prManagementContext', 'github.prChecksContext', 'github.prCheckLog', 'github.avatar', 'gh.status',
   'continuity.get',
 ])
 const WRITE_METHOD_PREFIXES = ['workspaces.', 'fs.', 'git.', 'worktrees.', 'gh.']

@@ -1,7 +1,7 @@
 /* Data contract for the Git Sidebar — see crewcode-git-sidebar/HANDOFF.md §3.
  * The renderer component is dumb: the shape below is produced by useGitSidebar
  * from the real git + GitHub IPC layer. */
-import type { GitHubMergeMethod, GitHubPullRequestCreateOptions, GitHubPullRequestReviewOptions } from '../../../../shared/github-types'
+import type { GitHubMergeMethod, GitHubPullRequestCheckRerunOptions, GitHubPullRequestConflictPreparationResult, GitHubPullRequestCreateOptions, GitHubPullRequestEditOptions, GitHubPullRequestMergeAutomationOptions, GitHubPullRequestMetadataOptions, GitHubPullRequestReviewOptions } from '../../../../shared/github-types'
 
 export type ChangeStatus = 'M' | 'A' | 'D' | 'R' | 'U' // U = unmerged (conflict)
 export type CheckState   = 'ok' | 'f' | 'p' | 's'      // pass / fail / pending / skipped
@@ -84,6 +84,7 @@ export interface GitState {
   branches:        GitBranchRef[]
   changes:         GitChange[]
   conflicts:       GitConflict[]
+  mergeInProgress?: boolean
   worktrees:       GitWorktreeRef[]
   prs:             GitPrRef[]
   history:         GitHistoryEntry[]
@@ -161,9 +162,17 @@ export interface GitSidebarHandlers {
   // Pull requests
   onCreatePR?:  (options: GitHubPullRequestCreateOptions) => Promise<GitActionOutcome>
   onOpenPR?:    (num: number) => void
-  onMergePR?:   (num: number, method: GitHubMergeMethod) => Promise<GitActionOutcome>
+  onMergePR?:   (num: number, method: GitHubMergeMethod, headCommitId?: string) => Promise<GitActionOutcome>
   onApprovePR?: (num: number) => void
   onUpdatePRBranch?: (num: number) => Promise<GitActionOutcome>
+  onReadyPR?: (num: number) => Promise<GitActionOutcome>
+  onDraftPR?: (num: number) => Promise<GitActionOutcome>
+  onReopenPR?: (num: number) => Promise<GitActionOutcome>
+  onEditPR?: (num: number, options: GitHubPullRequestEditOptions) => Promise<GitActionOutcome>
+  onMetadataPR?: (num: number, options: GitHubPullRequestMetadataOptions) => Promise<GitActionOutcome>
+  onRerunPRCheck?: (num: number, options: GitHubPullRequestCheckRerunOptions) => Promise<GitActionOutcome>
+  onMergeAutomationPR?: (num: number, options: GitHubPullRequestMergeAutomationOptions) => Promise<GitActionOutcome>
+  onPreparePRConflicts?: (head: string, base: string) => Promise<GitHubPullRequestConflictPreparationResult>
   onCommentPR?: (num: number, body: string) => Promise<boolean>
   onClosePR?: (num: number) => Promise<GitActionOutcome>
   onReviewPR?: (num: number, options: GitHubPullRequestReviewOptions) => Promise<GitActionOutcome>
