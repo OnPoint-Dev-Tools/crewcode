@@ -57,6 +57,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
   minimize: () => ipcRenderer.send('win:minimize'),
   maximize: () => ipcRenderer.send('win:maximize'),
   close:    () => ipcRenderer.send('win:close'),
+  trayConfigure: (enabled: boolean) => ipcRenderer.invoke('tray:configure', enabled),
+  // Optional machine-local Brain lifecycle. Connection credentials stay in
+  // main except for the loopback session installed into the trusted renderer.
+  brainDesktopStatus: (probeHub?: boolean) => ipcRenderer.invoke('brain:desktopStatus', probeHub),
+  brainDesktopSetEnabled: (enabled: boolean) => ipcRenderer.invoke('brain:desktopSetEnabled', enabled),
+  brainDesktopStop: () => ipcRenderer.invoke('brain:desktopStop'),
+  brainDesktopStopAndQuit: () => ipcRenderer.invoke('brain:desktopStopAndQuit'),
+  brainDesktopRpc: (method: string, params: Record<string, unknown>) => ipcRenderer.invoke('brain:desktopRpc', method, params),
+  brainDesktopUploadAttachment: (root: string, name: string, body: Uint8Array) => ipcRenderer.invoke('brain:desktopUploadAttachment', root, name, body),
+  onBrainDesktopEvent: (cb: (event: unknown) => void) => {
+    const listener = (_e: unknown, event: unknown) => cb(event)
+    ipcRenderer.on('brain:desktopEvent', listener)
+    return () => ipcRenderer.removeListener('brain:desktopEvent', listener)
+  },
+  continuityStateGet: () => ipcRenderer.invoke('brain:desktopRpc', 'continuity.get', {}),
+  continuityStateUpdate: (values: Record<string, string>) => ipcRenderer.invoke('brain:desktopRpc', 'continuity.update', { values }),
+  continuityDesktopSeed: (values: Record<string, string>) => ipcRenderer.invoke('brain:desktopRpc', 'desktop.continuity.seedCatalogue', { values }),
   // Native Chromium page zoom, matching VS Code/Electron behavior. Unlike CSS
   // `zoom`, this updates the web contents viewport and relayouts the app.
   setUiZoom: (percent: number): void =>
@@ -149,6 +166,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     model?:      string
     mode?:       'ask' | 'plan' | 'build' | 'full'
     crewcoderMode?: import('../shared/crewcoder-types').CrewCoderMode
+    crewcoderApprovalMode?: import('../shared/crewcoder-types').CrewCoderApprovalMode
     toolPolicy?: 'default' | 'read-only'
     thinking?:   'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
     apiKey?:     string
@@ -264,6 +282,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // ─── Chat transcripts (authoritative on-disk store) ───────────
   transcriptsLoadAll: () => ipcRenderer.invoke('transcripts:loadAll'),
+  transcriptsLoad: (scopeId: string) => ipcRenderer.invoke('transcripts:load', scopeId),
   transcriptsMtimes:  () => ipcRenderer.invoke('transcripts:mtimes'),
   transcriptsSave:    (scopeId: string, messages: unknown[]) => ipcRenderer.invoke('transcripts:save', scopeId, messages),
   transcriptsRemove:  (scopeId: string) => ipcRenderer.invoke('transcripts:remove', scopeId),
@@ -396,6 +415,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // ─── GitHub status (requires gh CLI) ──────────────────────────
   githubStatus: (repoPath: string) =>
     ipcRenderer.invoke('github:status', repoPath),
+  githubPrCreateContext: (repoPath: string, base: string) =>
+    ipcRenderer.invoke('github:prCreateContext', repoPath, base),
+  githubPrCatalogue: (repoPath: string) =>
+    ipcRenderer.invoke('github:prCatalogue', repoPath),
+  githubPrDetail: (repoPath: string, num: number) =>
+    ipcRenderer.invoke('github:prDetail', repoPath, num),
+  githubPrDiff: (repoPath: string, num: number) =>
+    ipcRenderer.invoke('github:prDiff', repoPath, num),
+  githubPrReviewContext: (repoPath: string, num: number) =>
+    ipcRenderer.invoke('github:prReviewContext', repoPath, num),
+  githubPrManagementContext: (repoPath: string, num: number) =>
+    ipcRenderer.invoke('github:prManagementContext', repoPath, num),
+  githubPrChecksContext: (repoPath: string, num: number) =>
+    ipcRenderer.invoke('github:prChecksContext', repoPath, num),
+  githubPrCheckLog: (repoPath: string, num: number, headCommitId: string, runId: number, jobId: number) =>
+    ipcRenderer.invoke('github:prCheckLog', repoPath, num, headCommitId, runId, jobId),
+  githubAvatar: (repoPath: string, login: string) =>
+    ipcRenderer.invoke('github:avatar', repoPath, login),
 
   // ─── Git (status, staging, commit, push, pull, etc.) ──────────
   gitStatus:   (cwd: string) =>
@@ -480,9 +517,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ghLoginStart:   () => ipcRenderer.invoke('gh:loginStart'),
   ghLoginCancel:  () => ipcRenderer.invoke('gh:loginCancel'),
   ghLogout:       () => ipcRenderer.invoke('gh:logout'),
-  ghPrCreate:     (cwd: string) => ipcRenderer.invoke('gh:prCreate', cwd),
-  ghPrMerge:      (cwd: string, num: number) => ipcRenderer.invoke('gh:prMerge', cwd, num),
+  ghPrCreate:     (cwd: string, options: import('../shared/github-types').GitHubPullRequestCreateOptions) => ipcRenderer.invoke('gh:prCreate', cwd, options),
+  ghPrMerge:      (cwd: string, num: number, method: import('../shared/github-types').GitHubMergeMethod, headCommitId?: string) => ipcRenderer.invoke('gh:prMerge', cwd, num, method, headCommitId),
   ghPrApprove:    (cwd: string, num: number) => ipcRenderer.invoke('gh:prApprove', cwd, num),
+  ghPrUpdateBranch: (cwd: string, num: number) => ipcRenderer.invoke('gh:prUpdateBranch', cwd, num),
+  ghPrReady:      (cwd: string, num: number) => ipcRenderer.invoke('gh:prReady', cwd, num),
+  ghPrDraft:      (cwd: string, num: number) => ipcRenderer.invoke('gh:prDraft', cwd, num),
+  ghPrReopen:     (cwd: string, num: number) => ipcRenderer.invoke('gh:prReopen', cwd, num),
+  ghPrEdit:       (cwd: string, num: number, options: import('../shared/github-types').GitHubPullRequestEditOptions) => ipcRenderer.invoke('gh:prEdit', cwd, num, options),
+  ghPrMetadata:   (cwd: string, num: number, options: import('../shared/github-types').GitHubPullRequestMetadataOptions) => ipcRenderer.invoke('gh:prMetadata', cwd, num, options),
+  ghPrCheckRerun: (cwd: string, num: number, options: import('../shared/github-types').GitHubPullRequestCheckRerunOptions) => ipcRenderer.invoke('gh:prCheckRerun', cwd, num, options),
+  ghPrMergeAutomation: (cwd: string, num: number, options: import('../shared/github-types').GitHubPullRequestMergeAutomationOptions) => ipcRenderer.invoke('gh:prMergeAutomation', cwd, num, options),
+  ghPrPrepareConflictResolution: (cwd: string, head: string, base: string) => ipcRenderer.invoke('gh:prPrepareConflictResolution', cwd, head, base),
+  ghPrComment:    (cwd: string, num: number, body: string) => ipcRenderer.invoke('gh:prComment', cwd, num, body),
+  ghPrClose:      (cwd: string, num: number) => ipcRenderer.invoke('gh:prClose', cwd, num),
+  ghPrReview:     (cwd: string, num: number, options: import('../shared/github-types').GitHubPullRequestReviewOptions) => ipcRenderer.invoke('gh:prReview', cwd, num, options),
+  ghPrViewedFile: (cwd: string, num: number, options: import('../shared/github-types').GitHubPullRequestViewedFileOptions) => ipcRenderer.invoke('gh:prViewedFile', cwd, num, options),
+  ghPrReviewThread: (cwd: string, num: number, threadId: string, resolved: boolean) => ipcRenderer.invoke('gh:prReviewThread', cwd, num, threadId, resolved),
   ghRepoCreate:   (cwd: string, opts: { name: string; visibility: 'private' | 'public'; description?: string }) =>
     ipcRenderer.invoke('gh:repoCreate', cwd, opts),
   onGhAuthEvent: (cb: (event: unknown) => void) => {

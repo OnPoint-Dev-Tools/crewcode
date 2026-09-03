@@ -14,6 +14,7 @@ import {
 import { resolveHeadlessAgentPath } from './headless-agent-resolver'
 import { BrainAuthorizationPolicy, brainAuthorizationPolicyPath } from './brain-authorization-policy'
 import { loadConversation } from './agents/conversation-store'
+import { webConversationKey } from './agents/bridge-service'
 import type { MachineCredentialFile } from './hub-machine-enrollment'
 import { createBrainRelayCipher, type BrainRelayCipher } from './hub-relay-crypto'
 import { startRemoteAccessServer } from './remote-access-server'
@@ -21,10 +22,11 @@ import { startRemoteAccessServer } from './remote-access-server'
 const READ_METHODS = new Set([
   'workspaces.list', 'workspaces.inspectPath', 'fs.readDir', 'fs.readFile', 'fs.readDataUrl', 'fs.listFiles',
   'git.status', 'git.diff', 'git.log', 'git.branches', 'git.remotes', 'worktrees.list',
-  'github.status', 'gh.status',
+  'github.status', 'github.prCreateContext', 'github.prCatalogue', 'github.prDetail', 'github.prDiff', 'github.prReviewContext', 'github.prManagementContext', 'github.prChecksContext', 'github.prCheckLog', 'github.avatar', 'gh.status',
+  'continuity.get',
 ])
 const WRITE_METHOD_PREFIXES = ['workspaces.', 'fs.', 'git.', 'worktrees.', 'gh.']
-const AGENT_METHOD_PREFIXES = ['bridge.', 'agents.', 'transcripts.', 'mcp.', 'voice.']
+const AGENT_METHOD_PREFIXES = ['bridge.', 'agents.', 'transcripts.', 'mcp.', 'voice.', 'delegation.']
 
 interface RelaySession {
   connectionId: string
@@ -33,6 +35,8 @@ interface RelaySession {
   cipher?: BrainRelayCipher
   expectedBrowserSequence: number
   brainSequence: number
+  outboundQueue: HubTunnelPlaintext[]
+  outboundSending: boolean
 }
 
 export interface BrainRelayOptions {
@@ -40,6 +44,11 @@ export interface BrainRelayOptions {
   dataDir: string
   allowedWorkspaceRoots: string[]
   allowedScopes: BrainAccessScope[]
+  desktop?: {
+    controlToken: string
+    onReady: (connection: { url: string; sessionToken: string }) => void
+    onStop: () => void
+  }
 }
 
 export interface RunningBrainRelay {
@@ -48,6 +57,7 @@ export interface RunningBrainRelay {
 }
 
 export function brainScopeForMethod(method: string): BrainAccessScope | null {
+  if (method === 'continuity.update') return 'workspace:write'
   if (READ_METHODS.has(method)) return 'workspace:read'
   if (method.startsWith('pty.')) return 'terminal'
   if (method.startsWith('attachments.')) return 'workspace:write'
@@ -101,6 +111,7 @@ export async function startBrainRelay(options: BrainRelayOptions): Promise<Runni
     dataDir: runtimeDataDir,
     allowedWorkspaceRoots: roots,
     resolveAgentPath: resolveHeadlessAgentPath,
+    desktopControl: options.desktop ? { token: options.desktop.controlToken, onStop: options.desktop.onStop } : undefined,
   })
   const pairResponse = await fetch(`${backend.url}/api/v1/pair`, {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: backend.pairingToken }),
@@ -108,13 +119,14 @@ export async function startBrainRelay(options: BrainRelayOptions): Promise<Runni
   const pair = await pairResponse.json() as { sessionToken?: string }
   if (!pairResponse.ok || !pair.sessionToken) { await backend.close(); throw new Error('could not initialize the brain RPC boundary') }
   const backendToken = pair.sessionToken
+  options.desktop?.onReady({ url: backend.url, sessionToken: backendToken })
   const eventSocket = new WebSocket(backend.url.replace(/^http/, 'ws') + '/api/v1/events', ['crewcode.v1', backendToken])
   await new Promise<void>((resolve, reject) => { eventSocket.once('open', resolve); eventSocket.once('error', reject) })
 
   // The Brain-local execution backend outlives every Hub/browser transport.
   // `relay` is replaced on transient Hub disconnects without recreating the
   // backend or stopping provider processes.
-  let relay!: WebSocket
+  let relay: WebSocket | null = null
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
   const sessions = new Map<string, RelaySession>()
   type ResourceOwner = {
@@ -141,6 +153,7 @@ export async function startBrainRelay(options: BrainRelayOptions): Promise<Runni
   const MAX_OWNED_RESOURCES_PER_USER = 100
   const MAX_DETACHED_EVENTS_PER_RESOURCE = 1_000
   const MAX_DETACHED_EVENT_BYTES_PER_RESOURCE = 1024 * 1024
+  const MAX_OUTBOUND_FRAMES_PER_SESSION = 1_000
   const appendDetachedEvent = (resourceId: string, event: { channel: 'pty' | 'bridge'; event: unknown }): void => {
     const events = [...(detachedEvents.get(resourceId) ?? []), event]
     let bytes = events.reduce((total, item) => total + Buffer.byteLength(JSON.stringify(item)), 0)
@@ -171,20 +184,79 @@ export async function startBrainRelay(options: BrainRelayOptions): Promise<Runni
     return backendClose
   }
   let closeResolve!: () => void
-  let relayReadyResolve!: () => void
   const closed = new Promise<void>(resolve => { closeResolve = resolve })
-  const relayReady = new Promise<void>(resolve => { relayReadyResolve = resolve })
+
+  const drainEncrypted = (session: RelaySession): void => {
+    const activeRelay = relay
+    if (session.outboundSending || !session.cipher || !activeRelay || activeRelay.readyState !== WebSocket.OPEN) return
+    const plaintext = session.outboundQueue[0]
+    if (!plaintext) return
+    const sequence = session.brainSequence
+    const descriptor = plaintext.type === 'rpcResult'
+      ? `RPC result ${plaintext.response.id}`
+      : plaintext.type === 'event' ? `${plaintext.channel} event` : plaintext.type
+    const closeForFrameFailure = (operation: string, cause: unknown): void => {
+      session.outboundQueue.length = 0
+      const detail = cause instanceof Error && cause.message
+        ? cause.message.replace(/[\r\n]/g, ' ').slice(0, 160)
+        : 'unknown failure'
+      activeRelay.send(JSON.stringify({
+        type: 'close', connectionId: session.connectionId,
+        reason: `Brain could not ${operation} encrypted frame ${sequence} (${descriptor}): ${detail}`,
+      } satisfies HubRelayControlFrame))
+      releaseSession(session.connectionId)
+    }
+    let plaintextJson: string
+    try {
+      plaintextJson = JSON.stringify(plaintext)
+    } catch (cause) {
+      closeForFrameFailure('serialize', cause)
+      return
+    }
+    let ciphertext: string
+    try {
+      ciphertext = session.cipher.encryptBrain(sequence, plaintextJson)
+    } catch (cause) {
+      closeForFrameFailure('encrypt', cause)
+      return
+    }
+    const frame: HubRelayControlFrame = {
+      type: 'encrypted', connectionId: session.connectionId, sequence, ciphertext,
+    }
+    const encoded = JSON.stringify(frame)
+    session.outboundSending = true
+    activeRelay.send(encoded, error => {
+      session.outboundSending = false
+      if (sessions.get(session.connectionId) !== session || relay !== activeRelay) {
+        session.outboundQueue.length = 0
+        return
+      }
+      if (error) {
+        session.outboundQueue.length = 0
+        activeRelay.close(4002, `Brain encrypted frame ${sequence} was not accepted`)
+        return
+      }
+      // Allocate the next nonce only after ws confirms this frame was accepted
+      // for transmission. Advancing before that observation creates a permanent
+      // sequence hole when serialization or socket backpressure fails.
+      session.outboundQueue.shift()
+      session.brainSequence += 1
+      drainEncrypted(session)
+    })
+  }
 
   const sendEncrypted = (session: RelaySession, plaintext: HubTunnelPlaintext): void => {
-    if (!session.cipher || relay.readyState !== WebSocket.OPEN) return
-    const sequence = session.brainSequence++
-    const frame: HubRelayControlFrame = {
-      type: 'encrypted',
-      connectionId: session.connectionId,
-      sequence,
-      ciphertext: session.cipher.encryptBrain(sequence, JSON.stringify(plaintext)),
+    if (!session.cipher || sessions.get(session.connectionId) !== session) return
+    if (session.outboundQueue.length >= MAX_OUTBOUND_FRAMES_PER_SESSION) {
+      relay?.send(JSON.stringify({
+        type: 'close', connectionId: session.connectionId,
+        reason: 'Brain encrypted outbound queue limit reached',
+      } satisfies HubRelayControlFrame))
+      releaseSession(session.connectionId)
+      return
     }
-    relay.send(JSON.stringify(frame))
+    session.outboundQueue.push(plaintext)
+    drainEncrypted(session)
   }
 
   const releaseSession = (connectionId: string): void => {
@@ -251,11 +323,19 @@ export async function startBrainRelay(options: BrainRelayOptions): Promise<Runni
 
   const handleRelayMessage = async (raw: WebSocket.RawData): Promise<void> => {
     let frame: HubRelayControlFrame
-    try { frame = JSON.parse(raw.toString()) as HubRelayControlFrame } catch { relay.close(4002, 'invalid Hub relay frame'); return }
-    if (frame.type === 'brainReady') { relayReadyResolve(); return }
+    try { frame = JSON.parse(raw.toString()) as HubRelayControlFrame } catch { relay?.close(4002, 'invalid Hub relay frame'); return }
+    if (frame.type === 'brainReady') return
     if (frame.type === 'connect') {
       const grantedScopes = frame.requestedScopes.filter(scope => policy.allowsScope(scope))
-      sessions.set(frame.connectionId, { connectionId: frame.connectionId, userId: frame.userId, grantedScopes: new Set(grantedScopes), expectedBrowserSequence: 0, brainSequence: 0 })
+      sessions.set(frame.connectionId, {
+        connectionId: frame.connectionId,
+        userId: frame.userId,
+        grantedScopes: new Set(grantedScopes),
+        expectedBrowserSequence: 0,
+        brainSequence: 0,
+        outboundQueue: [],
+        outboundSending: false,
+      })
       return
     }
     if (!('connectionId' in frame)) return
@@ -263,7 +343,7 @@ export async function startBrainRelay(options: BrainRelayOptions): Promise<Runni
     if (!session) return
     if (frame.type === 'clientHello') {
       if (session.cipher) {
-        relay.send(JSON.stringify({ type: 'close', connectionId: frame.connectionId, reason: 'duplicate end-to-end handshake rejected' } satisfies HubRelayControlFrame))
+        relay?.send(JSON.stringify({ type: 'close', connectionId: frame.connectionId, reason: 'duplicate end-to-end handshake rejected' } satisfies HubRelayControlFrame))
         sessions.delete(frame.connectionId)
         return
       }
@@ -273,9 +353,9 @@ export async function startBrainRelay(options: BrainRelayOptions): Promise<Runni
           type: 'serverHello', connectionId: frame.connectionId, key: session.cipher.serverKey,
           signature: session.cipher.signature, grantedScopes: [...session.grantedScopes],
         }
-        relay.send(JSON.stringify(hello))
+        relay?.send(JSON.stringify(hello))
       } catch {
-        relay.send(JSON.stringify({ type: 'close', connectionId: frame.connectionId, reason: 'end-to-end handshake rejected' } satisfies HubRelayControlFrame))
+        relay?.send(JSON.stringify({ type: 'close', connectionId: frame.connectionId, reason: 'end-to-end handshake rejected' } satisfies HubRelayControlFrame))
         sessions.delete(frame.connectionId)
       }
       return
@@ -283,21 +363,21 @@ export async function startBrainRelay(options: BrainRelayOptions): Promise<Runni
     if (frame.type === 'close') { releaseSession(frame.connectionId); return }
     if (frame.type !== 'encrypted' || !session.cipher) return
     if (frame.sequence !== session.expectedBrowserSequence) {
-      relay.send(JSON.stringify({ type: 'close', connectionId: frame.connectionId, reason: 'encrypted frame sequence rejected' } satisfies HubRelayControlFrame))
+      relay?.send(JSON.stringify({ type: 'close', connectionId: frame.connectionId, reason: 'encrypted frame sequence rejected' } satisfies HubRelayControlFrame))
       releaseSession(frame.connectionId)
       return
     }
     session.expectedBrowserSequence += 1
     let plaintext: HubTunnelPlaintext
     try { plaintext = JSON.parse(session.cipher.decryptBrowser(frame.sequence, frame.ciphertext)) as HubTunnelPlaintext } catch {
-      relay.send(JSON.stringify({ type: 'close', connectionId: frame.connectionId, reason: 'encrypted frame authentication failed' } satisfies HubRelayControlFrame))
+      relay?.send(JSON.stringify({ type: 'close', connectionId: frame.connectionId, reason: 'encrypted frame authentication failed' } satisfies HubRelayControlFrame))
       releaseSession(frame.connectionId)
       return
     }
     if (plaintext.type !== 'rpc') return
     const request = plaintext.request
     if (!request || request.protocolVersion !== CREWCODE_REMOTE_PROTOCOL_VERSION || typeof request.id !== 'string' || !request.id || typeof request.method !== 'string' || !request.params || typeof request.params !== 'object') {
-      relay.send(JSON.stringify({ type: 'close', connectionId: frame.connectionId, reason: 'invalid encrypted RPC envelope' } satisfies HubRelayControlFrame))
+      relay?.send(JSON.stringify({ type: 'close', connectionId: frame.connectionId, reason: 'invalid encrypted RPC envelope' } satisfies HubRelayControlFrame))
       releaseSession(frame.connectionId)
       return
     }
@@ -374,7 +454,7 @@ export async function startBrainRelay(options: BrainRelayOptions): Promise<Runni
       // owner's local browser state and is useful after a Brain restart has
       // erased process-resident resource ownership while preserving its local
       // conversation shard. Agent scope is still required above.
-      const history = loadConversation(`web:${conversationScopeKey}`)
+      const history = loadConversation(webConversationKey(conversationScopeKey))
       const latestAssistantIndex = latestAssistantMessageIndex(history)
       const latestAssistant = latestAssistantIndex === -1 ? null : {
         index: latestAssistantIndex,
@@ -397,7 +477,7 @@ export async function startBrainRelay(options: BrainRelayOptions): Promise<Runni
         sendEncrypted(session, { type: 'rpcResult', response })
         return
       }
-      const history = loadConversation(`web:${owner.conversationScopeKey}`)
+      const history = loadConversation(webConversationKey(owner.conversationScopeKey))
       const latestAssistantIndex = latestAssistantMessageIndex(history)
       const latestAssistant = latestAssistantIndex === -1 ? null : {
         index: latestAssistantIndex,
@@ -541,6 +621,7 @@ export async function startBrainRelay(options: BrainRelayOptions): Promise<Runni
     socket.on('error', () => undefined)
     socket.on('close', () => {
       if (relay !== socket) return
+      relay = null
       // Detach only browser routing. Provider execution and the loopback event
       // socket stay alive while the persistent Brain reconnects to the Hub.
       for (const connectionId of [...sessions.keys()]) releaseSession(connectionId)
@@ -559,8 +640,10 @@ export async function startBrainRelay(options: BrainRelayOptions): Promise<Runni
       socket.once('error', reject)
     })
   }
-  await connectRelay()
-  await relayReady
+  // Local desktop custody must not depend on Hub reachability. Start the
+  // outbound connector in the background; its close handler owns bounded retry
+  // while the loopback backend and provider processes stay alive.
+  void connectRelay().catch(() => undefined)
 
   return {
     closed,
@@ -568,10 +651,10 @@ export async function startBrainRelay(options: BrainRelayOptions): Promise<Runni
       if (closing) return closed
       closing = true
       if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null }
-      if (relay.readyState === WebSocket.OPEN || relay.readyState === WebSocket.CONNECTING) relay.close(1000, 'brain stopping')
+      if (relay?.readyState === WebSocket.OPEN || relay?.readyState === WebSocket.CONNECTING) relay.close(1000, 'brain stopping')
       eventSocket.close()
       await closeBackend()
-      if (relay.readyState === WebSocket.CLOSED) closeResolve()
+      if (!relay || relay.readyState === WebSocket.CLOSED) closeResolve()
       await closed
     },
   }

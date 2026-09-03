@@ -11,6 +11,7 @@ interface PierreDiffProps {
   /** Unified diff text from `git diff` or `createUnifiedDiff`. */
   patch:     string
   className?: string
+  onLineNumberClick?: (target: { line: number; side: 'LEFT' | 'RIGHT' }) => void
 }
 
 /**
@@ -73,7 +74,7 @@ function isSingleFileTextPatch(patch: string): boolean {
   return true
 }
 
-export function PierreDiff({ patch, className }: PierreDiffProps) {
+export function PierreDiff({ patch, className, onLineNumberClick }: PierreDiffProps) {
   if (!patch || !patch.trim()) {
     return <div className="pierre-diff-empty">(no diff)</div>
   }
@@ -97,7 +98,13 @@ export function PierreDiff({ patch, className }: PierreDiffProps) {
           disableWorkerPool
           // Wrap by default so Git sidebar and Solochat file diffs stay readable
           // in narrow panes instead of forcing horizontal scrolling.
-          options={{ diffStyle: 'split', diffIndicators: 'bars', themeType: 'dark', overflow: 'wrap' }}
+          options={{
+            diffStyle: 'split', diffIndicators: 'bars', themeType: 'dark', overflow: 'wrap',
+            lineHoverHighlight: onLineNumberClick ? 'number' : 'disabled',
+            onLineNumberClick: onLineNumberClick
+              ? ({ lineNumber, annotationSide }) => onLineNumberClick({ line: lineNumber, side: annotationSide === 'deletions' ? 'LEFT' : 'RIGHT' })
+              : undefined,
+          }}
         />
       </PatchErrorBoundary>
     </div>

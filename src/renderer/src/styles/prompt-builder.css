@@ -24,6 +24,20 @@
   background: #0c0f0c;
   border-right: 1px solid var(--border);
 }
+
+/* Desktop/tablet keeps the header, filters, and footer fixed while the cards
+   own the remaining height. The wrapper must participate in the flex chain or
+   `.pb-list` expands to its content and `overflow-y: auto` never engages. */
+@media (min-width: 769px) {
+  .pb-inner {
+    flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .pb-list { min-height: 0; }
+}
 .pb-left-h { padding: 14px 14px 8px; display: flex; flex-direction: column; gap: 10px; background: var(--background); }
 .pb-title-row { display: flex; align-items: center; gap: 8px; }
 

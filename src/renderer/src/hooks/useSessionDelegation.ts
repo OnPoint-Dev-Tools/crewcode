@@ -70,7 +70,7 @@ export function useSessionDelegation(options: SessionDelegationOptions): Session
     if (!api?.delegationEnable || !sessionId) return
 
     if (!enabled) {
-      void api.delegationDisable?.(sessionId)
+      void api.delegationDisable?.(sessionId).catch(() => undefined)
       setPreamble('')
       tokenRef.current = ''
       return
@@ -108,7 +108,7 @@ export function useSessionDelegation(options: SessionDelegationOptions): Session
 
   // Revoke on unmount so a closed pane doesn't leave a live token behind.
   useEffect(() => () => {
-    if (sessionId) void window.electronAPI?.delegationDisable?.(sessionId)
+    if (sessionId) void window.electronAPI?.delegationDisable?.(sessionId).catch(() => undefined)
   }, [sessionId])
 
   const delivered = useCallback((id: string) => deliveredRef.current.has(deliveryKey(id, tokenRef.current)), [])

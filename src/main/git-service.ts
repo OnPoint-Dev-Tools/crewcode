@@ -28,7 +28,15 @@ export class GitService {
     return value.stderr?.trim() || value.message
   }
 
-  async status(cwd: string) { try { return { ok: true, ...parseStatus((await this.run(cwd, ['status', '--porcelain=v1', '-b'])).stdout) } } catch (error) { return { error: this.message(error) } } }
+  async status(cwd: string) {
+    try {
+      const [status, mergeInProgress] = await Promise.all([
+        this.run(cwd, ['status', '--porcelain=v1', '-b']),
+        this.run(cwd, ['rev-parse', '-q', '--verify', 'MERGE_HEAD']).then(() => true).catch(() => false),
+      ])
+      return { ok: true, ...parseStatus(status.stdout), mergeInProgress }
+    } catch (error) { return { error: this.message(error) } }
+  }
   async stage(cwd: string, paths: string[]) { try { await this.run(cwd, ['add', '--', ...paths.map(String)]); return { ok: true } } catch (error) { return { error: this.message(error) } } }
   async stageAll(cwd: string) { try { await this.run(cwd, ['add', '--all']); return { ok: true } } catch (error) { return { error: this.message(error) } } }
   async unstage(cwd: string, paths: string[]) { try { await unstagePaths(paths.map(String), args => this.run(cwd, args)); return { ok: true } } catch (error) { return { error: this.message(error) } } }

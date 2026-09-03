@@ -76,6 +76,20 @@ function readAll(): Record<string, TranscriptMessage[]> {
   return out
 }
 
+function readScope(scopeId: string): TranscriptMessage[] {
+  if (!scopeId) return []
+  try {
+    const parsed = JSON.parse(readFileSync(transcriptPath(scopeId), 'utf8')) as TranscriptFile
+    // Local Electron IPC has no encrypted relay frame limit. Return the complete
+    // shard so a later full-array save cannot overwrite history that the renderer
+    // never received. The Brain-facing TranscriptService applies its transport cap
+    // and merges bounded client saves into the complete authoritative shard.
+    return parsed?.scopeId === scopeId ? normalizeMessages(parsed.messages) : []
+  } catch {
+    return []
+  }
+}
+
 // Per-scope last-write epoch (ms). The transcript file is rewritten whenever a
 // scope's messages change, so its mtime is a real "last used" timestamp — unlike
 // the messages' time-of-day-only strings, which carry no date.
@@ -140,6 +154,7 @@ function removeScope(scopeId: string): void {
 
 export function registerTranscriptIpc(): void {
   ipcMain.handle('transcripts:loadAll', () => readAll())
+  ipcMain.handle('transcripts:load', (_event, scopeId: string) => readScope(scopeId))
 
   // Real per-scope last-activity epochs for Mission Control's "N ago" labels.
   ipcMain.handle('transcripts:mtimes', () => readMtimes())

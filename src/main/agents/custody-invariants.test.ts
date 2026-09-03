@@ -15,7 +15,7 @@ const base = { provider: 'claude', cwd: '/repo', mode: 'build' as const }
 describe('normalizeAuthority', () => {
   it('defaults the unset fields instead of leaving authority undefined', () => {
     expect(normalizeAuthority(base)).toEqual({
-      provider: 'claude', cwd: '/repo', mode: 'build', crewcoderMode: 'configured', toolPolicy: 'default',
+      provider: 'claude', cwd: '/repo', mode: 'build', crewcoderMode: 'configured', crewcoderApprovalMode: 'review', toolPolicy: 'default',
       externalDirectories: [], mcpServers: [],
     })
   })
@@ -48,6 +48,14 @@ describe('diffAuthority', () => {
     const observed = normalizeAuthority({ ...base, mcpServers: [{ name: 'filesystem' }] })
     expect(diffAuthority(recorded, observed)).toEqual([
       { field: 'mcpServers', recorded: '(none)', observed: 'filesystem' },
+    ])
+  })
+
+  it('treats CrewCoder approval escalation as authority drift', () => {
+    const recorded = normalizeAuthority({ ...base, provider: 'crewcoder', crewcoderApprovalMode: 'review' })
+    const observed = normalizeAuthority({ ...base, provider: 'crewcoder', crewcoderApprovalMode: 'full-access' })
+    expect(diffAuthority(recorded, observed)).toEqual([
+      { field: 'crewcoderApprovalMode', recorded: 'review', observed: 'full-access' },
     ])
   })
 })

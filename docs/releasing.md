@@ -112,10 +112,11 @@ land on the newest stable build — without it, a `0.2.0-nightly.3` install woul
 never see `0.2.0` stable, because it does not compare as newer.
 
 Settings live in renderer localStorage and main has no settings store, so the
-channel reaches `autoUpdater` only via `updater:configure`, re-pushed by
-`UpdatesSection` whenever channel or auto-download changes. Main defaults to
-`stable` + no auto-download until that first message arrives, so the pre-config
-window can never pull a prerelease.
+channel reaches `autoUpdater` only via `updater:configure`. `App` pushes that
+config on launch through `useUpdaterNotices`, and `UpdatesSection` re-pushes
+whenever channel or auto-download changes. Main defaults to `stable` + no
+auto-download until that first message arrives, so the pre-config window can
+never pull a prerelease.
 
 ## How the update reaches users
 
@@ -125,7 +126,11 @@ repo you actually release to.** If it drifts, `checkForUpdates()` polls a repo
 with no releases and reports "not-available" forever, with no visible error.
 
 Packaged apps auto-check 30s after launch and broadcast `updater:event` to the
-renderer. The user picks one **Automatic updates** policy, which the renderer
+renderer. `available` and `downloaded` events also land on the global
+notification bar with the new version so the user does not have to open
+Settings to learn an update exists; clicking the card opens **Settings →
+Updates**. Checking, progress, errors, and "already current" stay off the
+bar. The user picks one **Automatic updates** policy, which the renderer
 (`updatePolicyToConfig`) expands into the two flags main's `applyConfig` wants:
 
 | Policy | autoDownload | autoInstallOnAppQuit | Behavior |

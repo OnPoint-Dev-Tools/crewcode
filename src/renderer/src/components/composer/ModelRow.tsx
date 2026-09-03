@@ -12,7 +12,8 @@ import type { McpServerConfig } from '../../hooks/useSettings'
 import type { Mode } from './ModeSegment'
 import { ModeSegment } from './ModeSegment'
 import { CrewCoderModePicker } from './CrewCoderModePicker'
-import type { CrewCoderMode } from '../../../../shared/crewcoder-types'
+import { CrewCoderApprovalPicker } from './CrewCoderApprovalPicker'
+import type { CrewCoderApprovalMode, CrewCoderMode } from '../../../../shared/crewcoder-types'
 
 interface ModelRowProps {
   agents:        AgentInfo[]
@@ -28,6 +29,8 @@ interface ModelRowProps {
   setMode: (m: Mode) => void
   crewcoderMode?: CrewCoderMode
   onSelectCrewCoderMode: (mode: CrewCoderMode | undefined) => void
+  crewcoderApprovalMode: CrewCoderApprovalMode
+  onSelectCrewCoderApprovalMode: (mode: CrewCoderApprovalMode) => void
   crewcoderModeDisabled?: boolean
   executionModeDisabled?: boolean
 
@@ -64,8 +67,12 @@ export function crewCoderModesAvailable(agents: AgentInfo[], activeAgentId: stri
   return activeAgentId === 'crewcoder' && agents.some(agent => agent.id === 'crewcoder' && agent.available)
 }
 
+export function crewCoderApprovalAvailable(agents: AgentInfo[], activeAgentId: string, mode?: CrewCoderMode): boolean {
+  return crewCoderModesAvailable(agents, activeAgentId) && mode === 'crewcoder'
+}
+
 export const ModelRow = forwardRef<ModelRowHandle, ModelRowProps>(function ModelRow({
-  agents, setMode, mode, crewcoderMode, onSelectCrewCoderMode, crewcoderModeDisabled = false, executionModeDisabled = false, activeAgentId, onSelectAgent,
+  agents, setMode, mode, crewcoderMode, onSelectCrewCoderMode, crewcoderApprovalMode, onSelectCrewCoderApprovalMode, crewcoderModeDisabled = false, executionModeDisabled = false, activeAgentId, onSelectAgent,
   model, onSelectModel,
   effort, onSelectEffort,
   mcpEnabled = false, mcpServers = [], selectedMcpIds = [], onToggleMcp,
@@ -76,19 +83,24 @@ export const ModelRow = forwardRef<ModelRowHandle, ModelRowProps>(function Model
   const effortRef = useRef<HTMLButtonElement>(null)
   const mcpRef    = useRef<HTMLButtonElement>(null)
   const crewCoderModeRef = useRef<HTMLButtonElement>(null)
+  const crewCoderApprovalRef = useRef<HTMLButtonElement>(null)
 
   const [provOpen,   setProvOpen]   = useState(false)
   const [modelOpen,  setModelOpen]  = useState(false)
   const [effortOpen, setEffortOpen] = useState(false)
   const [mcpOpen,    setMcpOpen]    = useState(false)
   const [crewCoderModeOpen, setCrewCoderModeOpen] = useState(false)
+  const [crewCoderApprovalOpen, setCrewCoderApprovalOpen] = useState(false)
 
   useEffect(() => {
-    onOpenChange?.(provOpen || modelOpen || effortOpen || mcpOpen || crewCoderModeOpen)
-  }, [provOpen, modelOpen, effortOpen, mcpOpen, crewCoderModeOpen, onOpenChange])
+    onOpenChange?.(provOpen || modelOpen || effortOpen || mcpOpen || crewCoderModeOpen || crewCoderApprovalOpen)
+  }, [provOpen, modelOpen, effortOpen, mcpOpen, crewCoderModeOpen, crewCoderApprovalOpen, onOpenChange])
 
   useEffect(() => {
-    if (crewcoderModeDisabled) setCrewCoderModeOpen(false)
+    if (crewcoderModeDisabled) {
+      setCrewCoderModeOpen(false)
+      setCrewCoderApprovalOpen(false)
+    }
   }, [crewcoderModeDisabled])
 
   // Only count selections that still exist in the registry, so a removed server
@@ -99,7 +111,7 @@ export const ModelRow = forwardRef<ModelRowHandle, ModelRowProps>(function Model
   const { list: models } = useProviderModels(activeAgentId)
 
   useImperativeHandle(ref, () => ({
-    openModelPicker: () => { setModelOpen(true); setProvOpen(false); setEffortOpen(false); setCrewCoderModeOpen(false) },
+    openModelPicker: () => { setModelOpen(true); setProvOpen(false); setEffortOpen(false); setCrewCoderModeOpen(false); setCrewCoderApprovalOpen(false) },
     cycleModel: (dir: 1 | -1) => {
       if (models.length === 0) return
       const idx  = models.findIndex(m => m.id === model)
@@ -111,6 +123,7 @@ export const ModelRow = forwardRef<ModelRowHandle, ModelRowProps>(function Model
 
   const active = agents.find(a => a.id === activeAgentId) ?? agents.find(a => a.available)
   const showCrewCoderModes = crewCoderModesAvailable(agents, activeAgentId)
+  const showCrewCoderApproval = crewCoderApprovalAvailable(agents, activeAgentId, crewcoderMode)
 
   const handleSelectAgent = (id: string) => {
     // Start resolving the next provider immediately so the model picker is warm.
@@ -125,7 +138,7 @@ export const ModelRow = forwardRef<ModelRowHandle, ModelRowProps>(function Model
       <button
         ref={provRef}
         className={`model-btn ${active?.id ? 'active' : ''}`}
-        onClick={() => { setProvOpen(o => !o); setModelOpen(false); setEffortOpen(false); setCrewCoderModeOpen(false) }}
+        onClick={() => { setProvOpen(o => !o); setModelOpen(false); setEffortOpen(false); setCrewCoderModeOpen(false); setCrewCoderApprovalOpen(false) }}
         title={active?.path ?? active?.name}
       >
         {PROVIDER_IMAGES[active?.id ?? '']
@@ -147,6 +160,7 @@ export const ModelRow = forwardRef<ModelRowHandle, ModelRowProps>(function Model
             setModelOpen(false)
             setEffortOpen(false)
             setMcpOpen(false)
+            setCrewCoderApprovalOpen(false)
           }}
           title={crewcoderModeDisabled ? 'CrewCoder mode cannot change during a running turn' : 'select CrewCoder agent mode'}
         >
@@ -155,10 +169,30 @@ export const ModelRow = forwardRef<ModelRowHandle, ModelRowProps>(function Model
         </button>
       )}
 
+      {showCrewCoderApproval && (
+        <button
+          ref={crewCoderApprovalRef}
+          className={`model-btn crewcoder-approval-btn ${crewcoderApprovalMode !== 'review' ? 'active' : ''}`}
+          disabled={crewcoderModeDisabled}
+          onClick={() => {
+            setCrewCoderApprovalOpen(open => !open)
+            setProvOpen(false)
+            setModelOpen(false)
+            setEffortOpen(false)
+            setMcpOpen(false)
+            setCrewCoderModeOpen(false)
+          }}
+          title={crewcoderModeDisabled ? 'CrewCoder approval cannot change during a running turn' : 'select CrewCoder approval policy'}
+        >
+          <Icon name="key" size={11} /> {crewcoderApprovalMode.replace('-', ' ')}
+          <Icon name="chevDown" size={11} />
+        </button>
+      )}
+
       <button
         ref={modelRef}
         className="model-btn"
-        onClick={() => { setModelOpen(o => !o); setProvOpen(false); setEffortOpen(false); setCrewCoderModeOpen(false) }}
+        onClick={() => { setModelOpen(o => !o); setProvOpen(false); setEffortOpen(false); setCrewCoderModeOpen(false); setCrewCoderApprovalOpen(false) }}
       >
         <Icon name="crew" size={11} /> {shortModel(model)}
         <Icon name="chevDown" size={11} />
@@ -169,7 +203,7 @@ export const ModelRow = forwardRef<ModelRowHandle, ModelRowProps>(function Model
         className="model-btn"
         disabled={effortRowsForProvider(activeAgentId).length === 0}
         title={effortRowsForProvider(activeAgentId).length === 0 ? 'This provider does not expose reasoning-effort controls' : undefined}
-        onClick={() => { setEffortOpen(o => !o); setProvOpen(false); setModelOpen(false); setMcpOpen(false); setCrewCoderModeOpen(false) }}
+        onClick={() => { setEffortOpen(o => !o); setProvOpen(false); setModelOpen(false); setMcpOpen(false); setCrewCoderModeOpen(false); setCrewCoderApprovalOpen(false) }}
       >
         <Icon name="sliders" size={11} /> {EFFORT_LABEL[effort]}
         <Icon name="chevDown" size={11} />
@@ -179,7 +213,7 @@ export const ModelRow = forwardRef<ModelRowHandle, ModelRowProps>(function Model
         <button
           ref={mcpRef}
           className={`model-btn ${mcpCount > 0 ? 'active' : ''}`}
-          onClick={() => { setMcpOpen(o => !o); setProvOpen(false); setModelOpen(false); setEffortOpen(false); setCrewCoderModeOpen(false) }}
+          onClick={() => { setMcpOpen(o => !o); setProvOpen(false); setModelOpen(false); setEffortOpen(false); setCrewCoderModeOpen(false); setCrewCoderApprovalOpen(false) }}
           title="select mcp servers for this session"
         >
           <Icon name="box" size={11} /> mcp{mcpCount > 0 ? ` · ${mcpCount}` : ''}
@@ -193,6 +227,15 @@ export const ModelRow = forwardRef<ModelRowHandle, ModelRowProps>(function Model
           anchor={crewCoderModeRef.current}
           value={crewcoderMode}
           onPick={onSelectCrewCoderMode}
+        />
+      )}
+      {showCrewCoderApproval && (
+        <CrewCoderApprovalPicker
+          open={crewCoderApprovalOpen}
+          onClose={() => setCrewCoderApprovalOpen(false)}
+          anchor={crewCoderApprovalRef.current}
+          value={crewcoderApprovalMode}
+          onPick={onSelectCrewCoderApprovalMode}
         />
       )}
 

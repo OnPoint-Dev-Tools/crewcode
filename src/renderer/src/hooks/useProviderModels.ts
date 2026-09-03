@@ -8,6 +8,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { getCrewCodeClient } from '../runtime/crewcode-client'
 
 export interface DetectedModel {
   id:            string
@@ -108,8 +109,9 @@ export function prefetchProviderModels(provider: string, force = false): Promise
   if (!force && pending) return pending
   const cached = detectedModelCache.get(provider)
   if (!force && cached) return Promise.resolve(cached)
-  const api = window.electronAPI
-  if (!api) return Promise.resolve([])
+  let api: { agentListModels: (provider: string) => Promise<DetectedModel[]> } | undefined
+  try { api = getCrewCodeClient() } catch { api = window.electronAPI }
+  if (!api?.agentListModels) return Promise.resolve([])
   const request = api.agentListModels(provider)
     .then(models => {
       const next = models ?? []

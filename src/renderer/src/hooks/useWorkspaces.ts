@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import type { Workspace, StoredWorkspace, Worktree } from '../types'
 import { getCrewCodeClient } from '../runtime/crewcode-client'
+import { isBrainAuthorizationDenial } from '../runtime/brain-authorization-runtime'
 
 function toWorkspace(s: StoredWorkspace, worktrees: Worktree[] = []): Workspace {
   return {
@@ -27,9 +28,16 @@ export function useWorkspaces() {
 
   const reload = useCallback(async () => {
     const api = getCrewCodeClient()
-    const list = await api.workspacesList()
-    setWorkspaces(list.map(s => toWorkspace(s)))
-    setLoading(false)
+    let list: StoredWorkspace[] = []
+    try {
+      list = await api.workspacesList()
+      setWorkspaces(list.map(s => toWorkspace(s)))
+    } catch (error) {
+      if (!isBrainAuthorizationDenial(error)) throw error
+      setWorkspaces([])
+    } finally {
+      setLoading(false)
+    }
     // Fetch worktrees for each workspace in parallel; merge as each one resolves so the
     // drawer can show worktrees without the user needing to click refresh.
     await Promise.all(list.map(async (s) => {

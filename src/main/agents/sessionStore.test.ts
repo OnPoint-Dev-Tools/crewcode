@@ -91,4 +91,16 @@ describe('sessionStore usage snapshots', () => {
     const raw = readRaw(userData) as { usage?: Record<string, unknown> }
     expect(raw.usage?.['tab:claude']).toBeUndefined()
   })
+
+  it('returns secret-free provider and model hints for transcript recovery', async () => {
+    const userData = tempUserData('catalogue-hints')
+    const store = await loadStore(userData)
+    store.setSessionId('workspace-chat:codex', 'opaque-native-secret')
+    store.setUsageSnapshot('workspace-chat:codex', { contextTokens: 12_000, model: 'gpt-5.6-sol' })
+
+    expect(store.getSessionHints(['workspace-chat', 'other-chat'])).toEqual({
+      'workspace-chat': { agentId: 'codex', model: 'gpt-5.6-sol' },
+    })
+    expect(JSON.stringify(store.getSessionHints(['workspace-chat']))).not.toContain('opaque-native-secret')
+  })
 })

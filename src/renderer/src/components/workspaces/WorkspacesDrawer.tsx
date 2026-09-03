@@ -17,6 +17,7 @@ import { chatSessionSurface } from '../../hooks/chat-session-tab-owner'
 import { workspaceDisplayPath } from './workspace-display-path'
 import { isCompletedChatShortcutVisible } from './completed-chat-expiry'
 import { pinnedSessionsFirst } from './pinned-session-order'
+import { sortOwnSessionsForDrawer } from '../../hooks/chat-session-order'
 import { useRunningByScope } from '../../stores/bridge-activity-store'
 import { liveSessionAgentStatus, liveWorkingChats } from './working-chats'
 
@@ -426,7 +427,7 @@ export function WorkspacesDrawer({
     const { own, delegated } = splitDelegatedSessions(wsSessions)
     // Pinning changes priority only inside the thread's existing provenance
     // group; stable partitioning preserves recency among peers.
-    const ownSessions = pinnedSessionsFirst([...own].reverse())
+    const ownSessions = pinnedSessionsFirst(sortOwnSessionsForDrawer(own))
     const delegatedSessions = pinnedSessionsFirst(delegated)
     const threadsKey = `threads:${ws.id}`
     const delegatedKey = `delegated:${ws.id}`

@@ -184,10 +184,18 @@ export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, br
     if (!delta) return
     const st = getState(bridgeId)
     setMessagesForTab(tabId, m => {
+      // Fold the visible phase transition into the same bounded stream write.
+      // Updating activity for every raw provider delta still scanned the
+      // transcript once per token even though text rendering was already
+      // coalesced to 50 ms.
+      const messages = updateTurnActivity(m, turnId, {
+        status: 'in_progress',
+        activeForm: kind === 'agent' ? 'Preparing response' : 'Analyzing request',
+      })
       if (kind === 'agent') {
         const activeIdx = st.agentBubbleByTurn[turnId]
-        if (activeIdx !== undefined && m[activeIdx]?.kind === 'agent' && m[activeIdx].turnId === turnId) {
-          const next = m.slice()
+        if (activeIdx !== undefined && messages[activeIdx]?.kind === 'agent' && messages[activeIdx].turnId === turnId) {
+          const next = messages.slice()
           const cur  = next[activeIdx] as Extract<Message, { kind: 'agent' }>
           next[activeIdx] = {
             ...cur,
@@ -199,13 +207,13 @@ export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, br
         }
         const seq = (st.agentSeqByTurn[turnId] ?? 0) + 1
         st.agentSeqByTurn[turnId] = seq
-        const newIdx = m.length
+        const newIdx = messages.length
         st.agentBubbleByTurn[turnId] = newIdx
         if (!st.turnStartTimes[turnId]) {
           st.turnStartTimes[turnId] = st.pendingPromptStartedAt ?? Date.now()
           delete st.pendingPromptStartedAt
         }
-        return [...m, {
+        return [...messages, {
           kind:      'agent',
           time:      nowTime(),
           blocks:    [],
@@ -219,8 +227,8 @@ export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, br
       }
 
       const tIdx = st.activeThinkingByTurn[turnId]
-      if (tIdx !== undefined && m[tIdx]?.kind === 'thinking' && m[tIdx].turnId === turnId) {
-        const next = m.slice()
+      if (tIdx !== undefined && messages[tIdx]?.kind === 'thinking' && messages[tIdx].turnId === turnId) {
+        const next = messages.slice()
         const cur  = next[tIdx] as Extract<Message, { kind: 'thinking' }>
         next[tIdx] = {
           ...cur,
@@ -234,9 +242,9 @@ export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, br
       // block here preserves original event order without per-token renders.
       const seq = (st.thinkingSeqByTurn[turnId] ?? 0) + 1
       st.thinkingSeqByTurn[turnId] = seq
-      const newIdx = m.length
+      const newIdx = messages.length
       st.activeThinkingByTurn[turnId] = newIdx
-      return [...m, {
+      return [...messages, {
         kind:      'thinking',
         time:      nowTime(),
         turnId,
@@ -471,19 +479,11 @@ export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, br
         }
 
         case 'text_delta': {
-          setMessagesForTab(tabId, messages => updateTurnActivity(messages, ev.turnId, {
-            status: 'in_progress',
-            activeForm: 'Preparing response',
-          }))
           enqueueStreamDelta(ev.bridgeId, tabId, ev.turnId, 'agent', ev.delta)
           return
         }
 
         case 'thinking_delta': {
-          setMessagesForTab(tabId, messages => updateTurnActivity(messages, ev.turnId, {
-            status: 'in_progress',
-            activeForm: 'Analyzing request',
-          }))
           enqueueStreamDelta(ev.bridgeId, tabId, ev.turnId, 'thinking', ev.delta)
           return
         }
@@ -891,12 +891,13 @@ export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, br
     freshSession?: boolean,
     externalDirectories?: string[],
     crewcoderMode?: CrewCoderMode,
+    crewcoderApprovalMode?: import('../../../shared/crewcoder-types').CrewCoderApprovalMode,
   ) => {
     stoppedBridgesRef.current.delete(bridgeId)
     const api = window.electronAPI
     if (!api) return { ok: false, error: 'electronAPI unavailable' }
     try {
-      return await api.bridgeStart({ bridgeId, provider, cwd, externalDirectories, model, mode, crewcoderMode, toolPolicy, thinking, sessionKey, conversationScopeKey, freshSession, mcpServers })
+      return await api.bridgeStart({ bridgeId, provider, cwd, externalDirectories, model, mode, crewcoderMode, crewcoderApprovalMode, toolPolicy, thinking, sessionKey, conversationScopeKey, freshSession, mcpServers })
     } catch (error) {
       return { ok: false, error: (error as Error).message }
     }

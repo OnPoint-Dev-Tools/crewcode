@@ -2,8 +2,9 @@ import { mkdtempSync, mkdirSync, readFileSync, realpathSync, symlinkSync } from 
 import { createHash } from 'crypto'
 import { join } from 'path'
 import { tmpdir as osTmpdir } from 'os'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CREWCODE_REMOTE_PROTOCOL_VERSION } from '../shared/remote-access-types'
+import { DESKTOP_CATALOGUE_AUTHORITY_KEY } from '../shared/continuity-state-types'
 import { startRemoteAccessServer, type RunningRemoteAccessServer } from './remote-access-server'
 import WebSocket from 'ws'
 
@@ -12,6 +13,8 @@ import WebSocket from 'ws'
 // /private/var/folders/..., so an unresolved root matches nothing and every
 // workspace call comes back 403 / "path escapes root". Resolve once, up front.
 const tmpdir = (): string => realpathSync.native(osTmpdir())
+
+const DESKTOP_CONTROL_FIXTURE = 'desktop-control-fixture'
 
 let running: RunningRemoteAccessServer | null = null
 afterEach(async () => { await running?.close(); running = null })
@@ -22,6 +25,64 @@ async function start(): Promise<RunningRemoteAccessServer> {
 }
 
 describe('remote access server', () => {
+  it('stores allowlisted catalogue continuity on the Brain', async () => {
+    const server = await start()
+    const pair = await fetch(`${server.url}/api/v1/pair`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: server.pairingToken }) })
+    const { sessionToken } = await pair.json() as { sessionToken: string }
+    const rpc = (id: string, method: string, params: Record<string, unknown>) => fetch(`${server.url}/api/v1/rpc`, {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${sessionToken}` },
+      body: JSON.stringify({ protocolVersion: CREWCODE_REMOTE_PROTOCOL_VERSION, id, method, params }),
+    })
+
+    expect(await (await rpc('empty', 'continuity.get', {})).json()).toMatchObject({ ok: true, result: { version: 1, revision: 0, values: {} } })
+    const updated = await (await rpc('patch', 'continuity.update', { values: { 'crewcode:activeWorkspaceId': 'workspace-one' } })).json()
+    expect(updated).toMatchObject({ ok: true, result: { revision: 1, values: { 'crewcode:activeWorkspaceId': 'workspace-one' } } })
+    expect(await (await rpc('forbidden', 'continuity.update', { values: { 'crewcode:secret': 'no' } })).json()).toMatchObject({
+      ok: false,
+      error: { message: expect.stringContaining('continuity key is not allowed') },
+    })
+  })
+
+  it('keeps desktop Brain stop control separate from browser sessions', async () => {
+    const onStop = vi.fn()
+    running = await startRemoteAccessServer({
+      dataDir: mkdtempSync(join(tmpdir(), 'crewcode-desktop-control-')),
+      allowedWorkspaceRoots: [tmpdir()],
+      desktopControl: { token: DESKTOP_CONTROL_FIXTURE, onStop },
+    })
+    expect((await fetch(`${running.url}/api/v1/desktop/status`)).status).toBe(401)
+    const status = await fetch(`${running.url}/api/v1/desktop/status`, { headers: { authorization: `Bearer ${DESKTOP_CONTROL_FIXTURE}` } })
+    expect(await status.json()).toMatchObject({ ok: true, pid: process.pid })
+    const stopped = await fetch(`${running.url}/api/v1/desktop/stop`, { method: 'POST', headers: { authorization: `Bearer ${DESKTOP_CONTROL_FIXTURE}` } })
+    expect(stopped.status).toBe(202)
+    await new Promise(resolve => setImmediate(resolve))
+    expect(onStop).toHaveBeenCalledTimes(1)
+  })
+
+  it('lets only desktop control establish exact catalogue authority', async () => {
+    running = await startRemoteAccessServer({
+      dataDir: mkdtempSync(join(tmpdir(), 'crewcode-desktop-catalogue-')),
+      allowedWorkspaceRoots: [tmpdir()],
+      desktopControl: { token: DESKTOP_CONTROL_FIXTURE, onStop: vi.fn() },
+    })
+    const pair = await fetch(`${running.url}/api/v1/pair`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: running.pairingToken }) })
+    const { sessionToken } = await pair.json() as { sessionToken: string }
+    const forged = await fetch(`${running.url}/api/v1/rpc`, {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${sessionToken}` },
+      body: JSON.stringify({ protocolVersion: 1, id: 'forge', method: 'continuity.update', params: { values: { [DESKTOP_CATALOGUE_AUTHORITY_KEY]: JSON.stringify({ version: 1, source: 'desktop' }) } } }),
+    })
+    expect(await forged.json()).toMatchObject({ ok: false, error: { message: expect.stringContaining('continuity key is not allowed') } })
+
+    const seeded = await fetch(`${running.url}/api/v1/desktop/control`, {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${DESKTOP_CONTROL_FIXTURE}` },
+      body: JSON.stringify({ method: 'continuity.seedCatalogue', params: { values: { 'crewcode:sessionsByTab': JSON.stringify({ chat: [{ id: 'chat' }] }) } } }),
+    })
+    expect(await seeded.json()).toMatchObject({
+      ok: true,
+      result: { values: { [DESKTOP_CATALOGUE_AUTHORITY_KEY]: JSON.stringify({ version: 1, source: 'desktop' }) } },
+    })
+  })
+
   it('publishes an unauthenticated protocol handshake', async () => {
     const server = await start()
     const response = await fetch(`${server.url}/api/v1/capabilities`)

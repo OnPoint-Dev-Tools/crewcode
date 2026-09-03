@@ -1,7 +1,8 @@
 import { ipcMain, BrowserWindow, shell } from 'electron'
 import { spawn, spawnSync, ChildProcess } from 'child_process'
 import { publishRepository, type PublishRepoOpts } from './github-publish'
-import { ghAvailable, getGhStatus, runGh } from './github-service'
+import { getGitHubAvatar, getPullRequestCatalogue, getPullRequestCheckLog, getPullRequestChecksContext, getPullRequestCreateContext, getPullRequestDetail, getPullRequestDiff, getPullRequestManagementContext, getPullRequestReviewContext, ghAvailable, getGhStatus, preparePullRequestConflictResolution, pullRequestActionArgs, pullRequestCommentArgs, pullRequestCreateArgs, pullRequestEditArgs, pullRequestMergeArgs, pullRequestMetadataArgs, pullRequestReviewArgs, rerunPullRequestCheck, runGh, submitPullRequestReview, updatePullRequestMergeAutomation, updatePullRequestReviewThread, updatePullRequestViewedFile } from './github-service'
+import type { GitHubMergeMethod, GitHubPullRequestCheckRerunOptions, GitHubPullRequestCreateOptions, GitHubPullRequestEditOptions, GitHubPullRequestMergeAutomationOptions, GitHubPullRequestMetadataOptions, GitHubPullRequestReviewOptions, GitHubPullRequestViewedFileOptions } from '../shared/github-types'
 
 export interface GhStatus {
   available: boolean
@@ -115,13 +116,85 @@ export function registerGhIpc(): void {
   ipcMain.handle('gh:loginCancel', () => cancelGhLogin())
   ipcMain.handle('gh:logout', () => logout())
 
+  ipcMain.handle('github:prCreateContext', (_e, cwd: string, base: string) =>
+    getPullRequestCreateContext(cwd, base))
+  ipcMain.handle('github:prCatalogue', (_e, cwd: string) =>
+    getPullRequestCatalogue(cwd))
+  ipcMain.handle('github:prDetail', (_e, cwd: string, num: number) =>
+    getPullRequestDetail(cwd, num))
+  ipcMain.handle('github:prDiff', (_e, cwd: string, num: number) =>
+    getPullRequestDiff(cwd, num))
+  ipcMain.handle('github:prReviewContext', (_e, cwd: string, num: number) =>
+    getPullRequestReviewContext(cwd, num))
+  ipcMain.handle('github:prManagementContext', (_e, cwd: string, num: number) =>
+    getPullRequestManagementContext(cwd, num))
+  ipcMain.handle('github:prChecksContext', (_e, cwd: string, num: number) =>
+    getPullRequestChecksContext(cwd, num))
+  ipcMain.handle('github:prCheckLog', (_e, cwd: string, num: number, headCommitId: string, runId: number, jobId: number) =>
+    getPullRequestCheckLog(cwd, num, headCommitId, runId, jobId))
+  ipcMain.handle('github:avatar', (_e, cwd: string, login: string) =>
+    getGitHubAvatar(cwd, login))
+  ipcMain.handle('gh:prPrepareConflictResolution', (_e, cwd: string, head: string, base: string) =>
+    preparePullRequestConflictResolution(cwd, head, base))
+
   // Pull-request operations for the Git Sidebar.
-  ipcMain.handle('gh:prCreate',  (_e, cwd: string) =>
-    runGh(cwd, ['pr', 'create', '--fill']))
-  ipcMain.handle('gh:prMerge',   (_e, cwd: string, num: number) =>
-    runGh(cwd, ['pr', 'merge', String(num), '--squash']))
-  ipcMain.handle('gh:prApprove', (_e, cwd: string, num: number) =>
-    runGh(cwd, ['pr', 'review', String(num), '--approve']))
+  ipcMain.handle('gh:prCreate',  (_e, cwd: string, options: GitHubPullRequestCreateOptions) => {
+    try { return runGh(cwd, pullRequestCreateArgs(options)) }
+    catch (error) { return { ok: false, output: '', error: error instanceof Error ? error.message : String(error) } }
+  })
+  ipcMain.handle('gh:prMerge',   (_e, cwd: string, num: number, method: GitHubMergeMethod, headCommitId?: string) => {
+    try { return runGh(cwd, pullRequestMergeArgs(num, method, headCommitId)) }
+    catch (error) { return { ok: false, output: '', error: error instanceof Error ? error.message : String(error) } }
+  })
+  ipcMain.handle('gh:prApprove', (_e, cwd: string, num: number) => {
+    try { return runGh(cwd, pullRequestActionArgs('approve', num)) }
+    catch (error) { return { ok: false, output: '', error: error instanceof Error ? error.message : String(error) } }
+  })
+  ipcMain.handle('gh:prUpdateBranch', (_e, cwd: string, num: number) => {
+    try { return runGh(cwd, pullRequestActionArgs('update-branch', num)) }
+    catch (error) { return { ok: false, output: '', error: error instanceof Error ? error.message : String(error) } }
+  })
+  ipcMain.handle('gh:prReady', (_e, cwd: string, num: number) => {
+    try { return runGh(cwd, pullRequestActionArgs('ready', num)) }
+    catch (error) { return { ok: false, output: '', error: error instanceof Error ? error.message : String(error) } }
+  })
+  ipcMain.handle('gh:prDraft', (_e, cwd: string, num: number) => {
+    try { return runGh(cwd, pullRequestActionArgs('draft', num)) }
+    catch (error) { return { ok: false, output: '', error: error instanceof Error ? error.message : String(error) } }
+  })
+  ipcMain.handle('gh:prReopen', (_e, cwd: string, num: number) => {
+    try { return runGh(cwd, pullRequestActionArgs('reopen', num)) }
+    catch (error) { return { ok: false, output: '', error: error instanceof Error ? error.message : String(error) } }
+  })
+  ipcMain.handle('gh:prEdit', (_e, cwd: string, num: number, options: GitHubPullRequestEditOptions) => {
+    try { return runGh(cwd, pullRequestEditArgs(num, options)) }
+    catch (error) { return { ok: false, output: '', error: error instanceof Error ? error.message : String(error) } }
+  })
+  ipcMain.handle('gh:prMetadata', (_e, cwd: string, num: number, options: GitHubPullRequestMetadataOptions) => {
+    try { return runGh(cwd, pullRequestMetadataArgs(num, options)) }
+    catch (error) { return { ok: false, output: '', error: error instanceof Error ? error.message : String(error) } }
+  })
+  ipcMain.handle('gh:prCheckRerun', (_e, cwd: string, num: number, options: GitHubPullRequestCheckRerunOptions) =>
+    rerunPullRequestCheck(cwd, num, options))
+  ipcMain.handle('gh:prMergeAutomation', (_e, cwd: string, num: number, options: GitHubPullRequestMergeAutomationOptions) =>
+    updatePullRequestMergeAutomation(cwd, num, options))
+  ipcMain.handle('gh:prComment', (_e, cwd: string, num: number, body: string) => {
+    try { return runGh(cwd, pullRequestCommentArgs(num, body)) }
+    catch (error) { return { ok: false, output: '', error: error instanceof Error ? error.message : String(error) } }
+  })
+  ipcMain.handle('gh:prClose', (_e, cwd: string, num: number) => {
+    try { return runGh(cwd, pullRequestActionArgs('close', num)) }
+    catch (error) { return { ok: false, output: '', error: error instanceof Error ? error.message : String(error) } }
+  })
+  ipcMain.handle('gh:prReview', (_e, cwd: string, num: number, options: GitHubPullRequestReviewOptions) => {
+    if (options.comments?.length) return submitPullRequestReview(cwd, num, options)
+    try { return runGh(cwd, pullRequestReviewArgs(num, options)) }
+    catch (error) { return { ok: false, output: '', error: error instanceof Error ? error.message : String(error) } }
+  })
+  ipcMain.handle('gh:prViewedFile', (_e, cwd: string, num: number, options: GitHubPullRequestViewedFileOptions) =>
+    updatePullRequestViewedFile(cwd, num, options))
+  ipcMain.handle('gh:prReviewThread', (_e, cwd: string, num: number, threadId: string, resolved: boolean) =>
+    updatePullRequestReviewThread(cwd, num, threadId, resolved))
 
   // Publish a local folder to GitHub (init + first commit + repo create + push).
   ipcMain.handle('gh:repoCreate', (_e, cwd: string, opts: RepoCreateOpts) =>

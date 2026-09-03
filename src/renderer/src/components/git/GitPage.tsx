@@ -5,6 +5,8 @@ import { GitSidebar, type GitSidebarProps } from './GitSidebar'
 import { BranchPickerPanel, CreateBranchModal } from './BranchPicker'
 import { GitPageChanges } from './GitPageChanges'
 import { GitPageCommit } from './GitPageCommit'
+import { PullRequestModal } from './PullRequestModal'
+import { PullRequestBrowser } from './PullRequestBrowser'
 
 function remoteWebUrl(remote: string): string | null {
   if (!remote) return null
@@ -20,7 +22,8 @@ export function GitPage(props: GitSidebarProps) {
   const {
     workspace, state, onCommit, onPush, onPull, onFetch, onSync, onStageFile, onUnstageFile,
     onStageAll, onUnstageAll, onDiscardFile,
-    onCheckoutBranch, onCreateBranch, onCreatePR, onOpenTerminal,
+    onCheckoutBranch, onCreateBranch, onCreatePR, onMergePR, onUpdatePRBranch,
+    onReadyPR, onDraftPR, onReopenPR, onEditPR, onMetadataPR, onRerunPRCheck, onMergeAutomationPR, onPreparePRConflicts, onClosePR, onReviewPR, onOpenTerminal,
   } = props
   const staged = (state.changes || []).filter(change => change.staged).length
   const unstaged = Math.max(0, (state.changes || []).length - staged)
@@ -32,6 +35,8 @@ export function GitPage(props: GitSidebarProps) {
   const [branchOpen, setBranchOpen] = useState(false)
   const [branchQuery, setBranchQuery] = useState('')
   const [createBranchOpen, setCreateBranchOpen] = useState(false)
+  const [createPrOpen, setCreatePrOpen] = useState(false)
+  const [prBrowserOpen, setPrBrowserOpen] = useState(false)
   const [menu, setMenu] = useState<{ top: number; left: number } | null>(null)
   const moreRef = useRef<HTMLButtonElement>(null)
 
@@ -46,7 +51,7 @@ export function GitPage(props: GitSidebarProps) {
     { label: 'pull', icon: 'arrowDown' as const, run: onPull },
     { label: 'push', icon: 'arrowUp' as const, run: onPush },
     { label: 'sync', icon: 'refresh' as const, run: onSync },
-    { label: 'create pull request', icon: 'gitPullRequest' as const, run: onCreatePR, disabled: !webUrl },
+    { label: 'create pull request', icon: 'gitPullRequest' as const, run: () => setCreatePrOpen(true), disabled: !webUrl },
     { label: 'open on github', icon: 'github' as const, run: openOnGitHub, disabled: !webUrl },
     { label: 'open terminal here', icon: 'terminal' as const, run: () => onOpenTerminal?.(workspace.path), disabled: !onOpenTerminal },
     { label: 'copy branch name', icon: 'copy' as const, run: () => window.electronAPI?.clipboardWriteText(workspace.branch) },
@@ -68,6 +73,7 @@ export function GitPage(props: GitSidebarProps) {
           <p>{workspace.path}</p>
         </div>
         <div className="git-page-header-tools" aria-label="Git actions">
+          <button type="button" className="git-page-pr-browser-button" onClick={() => setPrBrowserOpen(true)} disabled={!webUrl}><Icon name="gitPullRequest" size={12} />Pull requests</button>
           <div className="git-page-sync-strip" aria-label="Git sync status">
             <span><Icon name="arrowUp" size={10} />{state.ahead || 0}</span>
             <span><Icon name="arrowDown" size={10} />{state.behind || 0}</span>
@@ -101,6 +107,34 @@ export function GitPage(props: GitSidebarProps) {
           sourceBranch={workspace.branch}
           onCreate={onCreateBranch}
           onClose={() => setCreateBranchOpen(false)}
+        />
+        <PullRequestModal
+          open={createPrOpen}
+          repoPath={workspace.path}
+          head={workspace.branch}
+          branches={(state.branches || []).map(branch => branch.name.replace(/^origin\//, ''))}
+          defaultBase={state.defaultBase || state.comparisonRef || 'main'}
+          defaultTitle={state.history?.[0]?.msg || workspace.branch.replace(/[-_/]+/g, ' ')}
+          onCreate={async options => (await onCreatePR?.(options))?.ok ?? false}
+          onClose={() => setCreatePrOpen(false)}
+        />
+        <PullRequestBrowser
+          open={prBrowserOpen}
+          repoPath={workspace.path}
+          currentBranch={workspace.branch}
+          onMerge={onMergePR}
+          onUpdateBranch={onUpdatePRBranch}
+          onReady={onReadyPR}
+          onDraft={onDraftPR}
+          onReopen={onReopenPR}
+          onEdit={onEditPR}
+          onMetadata={onMetadataPR}
+          onRerunCheck={onRerunPRCheck}
+          onMergeAutomation={onMergeAutomationPR}
+          onPrepareConflicts={onPreparePRConflicts}
+          onClosePr={onClosePR}
+          onReview={onReviewPR}
+          onClose={() => setPrBrowserOpen(false)}
         />
 
         {menu && createPortal(

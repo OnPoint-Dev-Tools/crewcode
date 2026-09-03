@@ -13,7 +13,7 @@ import { NotificationsProvider } from '../hooks/useNotifications'
 import { useMobileLayout } from '../hooks/useMobileLayout'
 import { hydrateMessagesFromBackend } from '../stores/chat-messages-store'
 import { installCrewCodeRuntime } from './crewcode-client'
-import { installBrainAuthorizationRelay } from './brain-authorization-runtime'
+import { installBrainAuthorizationRelay, isBrainAuthorizationDenial } from './brain-authorization-runtime'
 import { restoreRecoveredAssistant, type RecoveredAssistant } from './recovered-agent-history'
 import { clearClaimedWebBridgeRoutes, markClaimedWebBridgeRoutes, rememberWebBridgeRoutes, webBridgeRoutes } from './web-bridge-routes'
 import {
@@ -30,6 +30,7 @@ import {
   WebRpcError,
   webRpc,
 } from './web-rpc-client'
+import { hydrateContinuityState } from './continuity-state'
 
 interface BrainExecutionSummary {
   bridgeId: string
@@ -468,7 +469,13 @@ function WebRuntimeConnectionScreen() {
                 }
               }
               if (!cancelled) setBrainExecutions(executions)
-            } catch { /* disconnect banner reports transport failure */ }
+            } catch (error) {
+              // During initial hydration there is no mounted disconnect banner
+              // yet. Propagate the first relay failure so the connection screen
+              // reports its exact close reason instead of continuing until a
+              // later RPC emits a generic disconnected error.
+              if (!initialRelayRefreshComplete) throw error
+            }
           }
           disposeRelayStatus = connectedRelay.onStatus(next => {
             setRelayStatus(next)
@@ -478,13 +485,20 @@ function WebRuntimeConnectionScreen() {
           setRelay(connectedRelay)
           const client = createWebCrewCodeClient(connectedRelay.transport)
           installCrewCodeRuntime({ kind: 'web', client })
+          await hydrateContinuityState()
           // Hydrate the authoritative browser transcript first, then merge any
           // reply that completed in Brain custody while the page was absent.
           // Doing this in the opposite order lets hydration overwrite recovery.
           await hydrateMessagesFromBackend()
           await refreshExecutions(true)
           initialRelayRefreshComplete = true
-          await client.workspacesList()
+          try {
+            await client.workspacesList()
+          } catch (error) {
+            // Hub identity never grants Brain execution. A fresh Enable starts
+            // with an empty policy so the owner can open Settings → Brain Access.
+            if (!isBrainAuthorizationDenial(error)) throw error
+          }
           setStatus(`Connected with Brain-local scopes: ${connectedRelay.grantedScopes.join(', ') || 'none'}`)
           setConnected(true)
           return
@@ -507,6 +521,7 @@ function WebRuntimeConnectionScreen() {
         await webRpc(session, 'workspaces.list', {})
         if (cancelled) return
         installCrewCodeRuntime({ kind: 'web', client: createWebCrewCodeClient(session) })
+        await hydrateContinuityState()
         await hydrateMessagesFromBackend()
         setConnected(true)
       } catch (error) {

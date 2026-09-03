@@ -53,6 +53,22 @@ export function formatArchivedAgo(session: Session, now: number): string {
   return `${days}d ago`
 }
 
+/** Stable US-style calendar date used by archive rows (for example 08/30/2026). */
+export function formatLastUsedDate(session: Session): string {
+  const value = typeof session.lastUsedAt === 'number' && Number.isFinite(session.lastUsedAt)
+    ? session.lastUsedAt
+    : typeof session.createdAt === 'number' && Number.isFinite(session.createdAt)
+      ? session.createdAt
+      : typeof session.archivedAt === 'number' && Number.isFinite(session.archivedAt)
+        ? session.archivedAt
+        : null
+  if (value == null) return 'unknown'
+  const date = new Date(value)
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${month}/${day}/${date.getFullYear()}`
+}
+
 export function retentionLabel(days: number): string {
   return days <= 0 ? 'Never' : `${days} days`
 }

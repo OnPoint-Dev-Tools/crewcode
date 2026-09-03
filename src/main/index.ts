@@ -61,8 +61,10 @@ import {
 } from '../shared/voice-types'
 import { localVoiceService } from './local-voice-service'
 import { packagedHeadlessArgs } from './packaged-cli-dispatch'
+import { BrainDesktopService } from './brain-desktop-service'
+import { revealBrowserWindow, SystemTrayService } from './system-tray'
 
-const { app, BrowserWindow, clipboard, ipcMain, nativeImage, protocol, session, shell } = electron
+const { app, BrowserWindow, clipboard, ipcMain, Menu, nativeImage, protocol, session, shell, Tray } = electron
 import { spawn } from 'child_process'
 
 // The packaged AppImage executable is also named `crewcode`. Dispatch recognized
@@ -89,6 +91,10 @@ if (packagedCliArgs) {
 }
 
 const isDev = process.env['NODE_ENV'] === 'development'
+let brainDesktopService: BrainDesktopService | null = null
+let systemTrayService: SystemTrayService | null = null
+let windowIcon: electron.NativeImage | null = null
+let windowIconPath: string | null = null
 
 function isWaylandSession(): boolean {
   return process.platform === 'linux' && (
@@ -137,6 +143,8 @@ function createWindow(): electron.BrowserWindow {
     ? join(__dirname, '../../build/icons/512x512.png')
     : join(process.resourcesPath, 'build/icons/512x512.png')
   setNotificationIcon(iconPath)
+  windowIconPath = iconPath
+  windowIcon = nativeImage.createFromPath(iconPath)
 
   const win = new BrowserWindow({
     width: 1440,
@@ -145,12 +153,16 @@ function createWindow(): electron.BrowserWindow {
     minHeight: 600,
     frame: false,
     backgroundColor: '#0f120f',
-    icon: nativeImage.createFromPath(iconPath),
+    icon: windowIcon,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       ...SECURE_WINDOW_WEB_PREFERENCES,
       webviewTag: true,
     }
+  })
+
+  win.on('close', event => {
+    systemTrayService?.interceptClose(event, win)
   })
 
   win.webContents.setWindowOpenHandler(({ url }) => {
@@ -175,6 +187,16 @@ function createWindow(): electron.BrowserWindow {
   return win
 }
 
+function showMainWindow(): void {
+  let win = BrowserWindow.getAllWindows().find(candidate => !candidate.isDestroyed())
+  if (!win) {
+    win = createWindow()
+    rateLimitService.attach(win)
+  }
+  revealBrowserWindow(win, process.platform)
+  if (process.platform === 'linux') app.focus({ steal: true })
+}
+
 // Electron 42 deprecated the old session extension APIs used by
 // electron-devtools-installer, and on Linux/Wayland the downloaded DevTools
 // extension has also been a source of startup noise and renderer stalls. Keep
@@ -191,6 +213,39 @@ if (!packagedCliArgs && isWaylandSession()) {
 }
 
 if (!packagedCliArgs) app.whenReady().then(async () => {
+  systemTrayService = new SystemTrayService({
+    appName: 'CrewCode',
+    platform: process.platform,
+    createTray: icon => new Tray(icon),
+    buildMenu: template => Menu.buildFromTemplate(template),
+    showWindow: showMainWindow,
+    quitApp: () => app.quit(),
+  })
+  ipcMain.handle('tray:configure', (_event, enabled: unknown) => {
+    if (!windowIcon) return { ok: false }
+    systemTrayService!.configure(enabled === true, windowIcon, windowIconPath ?? undefined)
+    return { ok: true }
+  })
+  brainDesktopService = new BrainDesktopService({
+    desktopDataDir: app.getPath('userData'),
+    packaged: app.isPackaged,
+    executable: process.execPath,
+    brainEntry: join(__dirname, 'brain.js'),
+  })
+  await brainDesktopService.initialize()
+  brainDesktopService.subscribe(event => {
+    for (const window of BrowserWindow.getAllWindows()) window.webContents.send('brain:desktopEvent', event)
+  })
+  ipcMain.handle('brain:desktopStatus', (_event, probeHub?: boolean) => brainDesktopService!.status(probeHub === true))
+  ipcMain.handle('brain:desktopSetEnabled', (_event, enabled: boolean) => brainDesktopService!.setEnabled(enabled === true))
+  ipcMain.handle('brain:desktopStop', () => brainDesktopService!.stop(true))
+  ipcMain.handle('brain:desktopRpc', (_event, method: string, params: Record<string, unknown>) => brainDesktopService!.rpc(method, params))
+  ipcMain.handle('brain:desktopUploadAttachment', (_event, root: string, name: string, body: Uint8Array) => brainDesktopService!.uploadAttachment(root, name, body))
+  ipcMain.handle('brain:desktopStopAndQuit', async () => {
+    await brainDesktopService!.stop(true)
+    app.quit()
+    return { ok: true }
+  })
   registerPtyIpc()
   registerWorkspaceIpc()
   registerFsIpc()
@@ -221,10 +276,7 @@ if (!packagedCliArgs) app.whenReady().then(async () => {
   rateLimitService.attach(win)
   rateLimitService.start()
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      const nextWin = createWindow()
-      rateLimitService.attach(nextWin)
-    }
+    showMainWindow()
   })
 })
 
@@ -239,12 +291,14 @@ app.on('web-contents-created', (_e, contents) => {
 })
 
 app.on('window-all-closed', () => {
+  if (systemTrayService?.keepsProcessAlive()) return
   killAllPanes()
   stopAllBridges()
   if (process.platform !== 'darwin') app.quit()
 })
 
 app.on('before-quit', () => {
+  systemTrayService?.prepareToQuit()
   killAllPanes()
   stopAllBridges()
   stopAllEditorWatchers()
@@ -256,6 +310,7 @@ app.on('before-quit', () => {
   localVoiceService.stop()
   // Closes the loopback socket and drops every minted token.
   delegationService.stop()
+  systemTrayService?.dispose()
 })
 
 // ─── Window controls ─────────────────────────────────────────────────────────

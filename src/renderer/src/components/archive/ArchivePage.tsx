@@ -10,7 +10,7 @@ import React, { useMemo, useState } from 'react'
 
 import type { Session, Workspace } from '../../types'
 import { ARCHIVE_RETENTION_CHOICES, type ArchiveRetentionDays } from '../../hooks/useSettings'
-import { formatArchivedAgo, isExpired, retentionLabel } from '../../hooks/archive-retention'
+import { formatLastUsedDate, isExpired, retentionLabel } from '../../hooks/archive-retention'
 import { PROVIDER_IMAGES, providerImageClass } from '../composer/provider-meta'
 import { ConfirmModal, type ConfirmModalRequest } from '../ui/ConfirmModal'
 import { Icon } from '../ui/Icon'
@@ -50,8 +50,8 @@ export function ArchivePage({
     return entries
       .filter(e => !wsFilter || e.wsId === wsFilter)
       .filter(e => !q || e.session.label.toLowerCase().includes(q) || e.wsName.toLowerCase().includes(q))
-      // Most recently archived first; unknown timestamps sink to the bottom.
-      .sort((a, b) => (b.session.archivedAt ?? 0) - (a.session.archivedAt ?? 0))
+      // Most recently used first; filing a chat away must not affect its order.
+      .sort((a, b) => (b.session.lastUsedAt ?? b.session.createdAt ?? 0) - (a.session.lastUsedAt ?? a.session.createdAt ?? 0))
   }, [entries, query, wsFilter])
 
   const confirmDeleteOne = (entry: ArchivedEntry) => {
@@ -161,7 +161,7 @@ export function ArchivePage({
 
                 <span className="archive-label">{entry.session.label}</span>
                 <span className="archive-ws">{entry.wsName}</span>
-                <span className="archive-age">archived {formatArchivedAgo(entry.session, now)}</span>
+                <span className="archive-age">{formatLastUsedDate(entry.session)}</span>
                 {gone && <span className="archive-expired-pill">expired</span>}
 
                 <div className="archive-row-actions">

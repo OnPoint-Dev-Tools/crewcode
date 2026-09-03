@@ -15,14 +15,17 @@ import { createTurnActivity } from '../components/thread/turn-activity'
 describe('useAgentBridge thinking stream routing', () => {
   let onEvent: ((raw: unknown) => void) | null = null
   const messagesByTab: Record<string, Message[]> = {}
+  let messageWrites = 0
 
   const setMessagesForTab = (tabId: string, updater: (prev: Message[]) => Message[]) => {
+    messageWrites += 1
     messagesByTab[tabId] = updater(messagesByTab[tabId] ?? [])
   }
 
   beforeEach(() => {
     vi.useFakeTimers()
     onEvent = null
+    messageWrites = 0
     for (const k of Object.keys(messagesByTab)) delete messagesByTab[k]
     vi.stubGlobal('window', {
       electronAPI: {
@@ -110,6 +113,25 @@ describe('useAgentBridge thinking stream routing', () => {
 
     emit({ type: 'turn_end', bridgeId: 'b1', turnId: 't1' })
     expect(messagesByTab.tab1[0]).toEqual(expect.objectContaining({ status: 'completed' }))
+
+    bridge.unmount()
+  })
+
+  it('folds raw delta activity into the bounded stream flush', () => {
+    messagesByTab.tab1 = [createTurnActivity('Keep the app responsive', 'now')]
+    const bridge = renderBridge()
+
+    emit({ type: 'turn_start', bridgeId: 'b1', turnId: 't1' })
+    const writesAfterStart = messageWrites
+    for (let i = 0; i < 20; i += 1) {
+      emit({ type: 'thinking_delta', bridgeId: 'b1', turnId: 't1', delta: String(i) })
+    }
+
+    // Raw provider tokens only append to the in-memory delta buffer.
+    expect(messageWrites).toBe(writesAfterStart)
+    flushBuffers()
+    expect(messageWrites).toBe(writesAfterStart + 1)
+    expect(messagesByTab.tab1[0]).toEqual(expect.objectContaining({ activeForm: 'Analyzing request' }))
 
     bridge.unmount()
   })

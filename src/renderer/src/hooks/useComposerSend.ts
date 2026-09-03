@@ -7,7 +7,7 @@ import type { McpServerConfig } from './useSettings'
 import { DEFAULT_MODE_PROMPTS, sendChatSessionPrompt, type ModePromptConfig } from './chat-session-send'
 import { buildReportsBlock } from './delegation-report'
 import { delegationInbox } from '../stores/delegation-inbox-store'
-import type { CrewCoderMode } from '../../../shared/crewcoder-types'
+import type { CrewCoderApprovalMode, CrewCoderMode } from '../../../shared/crewcoder-types'
 
 interface BridgesLike {
   ensureBridge: (
@@ -24,6 +24,7 @@ interface BridgesLike {
     freshSession?: boolean,
     externalDirectories?: string[],
     crewcoderMode?: CrewCoderMode,
+    crewcoderApprovalMode?: CrewCoderApprovalMode,
   ) => Promise<{ bridgeId: string } | { error: string }>
   prompt: (bridgeId: string, text: string, options?: ChatPromptOptions) => Promise<{ ok: boolean; error?: string }>
   compact?: (bridgeId: string) => Promise<{ ok: boolean; error?: string; unsupported?: boolean }>
@@ -49,6 +50,7 @@ export interface UseComposerSendOpts {
   effort: EffortLevel
   mode: ModeLevel
   crewcoderMode?: CrewCoderMode
+  crewcoderApprovalMode?: CrewCoderApprovalMode
   effectivePath: string
   bridges: BridgesLike
   pty: PtyLike
@@ -83,12 +85,14 @@ export interface UseComposerSendOpts {
   workspaceName?: string
   workspaceBranch?: string
   externalDirectories?: string[]
+  /** Records a real prompt/command as chat activity. */
+  onSessionUsed?: () => void
 }
 
 export function useComposerSend(opts: UseComposerSendOpts) {
   const {
     activeWs, activeTabId, sessActive, composer, setComposer, setMessages,
-    agents, activeAgentId, model, effort, mode, crewcoderMode: rawCrewCoderMode, effectivePath, bridges, pty, activeAgentPane,
+    agents, activeAgentId, model, effort, mode, crewcoderMode: rawCrewCoderMode, crewcoderApprovalMode, effectivePath, bridges, pty, activeAgentPane,
     enabledSkills, skillsDeliveredTo, markSkillsDelivered, lastDeliveredMode, markModeDelivered,
     modePromptsEnabled = true, modePrompts = DEFAULT_MODE_PROMPTS,
     sessionHasExistingMessages = false,
@@ -96,7 +100,7 @@ export function useComposerSend(opts: UseComposerSendOpts) {
     delegationDeliveredTo,
     markDelegationDelivered,
     getAttachments, getMcpServers,
-    workspaceName, workspaceBranch, externalDirectories,
+    workspaceName, workspaceBranch, externalDirectories, onSessionUsed,
   } = opts
   const crewcoderMode = rawCrewCoderMode
 
@@ -174,11 +178,27 @@ export function useComposerSend(opts: UseComposerSendOpts) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [crewcoderMode, sessActive, activeAgentId])
 
+  // Approval policy is also immutable launch authority. The UI prevents a
+  // running-turn change; dropping an idle bridge makes the next prompt resume
+  // under the newly selected policy.
+  const prevCrewCoderApprovalRef = useRef({ sessActive, activeAgentId, crewcoderApprovalMode })
+  useEffect(() => {
+    const prev = prevCrewCoderApprovalRef.current
+    const sameRuntime = prev.sessActive === sessActive && prev.activeAgentId === activeAgentId
+    prevCrewCoderApprovalRef.current = { sessActive, activeAgentId, crewcoderApprovalMode }
+    if (activeAgentId === 'crewcoder' && sessActive && sameRuntime && prev.crewcoderApprovalMode !== crewcoderApprovalMode) {
+      bridges.dropBridge(sessActive, activeAgentId)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [crewcoderApprovalMode, sessActive, activeAgentId])
+
   const sendText = useCallback(async (
     text: string,
     attachments: ChatAttachment[],
     promptOptions?: ChatPromptOptions,
   ) => {
+    if (!text.trim()) return
+    onSessionUsed?.()
     const mcpServers = getMcpServers?.() ?? []
     const pendingHandoff = pendingHandoffRef.current[sessActive]
     const handoff = pendingHandoff && pendingHandoff.toProvider === activeAgentId
@@ -204,6 +224,7 @@ export function useComposerSend(opts: UseComposerSendOpts) {
       model,
       effort,
       crewcoderMode,
+      crewcoderApprovalMode,
       mode,
       effectivePath,
       bridges,
@@ -226,12 +247,12 @@ export function useComposerSend(opts: UseComposerSendOpts) {
     if (handoff) delete pendingHandoffRef.current[sessActive]
   }, [
     activeWs, activeTabId, sessActive, setMessages, agents, activeAgentId,
-    model, effort, mode, crewcoderMode, effectivePath, bridges, pty, activeAgentPane,
+    model, effort, mode, crewcoderMode, crewcoderApprovalMode, effectivePath, bridges, pty, activeAgentPane,
     enabledSkills, skillsDeliveredTo, markSkillsDelivered, lastDeliveredMode, markModeDelivered,
     modePromptsEnabled, modePrompts, sessionHasExistingMessages,
     delegationPreamble, delegationDeliveredTo, markDelegationDelivered,
     getMcpServers,
-    workspaceName, workspaceBranch,
+    workspaceName, workspaceBranch, onSessionUsed,
   ])
 
   const send = useCallback(async () => {
@@ -242,6 +263,7 @@ export function useComposerSend(opts: UseComposerSendOpts) {
     setComposer('')
 
     if (text === '/compact') {
+      onSessionUsed?.()
       const time = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
       const agent = agents.find(a => a.id === activeAgentId)
       if (!agent) {
@@ -295,7 +317,7 @@ export function useComposerSend(opts: UseComposerSendOpts) {
     composer, activeWs, activeTabId, sessActive, agents, activeAgentId,
     model, effort, mode, effectivePath, bridges, pty, activeAgentPane,
     setComposer, setMessages, sendText,
-    getAttachments, getMcpServers,
+    getAttachments, getMcpServers, onSessionUsed,
   ])
 
   return { send, sendText }

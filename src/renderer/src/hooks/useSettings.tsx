@@ -55,6 +55,9 @@ export interface SettingsState {
   // provider-native permission enforcement never depends on these strings.
   modePrompts: ModePromptConfig
   onLaunch: OnLaunch
+  // Desktop-only opt-in. Closing the last window hides it while app-owned work
+  // continues behind a system tray icon.
+  keepRunningInBackground: boolean
   showTweaksPanel: boolean
   username: string
   profileIconKind: ProfileIconKind
@@ -172,6 +175,7 @@ export const DEFAULT_SETTINGS: SettingsState = {
   defaultBranchByWorkspace: {},
   modePrompts: { ...DEFAULT_MODE_PROMPTS },
   onLaunch: 'last session',
+  keepRunningInBackground: false,
   showTweaksPanel: true,
   username: 'CrewCode User',
   profileIconKind: 'initial',
@@ -378,6 +382,12 @@ export function SettingsProvider({ children }: { children: React.ReactNode }) {
       /* quota or serialization error — non-fatal */
     }
   }, [state])
+
+  // Project the renderer-persisted preference into Electron's window lifecycle.
+  // Browser and Hub clients intentionally have no tray surface.
+  useEffect(() => {
+    void window.electronAPI?.trayConfigure?.(state.keepRunningInBackground)
+  }, [state.keepRunningInBackground])
 
   useEffect(() => {
     if (state.voiceProvider !== 'local') return

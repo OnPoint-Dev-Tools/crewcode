@@ -16,7 +16,7 @@ export function installCrewCodeRuntime(next: CrewCodeRuntime): void {
   // Transitional compatibility for renderer surfaces that have not yet moved
   // to getCrewCodeClient(). This is the allowlisted browser adapter, never the
   // Electron preload bridge or raw server RPC transport.
-  if (next.kind === 'web') window.electronAPI = next.client
+  if (next.kind !== 'electron') window.electronAPI = next.client
 }
 
 export function getCrewCodeRuntime(): CrewCodeRuntime {

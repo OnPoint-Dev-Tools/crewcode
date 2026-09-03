@@ -1,7 +1,7 @@
 /* CrewCode desktop kit — extends colors_and_type.css */
 * { box-sizing: border-box; }
 html, body, #root { margin: 0; padding: 0; height: 100%; overflow: hidden; }
-body { background: #000; font-family: var(--font-family-sans); color: var(--foreground); -webkit-font-smoothing: antialiased; overscroll-behavior: none; }
+body { background: #0f120f; font-family: var(--font-family-sans); color: var(--foreground); -webkit-font-smoothing: antialiased; overscroll-behavior: none; }
 .provider-logo { transition: filter 140ms ease, opacity 140ms ease; }
 /* Monochrome provider SVGs are black when loaded as <img>; invert only in dark mode. */
 body:not(.light) .provider-logo-monochrome { filter: invert(0.92) sepia(0.08) saturate(0.6); }

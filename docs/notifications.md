@@ -12,11 +12,41 @@ The **Global Notification Bar** displays transient messages in the upper portion
 - **Interaction**: Click × to dismiss manually, or press `Escape` to dismiss the topmost notification
 - **Accessibility**: Uses `aria-live="polite"` for screen reader announcements
 
+Chat transcript restoration is not a notification source. The L1 local cache,
+L2 transcript hydration, whole-map reconciliation, and switching to a session
+with historical failures must remain silent. `chat-messages-store.ts` publishes
+notification-worthy chat records only when they are newly appended through the
+live per-scope message path. Live errors remain global; an `agent exited`
+warning is shown only when its scope is currently active.
+
 Each notification card features:
 - Color-coded left border and icon indicating type
 - Semi-transparent glassmorphism background with backdrop blur
 - Smooth enter/exit animations with staggered stacking effect
 - Animated progress bar showing remaining time until auto-dismiss
+
+## App updates
+
+Packaged desktop builds surface GitHub Releases through this same bar so you do
+not have to open **Settings → Updates** to learn a newer CrewCode exists.
+
+`useUpdaterNotices` (mounted from `App`) pushes the stored channel/policy to
+main on launch, then listens for `updater:event`:
+
+| Event | Bar | Click |
+| --- | --- | --- |
+| `available` | `CrewCode {version} is available` | Opens Settings and scrolls to **Updates** |
+| `downloaded` | `CrewCode {version} is ready · restart to install` | Same |
+
+Those cards stay until you dismiss them (`duration: 0`). Checking, progress,
+errors, and "already current" stay off the bar so the 30-second launch
+auto-check cannot spam. Repeating the same version/phase does not stack a
+second card; `downloaded` replaces `available` for that version.
+
+This is desktop-only. Browser/Hub sessions never update the Electron binary
+this way, and `npm run dev` still broadcasts `unconfigured` instead of
+polling GitHub. Download and restart remain on the Settings card — the bar
+does not quit the app. See `docs/releasing.md`.
 
 ## Native desktop notifications
 
@@ -81,6 +111,8 @@ NotificationBar (UI Component)
 | **Container** | `src/renderer/src/components/ui/NotificationBar.tsx` | Renders the stacked list, handles keyboard shortcuts |
 | **Item** | `src/renderer/src/components/ui/NotificationBar.tsx` | Individual card with animations, progress bar, and close button |
 | **Integration** | `src/renderer/src/App.tsx` | Wires notification triggers to app events |
+| **Chat event gate** | `src/renderer/src/stores/chat-messages-store.ts` | Publishes only newly appended live chat errors/exits; suppresses restored history |
+| **Chat host** | `src/renderer/src/components/thread/ChatNotifications.tsx` | Maps gated live chat events onto notification cards |
 | **Native toast** | `src/main/notify.ts` | Shows the cross-platform Electron notification and handles click focus |
 | **Sounds** | `src/renderer/src/notifications/notification-sounds.ts` | Validates presets and synthesizes custom tones |
 | **Styles** | `src/renderer/src/styles/styles.css` | CSS classes for layout, colors, and animations |

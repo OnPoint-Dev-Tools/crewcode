@@ -7,9 +7,11 @@ import React, { useState, useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { Icon } from '../ui/Icon'
 import { PublishModal } from './PublishModal'
+import { PullRequestModal } from './PullRequestModal'
+import { PullRequestBrowser } from './PullRequestBrowser'
 import type {
   GitState, GitChange, GitConflict, GitBranchRef, GitWorktreeRef, GitPrRef,
-  GitHistoryEntry, GitBanner, CheckState, GitSidebarWorkspace, GitSidebarHandlers,
+  GitHistoryEntry, GitBanner, GitSidebarWorkspace, GitSidebarHandlers,
   GitChatTarget,
 } from './git-state'
 import { NEW_CHAT_TARGET } from './git-state'
@@ -404,9 +406,10 @@ interface ConflictsBodyProps {
   onResolve?: (opts: { file: string; strategy: 'ours' | 'theirs' | 'editor' | 'agent'; targetTabId?: string }) => void
   onAbort?:   () => void
   onContinue?: () => void
+  onOpenFile?: (path: string) => void
 }
 
-function ConflictsBody({ conflicts, branch, chatTargets = [], onResolve, onAbort, onContinue }: ConflictsBodyProps) {
+function ConflictsBody({ conflicts, branch, chatTargets = [], onResolve, onAbort, onContinue, onOpenFile }: ConflictsBodyProps) {
   // Which conflict row's "ask agent" menu is open (by path). Only relevant when
   // there are chat tabs to choose between; otherwise the button resolves directly.
   const [agentMenuFor, setAgentMenuFor] = useState<string | null>(null)
@@ -436,7 +439,7 @@ function ConflictsBody({ conflicts, branch, chatTargets = [], onResolve, onAbort
       <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)',
                     fontFamily: 'var(--font-family-mono)', fontSize: 11, color: 'var(--muted-foreground)' }}>
         Merge in progress on <code style={{ color: 'var(--foreground)' }}>{branch}</code>.
-        Resolve each file, then continue.
+        {conflicts.length > 0 ? ' Resolve each file, then continue.' : ' All conflicts are resolved; continue to create the merge commit.'}
       </div>
       <div className="gs-conflicts">
         {conflicts.map(c => (
@@ -447,7 +450,7 @@ function ConflictsBody({ conflicts, branch, chatTargets = [], onResolve, onAbort
               {c.hunks > 0 && <span className="lines">{c.hunks} hunk{c.hunks === 1 ? '' : 's'}</span>}
             </div>
             <div className="gs-conflict-actions">
-              <button className="gs-btn tiny" onClick={() => onResolve?.({ file: c.path, strategy: 'editor' })}>
+              <button className="gs-btn tiny" onClick={() => onOpenFile?.(c.path)}>
                 <Icon name="gitCompare" />open merge editor
               </button>
               <button className="gs-btn tiny ghost" onClick={() => onResolve?.({ file: c.path, strategy: 'ours' })}>
@@ -612,110 +615,43 @@ function WorktreesBody({ worktrees, current, onSwitch, onMerge, onCreate, onRemo
 }
 
 /* ---------- Pull Requests ---------- */
-function PrCheckIcon({ state }: { state: CheckState }) {
-  const map: Record<CheckState, { name: React.ComponentProps<typeof Icon>['name']; cls: string }> = {
-    ok: { name: 'check', cls: 'ok' },
-    f:  { name: 'x', cls: 'f' },
-    p:  { name: 'circleDot', cls: 'p' },
-    s:  { name: 'circle', cls: 's' },
-  }
-  const it = map[state] || map.s
-  return <span className={`ico ${it.cls}`}><Icon name={it.name} size={11} /></span>
-}
-
 interface PullRequestsBodyProps {
   prs:         GitPrRef[]
   branch:      string
   hasUnpushed: boolean
   onCreate?:   () => void
-  onOpen?:     (num: number) => void
-  onMerge?:    (num: number) => void
-  onApprove?:  (num: number) => void
+  onBrowse?:   () => void
 }
 
-function PullRequestsBody({ prs, branch, hasUnpushed, onCreate, onOpen, onMerge, onApprove }: PullRequestsBodyProps) {
-  const [expanded, setExpanded] = useState<number | null>(prs.find(p => p.expanded)?.num ?? null)
-  const expandedPr = prs.find(p => p.num === expanded)
+function PullRequestsBody({ prs, branch, hasUnpushed, onCreate, onBrowse }: PullRequestsBodyProps) {
+  const branchPr = prs.find(p => p.head === branch)
+  const statusName = (status: GitPrRef['status']): React.ComponentProps<typeof Icon>['name'] =>
+    status === 'open' ? 'circleDot' : status === 'merged' ? 'merged' : status === 'draft' ? 'gitPullRequest' : 'x'
+  const passed = branchPr?.checks?.filter(check => check === 'ok').length ?? 0
+  const failed = branchPr?.checks?.filter(check => check === 'f').length ?? 0
 
-  const statusName = (s: GitPrRef['status']): React.ComponentProps<typeof Icon>['name'] =>
-    s === 'open' ? 'circleDot' : s === 'merged' ? 'merged' : s === 'draft' ? 'gitPullRequest' : 'x'
+  if (!branchPr) {
+    return (
+      <div className="pr-single-empty">
+        <span><Icon name="gitPullRequest" size={18} /></span>
+        <strong>No pull request for {branch}</strong>
+        <p>{prs.length ? `${prs.length} other repository pull request${prs.length === 1 ? '' : 's'} available.` : 'Create a pull request when this branch is ready.'}</p>
+        <div className="pr-single-actions compact"><button className="gs-btn ghost" onClick={onBrowse}><Icon name="inspection" size={11} />Browse pull requests</button><button className="gs-btn primary" onClick={onCreate}><Icon name="plus" size={11} />Create pull request</button></div>
+      </div>
+    )
+  }
 
   return (
-    <>
-      <div className="gs-pr">
-        {prs.length === 0 && (
-          <div style={{ padding: '12px', fontFamily: 'var(--font-family-mono)', fontSize: 11, color: 'var(--muted-foreground)' }}>
-            No open pull requests.
-          </div>
-        )}
-        {prs.map(p => (
-          <div key={p.num} className="gs-pr-row" onClick={() => setExpanded(e => e === p.num ? null : p.num)}>
-            <div className="gs-pr-head">
-              <span className={`gs-pr-status ${p.status}`}><Icon name={statusName(p.status)} /></span>
-              <span className="gs-pr-title">{p.title}</span>
-              <span className="gs-pr-num">#{p.num}</span>
-            </div>
-            <div className="gs-pr-meta">
-              <span className="branch-ref"><Icon name="gitBranch" />{p.head}</span>
-              <span>·</span>
-              <span>{p.author} · {p.updated}</span>
-              {p.checks && p.checks.length > 0 && (
-                <span className="gs-pr-checks">
-                  {p.checks.map((c, i) => <span key={i} className={`check ${c}`} />)}
-                </span>
-              )}
-              {p.reviews && p.reviews.length > 0 && (
-                <span className="gs-pr-reviews">
-                  {p.reviews.map((r, i) => <span key={i} className={`av ${r.state}`} title={r.user}>{r.user.slice(0, 1).toUpperCase()}</span>)}
-                </span>
-              )}
-            </div>
-          </div>
-        ))}
+    <div className="pr-single compact">
+      <div className="pr-single-identity">
+        <div className="pr-single-state"><Icon name={statusName(branchPr.status)} size={11} />{branchPr.status}<code>#{branchPr.num}</code></div>
+        <h3>{branchPr.title}</h3>
+        <div className="pr-single-route"><code>{branchPr.head}</code><Icon name="chevRight" size={10} /><code>{branchPr.base}</code></div>
+        <div className="pr-single-summary"><span className={failed ? 'bad' : ''}>{failed ? `${failed} checks failing` : branchPr.checks?.length ? `${passed}/${branchPr.checks.length} checks passed` : 'No checks reported'}</span><span>{(branchPr.mergeStateStatus ?? 'merge state unknown').toLowerCase().replaceAll('_', ' ')}</span></div>
       </div>
-
-      {expandedPr && (
-        <div className="gs-pr-detail">
-          {expandedPr.desc && <div className="desc">{expandedPr.desc}</div>}
-          <div className="row"><span className="lbl">from</span><span className="val">{expandedPr.head}</span></div>
-          <div className="row"><span className="lbl">into</span><span className="val">{expandedPr.base}</span></div>
-          {expandedPr.runs && expandedPr.runs.length > 0 && (
-            <>
-              <div className="row"><span className="lbl">checks</span></div>
-              <div className="check-list">
-                {expandedPr.runs.map((r, i) => (
-                  <div key={i} className="check-row">
-                    <PrCheckIcon state={r.state} />
-                    <span className="name">{r.name}</span>
-                    <span className="dur">{r.dur}</span>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-          <div className="actions">
-            <button className="gs-btn primary" onClick={() => onMerge?.(expandedPr.num)} disabled={expandedPr.status !== 'open'}>
-              <Icon name="gitMerge" />squash & merge
-            </button>
-            <button className="gs-btn" onClick={() => onApprove?.(expandedPr.num)}>
-              <Icon name="check" />approve
-            </button>
-            <button className="gs-btn ghost" onClick={() => onOpen?.(expandedPr.num)} style={{ marginLeft: 'auto' }}>
-              <Icon name="external" />open
-            </button>
-          </div>
-        </div>
-      )}
-
-      <div className="gs-pr-create">
-        <span className="info">
-          {hasUnpushed ? `${branch} has unpushed commits` : `no PR yet for ${branch}`}
-        </span>
-        <button className="gs-btn tiny primary" onClick={onCreate}>
-          <Icon name="gitPullRequest" />open PR
-        </button>
-      </div>
-    </>
+      <div className="pr-single-actions compact"><button className="gs-btn primary" onClick={onBrowse}><Icon name="inspection" size={11} />Open PR workspace</button><button className="gs-btn ghost" onClick={onCreate}><Icon name="plus" size={10} />New PR</button></div>
+      <div className="pr-single-new"><span>{hasUnpushed ? `${branch} has unpushed commits` : `Working on ${branch}`}</span><span>{prs.length} repository PR{prs.length === 1 ? '' : 's'}</span></div>
+    </div>
   )
 }
 
@@ -756,6 +692,8 @@ export interface GitSidebarProps extends GitSidebarHandlers {
   onPluginGitLens?: (target: { pluginId: string; sidebarPanel?: string; tab?: string; command?: string }) => void
   /** Mobile overlay close action. Omitted for the persistent desktop/sidebar page variants. */
   onClose?: () => void
+  /** Open a conflicted file in CrewCode's editable Code Editor. */
+  onOpenConflictFile?: (path: string) => void
 }
 
 export function GitSidebar({
@@ -769,19 +707,24 @@ export function GitSidebar({
   onStageFile, onUnstageFile, onStageAll, onUnstageAll, onDiscardFile, onOpenFileDiff, onCommit,
   onCreateWorktree, onSwitchWorktree, onMergeWorktree, onRemoveWorktree,
   onResolveConflict, onAbortMerge, onContinueMerge,
-  onCreatePR, onOpenPR, onMergePR, onApprovePR,
+  onCreatePR, onMergePR,
+  onUpdatePRBranch, onReadyPR, onDraftPR, onReopenPR, onEditPR, onMetadataPR, onRerunPRCheck, onMergeAutomationPR, onPreparePRConflicts, onClosePR, onReviewPR,
   onInitRepo, onPublish,
   onOpenTerminal,
+  onOpenConflictFile,
   pluginGitLenses = [],
   onPluginGitLens,
   onClose,
 }: GitSidebarProps) {
   const hasConflicts = (state.conflicts || []).length > 0
+  const mergeInProgress = state.mergeInProgress === true
   // A remote can exist after a partial publish while the branch was never pushed.
   const needsPublish = state.hasRemote === false || state.hasUpstream === false
   const notRepo      = state.isRepo === false
   const noCommits    = (state.history || []).length === 0
   const [publishOpen, setPublishOpen] = useState(false)
+  const [prCreateOpen, setPrCreateOpen] = useState(false)
+  const [prBrowserOpen, setPrBrowserOpen] = useState(false)
 
   // Open which cards by default — conflicts always; changes when dirty; others closed.
   const [open, setOpen] = useState({
@@ -838,7 +781,7 @@ export function GitSidebar({
           onPull={onPull}
           onFetch={handleFetch}
           onSync={onSync}
-          onCreatePR={onCreatePR}
+          onCreatePR={() => setPrCreateOpen(true)}
           onOpenTerminal={onOpenTerminal}
           onCheckoutBranch={onCheckoutBranch}
           onCreateBranch={onCreateBranch}
@@ -902,7 +845,7 @@ export function GitSidebar({
           </GsCard>
         )}
 
-        {hasConflicts && (
+        {(hasConflicts || mergeInProgress) && (
           <GsCard
             icon="alert"
             title="Conflicts"
@@ -918,6 +861,7 @@ export function GitSidebar({
               onResolve={onResolveConflict}
               onAbort={onAbortMerge}
               onContinue={onContinueMerge}
+              onOpenFile={onOpenConflictFile}
             />
           </GsCard>
         )}
@@ -991,10 +935,8 @@ export function GitSidebar({
             prs={state.prs || []}
             branch={workspace.branch}
             hasUnpushed={state.ahead > 0}
-            onCreate={onCreatePR}
-            onOpen={onOpenPR}
-            onMerge={onMergePR}
-            onApprove={onApprovePR}
+            onCreate={() => setPrCreateOpen(true)}
+            onBrowse={() => setPrBrowserOpen(true)}
           />
         </GsCard>
 
@@ -1021,6 +963,34 @@ export function GitSidebar({
         defaultName={workspace.name}
         onPublish={async opts => (await onPublish?.(opts)) ?? false}
         onClose={() => setPublishOpen(false)}
+      />
+      <PullRequestModal
+        open={prCreateOpen}
+        repoPath={workspace.path}
+        head={workspace.branch}
+        branches={(state.branches || []).map(branch => branch.name.replace(/^origin\//, ''))}
+        defaultBase={state.defaultBase || state.comparisonRef || 'main'}
+        defaultTitle={state.history?.[0]?.msg || workspace.branch.replace(/[-_/]+/g, ' ')}
+        onCreate={async options => (await onCreatePR?.(options))?.ok ?? false}
+        onClose={() => setPrCreateOpen(false)}
+      />
+      <PullRequestBrowser
+        open={prBrowserOpen}
+        repoPath={workspace.path}
+        currentBranch={workspace.branch}
+        onMerge={onMergePR}
+        onUpdateBranch={onUpdatePRBranch}
+         onReady={onReadyPR}
+         onDraft={onDraftPR}
+         onReopen={onReopenPR}
+         onEdit={onEditPR}
+         onMetadata={onMetadataPR}
+         onRerunCheck={onRerunPRCheck}
+         onMergeAutomation={onMergeAutomationPR}
+        onPrepareConflicts={onPreparePRConflicts}
+        onClosePr={onClosePR}
+        onReview={onReviewPR}
+        onClose={() => setPrBrowserOpen(false)}
       />
     </aside>
   )

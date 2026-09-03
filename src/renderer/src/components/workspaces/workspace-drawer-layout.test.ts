@@ -66,7 +66,7 @@ describe('workspace drawer layout', () => {
   })
 
   it('pins chats within their existing thread groups', () => {
-    expect(drawer).toContain('const ownSessions = pinnedSessionsFirst([...own].reverse())')
+    expect(drawer).toContain('const ownSessions = pinnedSessionsFirst(sortOwnSessionsForDrawer(own))')
     expect(drawer).toContain('const delegatedSessions = pinnedSessionsFirst(delegated)')
     expect(drawer).toContain("session.pinned ? 'Unpin chat' : 'Pin chat'")
     expect(drawer).toContain('onSessionTogglePin(session)')

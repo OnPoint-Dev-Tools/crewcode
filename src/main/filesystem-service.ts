@@ -1,6 +1,6 @@
 import { execFile } from 'child_process'
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, sep } from 'path'
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
+import { cpSync, existsSync, mkdirSync, promises as fsp, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
 import { IGNORE, MAX_FILE_BYTES } from './fs-constants'
 import { uniqueCopyName } from './fs-copy-name'
 import { isRemoteRoot } from './remote/ssh-target'
@@ -22,37 +22,44 @@ function safeUnder(root: string, target: string): boolean {
 
 /** Transport-neutral, workspace-sandboxed filesystem operations. */
 export class FilesystemService {
-  readDir(root: string, sub = ''): ReturnType<typeof remoteReadDir> | { nodes?: FilesystemNode[]; error?: string } {
+  async readDir(root: string, sub = ''): Promise<{ nodes?: FilesystemNode[]; error?: string }> {
     if (isRemoteRoot(root)) return remoteReadDir(root, sub)
     if (!root || !isAbsolute(root)) return { error: 'absolute root required' }
     const target = sub ? join(root, sub) : root
     if (!safeUnder(root, target)) return { error: 'path escapes root' }
-    if (!existsSync(target)) return { error: 'path missing' }
     let entries: string[]
-    try { entries = readdirSync(target) } catch (error) { return { error: (error as Error).message } }
-    const nodes: FilesystemNode[] = []
-    for (const name of entries) {
-      if (IGNORE.has(name)) continue
+    try { entries = await fsp.readdir(target) } catch (error) {
+      return { error: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'path missing' : (error as Error).message }
+    }
+    const nodes = (await Promise.all(entries.map(async (name): Promise<FilesystemNode | null> => {
+      if (IGNORE.has(name)) return null
       const absolute = join(target, name)
       let stat
-      try { stat = statSync(absolute) } catch { continue }
-      nodes.push({ name, path: absolute, rel: relative(root, absolute), kind: stat.isDirectory() ? 'dir' : 'file', size: stat.isFile() ? stat.size : undefined })
-    }
+      try { stat = await fsp.stat(absolute) } catch { return null }
+      return {
+        name,
+        path: absolute,
+        rel: relative(root, absolute),
+        kind: stat.isDirectory() ? 'dir' as const : 'file' as const,
+        ...(stat.isFile() ? { size: stat.size } : {}),
+      }
+    }))).filter((node): node is FilesystemNode => node !== null)
     nodes.sort((a, b) => a.kind !== b.kind ? (a.kind === 'dir' ? -1 : 1) : a.name.localeCompare(b.name))
     return { nodes }
   }
 
-  readFile(root: string, sub: string): ReturnType<typeof remoteReadFile> | { ok?: boolean; text?: string; name?: string; size?: number; error?: string } {
+  async readFile(root: string, sub: string): Promise<{ ok?: boolean; text?: string; name?: string; size?: number; error?: string }> {
     if (isRemoteRoot(root)) return remoteReadFile(root, sub)
     if (!root || !isAbsolute(root)) return { error: 'absolute root required' }
     const target = join(root, sub)
     if (!safeUnder(root, target)) return { error: 'path escapes root' }
-    if (!existsSync(target)) return { error: 'file missing' }
     let stat
-    try { stat = statSync(target) } catch { return { error: 'stat failed' } }
+    try { stat = await fsp.stat(target) } catch (error) {
+      return { error: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'file missing' : 'stat failed' }
+    }
     if (stat.isDirectory()) return { error: 'is a directory' }
     if (stat.size > MAX_FILE_BYTES) return { error: 'file too large (>2MB)' }
-    try { return { ok: true, text: readFileSync(target, 'utf8'), name: basename(target), size: stat.size } }
+    try { return { ok: true, text: await fsp.readFile(target, 'utf8'), name: basename(target), size: stat.size } }
     catch (error) { return { error: (error as Error).message } }
   }
 

@@ -6,6 +6,12 @@ import { homedir } from 'os'
 import type { BrainAccessScope } from '../shared/hub-relay-types'
 import { startBrainRelay } from './hub-brain-relay'
 import { BrainAuthorizationPolicy, brainAuthorizationPolicyPath } from './brain-authorization-policy'
+import {
+  brainDesktopConnectionPath,
+  removeBrainDesktopConnection,
+  writeBrainDesktopConnection,
+} from './brain-desktop-rendezvous'
+import { CREWCODE_BRAIN_DESKTOP_VERSION } from '../shared/brain-desktop-types'
 
 export const HUB_ENROLLMENT_TTL_MS = 10 * 60_000
 export const HUB_HEARTBEAT_INTERVAL_MS = 30_000
@@ -245,6 +251,7 @@ export interface BrainCliOptions {
   name: string
   allowedWorkspaceRoots: string[]
   allowedScopes: BrainAccessScope[]
+  desktopBackground?: boolean
 }
 
 function valueAfter(argv: string[], index: number, flag: string): string {
@@ -261,6 +268,7 @@ export function parseBrainOptions(argv: string[], command: 'enroll' | 'brain', c
   let name = hostname()
   const allowedWorkspaceRoots: string[] = []
   const allowedScopes: BrainAccessScope[] = []
+  let desktopBackground = false
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index]
     if (arg === '--data-dir') dataDir = resolve(cwd, valueAfter(argv, index++, arg))
@@ -273,11 +281,12 @@ export function parseBrainOptions(argv: string[], command: 'enroll' | 'brain', c
       if (scope !== 'workspace:read' && scope !== 'workspace:write' && scope !== 'terminal' && scope !== 'agent') throw new Error(`invalid Brain scope: ${scope}`)
       if (!allowedScopes.includes(scope)) allowedScopes.push(scope)
     }
+    else if (arg === '--desktop-background' && command === 'brain') desktopBackground = true
     else throw new Error(`unknown option: ${arg}`)
   }
   if (!name || name.length > 80) throw new Error('machine name must contain 1 to 80 characters')
   if (command === 'enroll' && !hubOrigin) throw new Error('enroll requires --hub')
-  return { dataDir, hubOrigin, token, name, allowedWorkspaceRoots, allowedScopes }
+  return { dataDir, hubOrigin, token, name, allowedWorkspaceRoots, allowedScopes, desktopBackground }
 }
 
 class HubRequestError extends Error {
@@ -395,7 +404,7 @@ async function hiddenEnrollmentToken(): Promise<string> {
 
 function brainUsage(command: 'enroll' | 'brain'): string {
   if (command === 'enroll') return `CrewCode machine enrollment\n\nUsage:\n  crewcode enroll --hub <https-origin> [--name <name>] [--data-dir <path>]\n\nBy default, the PC prints a short code and waits for approval in the authenticated\nphone/Hub dashboard. --token keeps the legacy one-time token flow for controlled\nautomation only because command-line arguments may be exposed in process history.`
-  return `CrewCode outbound Brain relay\n\nUsage:\n  crewcode brain [--data-dir <path>] [--workspace-root <path>] [--allow-scope <scope>]\n\nScopes (repeatable): workspace:read, workspace:write, terminal, agent.\nThe Brain grants no remote RPC scope by default. Workspace roots and scopes are\nBrain-local authorization; signing in to the Hub cannot widen them.`
+  return `CrewCode outbound Brain relay\n\nUsage:\n  crewcode brain [--data-dir <path>] [--workspace-root <path>] [--allow-scope <scope>] [--desktop-background]\n\nScopes (repeatable): workspace:read, workspace:write, terminal, agent.\nThe Brain grants no remote RPC scope by default. Workspace roots and scopes are\nBrain-local authorization; signing in to the Hub cannot widen them.\n--desktop-background publishes an owner-only loopback rendezvous so the local\nElectron app can attach to this Brain and leave it running after the window exits.`
 }
 
 export async function runBrainCommand(command: 'enroll' | 'brain', argv: string[]): Promise<void> {
@@ -424,6 +433,8 @@ export async function runBrainCommand(command: 'enroll' | 'brain', argv: string[
   let stopped = false
   let activeRelay: Awaited<ReturnType<typeof startBrainRelay>> | null = null
   let wake: (() => void) | undefined
+  const desktopControlToken = parsed.desktopBackground ? randomBytes(32).toString('base64url') : ''
+  const desktopPath = brainDesktopConnectionPath(parsed.dataDir)
   const shutdown = (): void => {
     stopped = true
     wake?.()
@@ -436,37 +447,68 @@ export async function runBrainCommand(command: 'enroll' | 'brain', argv: string[
     ? `Brain-local grants: ${authorization.scopes.join(', ')} under ${authorization.roots.join(', ')}.`
     : 'Brain-local grants: none. Hub users can connect, but all privileged RPC is denied.')
 
-  while (!stopped) {
-    try {
-      await sendHeartbeat(credential)
+  try {
+    while (!stopped) {
+      try {
       activeRelay = await startBrainRelay({
         credential,
         dataDir: parsed.dataDir,
         allowedWorkspaceRoots: authorization.roots,
         allowedScopes: authorization.scopes,
+        desktop: parsed.desktopBackground ? {
+          controlToken: desktopControlToken,
+          onStop: shutdown,
+          onReady: ({ url, sessionToken }) => writeBrainDesktopConnection(desktopPath, {
+            version: CREWCODE_BRAIN_DESKTOP_VERSION,
+            pid: process.pid,
+            url,
+            sessionToken,
+            controlToken: desktopControlToken,
+            startedAt: Date.now(),
+          }),
+        } : undefined,
       })
-      console.log('Authenticated outbound relay connected.')
+      console.log(parsed.desktopBackground
+        ? 'Brain runtime ready for local desktop attachment; outbound Hub relay connecting.'
+        : 'Brain runtime ready; outbound Hub relay connecting.')
+      try {
+        await sendHeartbeat(credential)
+      } catch (error) {
+        console.error(`Heartbeat failed: ${(error as Error).message}`)
+        if (error instanceof HubRequestError && error.status === 401) {
+          console.error('Machine authority was rejected or revoked; Brain is stopping.')
+          await activeRelay.close()
+          return
+        }
+      }
       const heartbeat = setInterval(() => {
         void sendHeartbeat(credential).catch(error => {
           console.error(`Heartbeat failed: ${(error as Error).message}`)
-          if (error instanceof HubRequestError && error.status === 401) void activeRelay?.close()
+          if (error instanceof HubRequestError && error.status === 401) {
+            console.error('Machine authority was rejected or revoked; Brain is stopping.')
+            stopped = true
+            void activeRelay?.close()
+          }
         })
       }, HUB_HEARTBEAT_INTERVAL_MS)
       await activeRelay.closed
       clearInterval(heartbeat)
       activeRelay = null
-    } catch (error) {
-      console.error(`Brain relay failed: ${(error as Error).message}`)
-      if (error instanceof HubRequestError && error.status === 401) {
-        console.error('Machine authority was rejected or revoked; Brain is stopping.')
-        return
+      } catch (error) {
+        console.error(`Brain relay failed: ${(error as Error).message}`)
+        if (error instanceof HubRequestError && error.status === 401) {
+          console.error('Machine authority was rejected or revoked; Brain is stopping.')
+          return
+        }
       }
+      if (!stopped) await new Promise<void>(resolve => {
+        const timer = setTimeout(resolve, 5_000)
+        wake = () => { clearTimeout(timer); resolve() }
+      })
+      wake = undefined
     }
-    if (!stopped) await new Promise<void>(resolve => {
-      const timer = setTimeout(resolve, 5_000)
-      wake = () => { clearTimeout(timer); resolve() }
-    })
-    wake = undefined
+  } finally {
+    if (parsed.desktopBackground) removeBrainDesktopConnection(desktopPath, desktopControlToken)
   }
 }
 

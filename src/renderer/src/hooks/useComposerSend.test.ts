@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import type { AgentInfo } from '../types'
-import { renderHook } from './hook-test-host'
+import { act, renderHook } from './hook-test-host'
 import { useComposerSend, type UseComposerSendOpts } from './useComposerSend'
 
 const agent: AgentInfo = {
@@ -123,6 +123,19 @@ describe('useComposerSend session continuity', () => {
 
     expect(opts.bridges.dropBridge).toHaveBeenCalledOnce()
     expect(opts.bridges.dropBridge).toHaveBeenCalledWith('sess-1', 'crewcoder')
+    h.unmount()
+  })
+
+  it('records activity when a prompt is sent', async () => {
+    const onSessionUsed = vi.fn()
+    const opts = makeOpts({ onSessionUsed })
+    const h = renderHook(useComposerSend, opts)
+
+    await act(async () => {
+      await h.result.current.sendText('continue the work', [])
+    })
+
+    expect(onSessionUsed).toHaveBeenCalledOnce()
     h.unmount()
   })
 })

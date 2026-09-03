@@ -34,6 +34,16 @@ export type AgentBridgeFactory = (
   requestUser: RequestUserFn,
 ) => Promise<AgentBridge>
 
+/** Strip renderer/desktop prefixes so Brain never stores `web:thread:` or `web:web:`. */
+export function webConversationKey(scope: string): string {
+  return `web:${scope.replace(/^(?:web|thread):/, '')}`
+}
+
+/** Match desktop's persisted `<session>:<provider>` native-resume key. */
+export function bridgeSessionStorageKey(conversationKey: string, provider: string): string {
+  return `${conversationKey.replace(/^(?:web|thread):/, '')}:${provider}`
+}
+
 const REMOTE_AGENT_PROVIDERS = new Set<BridgeStartOpts['provider']>([
   'pi', 'opencode', 'codex', 'claude', 'hermes', 'crewcoder', 'grok', 'ollama', 'openrouter',
 ])
@@ -50,6 +60,13 @@ interface BridgeEntry {
   running: boolean
   pendingMode?: BridgeStartOpts['mode']
   injectHistoryOnNextPrompt: boolean
+}
+
+interface QueuedConversationPrompt {
+  bridgeId: string
+  followUpId: string
+  text: string
+  options?: PromptOptions
 }
 
 const DISPOSABLE_SUMMARY_TRANSCRIPT_CHARS = 48_000
@@ -95,6 +112,17 @@ export class AgentBridgeService {
     resolve: (response: AgentUserResponse) => void
   }>()
   private readonly turnPermissionGrants = new TurnPermissionGrantStore()
+  /**
+   * One Brain may be driven by desktop and web clients at the same time. The
+   * provider session and local replay shard are conversation-scoped, so two
+   * overlapping prompt calls must never enter them concurrently. Keep the
+   * active lease and FIFO in the Brain service rather than trusting either
+   * client (or a provider-specific follow-up implementation) to coordinate it.
+   */
+  private readonly activeConversationPrompts = new Map<string, string>()
+  private readonly conversationPromptQueues = new Map<string, QueuedConversationPrompt[]>()
+  private readonly startingBridges = new Map<string, Promise<{ ok?: boolean; error?: string }>>()
+  private followUpSequence = 0
 
   constructor(
     private readonly resolvePath: AgentPathResolver,
@@ -107,6 +135,22 @@ export class AgentBridgeService {
   }
 
   async start(rawOpts: BridgeStartOpts): Promise<{ ok?: boolean; error?: string }> {
+    if (!rawOpts.bridgeId) return { error: 'bridgeId and cwd are required' }
+    const pending = this.startingBridges.get(rawOpts.bridgeId)
+    if (pending) {
+      await pending
+      return this.start(rawOpts)
+    }
+    const operation = this.startUnlocked(rawOpts)
+    this.startingBridges.set(rawOpts.bridgeId, operation)
+    try {
+      return await operation
+    } finally {
+      if (this.startingBridges.get(rawOpts.bridgeId) === operation) this.startingBridges.delete(rawOpts.bridgeId)
+    }
+  }
+
+  private async startUnlocked(rawOpts: BridgeStartOpts): Promise<{ ok?: boolean; error?: string }> {
     if (!rawOpts.bridgeId || !rawOpts.cwd) return { error: 'bridgeId and cwd are required' }
     if (!REMOTE_AGENT_PROVIDERS.has(rawOpts.provider)) return { error: 'agent provider is not available over remote access' }
     const existing = this.bridges.get(rawOpts.bridgeId)
@@ -119,6 +163,7 @@ export class AgentBridgeService {
         && existing.opts.cwd === rawOpts.cwd
         && existing.opts.model === rawOpts.model
         && existing.opts.crewcoderMode === rawOpts.crewcoderMode
+        && existing.opts.crewcoderApprovalMode === rawOpts.crewcoderApprovalMode
         && existing.opts.conversationKey === rawOpts.conversationKey
       return sameExecution
         ? { ok: true }
@@ -135,7 +180,9 @@ export class AgentBridgeService {
       apiKey = getAgentKey(rawOpts.provider) ?? undefined
       if (!apiKey) return { error: `${rawOpts.provider} API key not set` }
     }
-    const resumeSessionId = rawOpts.conversationKey && !rawOpts.freshSession ? getSessionId(rawOpts.conversationKey) ?? undefined : undefined
+    const resumeSessionId = rawOpts.conversationKey && !rawOpts.freshSession
+      ? getSessionId(bridgeSessionStorageKey(rawOpts.conversationKey, rawOpts.provider)) ?? undefined
+      : undefined
     const opts = { ...rawOpts, apiKey, resumeSessionId }
     const emit = (event: BridgeEvent): void => {
       const entry = this.bridges.get(rawOpts.bridgeId)
@@ -150,14 +197,19 @@ export class AgentBridgeService {
       } else if (event.type === 'turn_end') {
         this.turnPermissionGrants.clearTurn(rawOpts.bridgeId, event.turnId)
         if (entry) entry.running = false
+        this.releaseConversationPrompt(rawOpts.bridgeId)
       } else if (event.type === 'error' || event.type === 'closed') {
         this.turnPermissionGrants.clearBridge(rawOpts.bridgeId)
         if (entry) entry.running = false
+        this.releaseConversationPrompt(rawOpts.bridgeId)
+        this.clearQueuedPromptsForBridge(rawOpts.bridgeId)
         // A dead bridge's permission cards can never be answered by anyone;
         // leaving them pending is authority stuck in limbo.
         this.cancelPendingRequests(rawOpts.bridgeId)
       }
-      if (event.type === 'session_id' && opts.conversationKey) setSessionId(opts.conversationKey, event.sessionId)
+      if (event.type === 'session_id' && opts.conversationKey) {
+        setSessionId(bridgeSessionStorageKey(opts.conversationKey, opts.provider), event.sessionId)
+      }
       if (entry && opts.conversationKey && event.type === 'turn_start') {
         entry.promptByTurn[event.turnId] = entry.pendingPrompts.shift() ?? ''
         entry.responseByTurn[event.turnId] = ''
@@ -197,34 +249,31 @@ export class AgentBridgeService {
 
   async prompt(bridgeId: string, text: string, options?: PromptOptions): Promise<{ ok: boolean; error?: string }> {
     const entry = this.bridges.get(bridgeId)
-        if (!entry) return { ok: false, error: 'bridge not found' }
-        const queueingFollowUp = entry.running && options?.streamingBehavior === 'followUp'
-        // Apply a deferred mode before the provider serializes the next request.
-        // turn_start is only the fallback for provider-internal queued follow-ups.
-        if (!queueingFollowUp && entry.pendingMode) {
-          entry.opts.mode = entry.pendingMode
-          entry.pendingMode = undefined
-        }
-        if (!queueingFollowUp) entry.running = true
-        entry.pendingPrompts.push(text)
-        const history = entry.opts.conversationKey ? loadConversation(entry.opts.conversationKey) : []
-        const shouldInjectHistory = entry.injectHistoryOnNextPrompt && history.length > 0
-        const wireText = shouldInjectHistory ? historyAsPrompt(history) + text : text
-        if (shouldInjectHistory) entry.injectHistoryOnNextPrompt = false
-        const result = await entry.bridge.prompt(wireText, options)
-        if (!result.ok) {
-          const index = entry.pendingPrompts.indexOf(text)
-          if (index >= 0) entry.pendingPrompts.splice(index, 1)
-          if (shouldInjectHistory) entry.injectHistoryOnNextPrompt = true
-          if (!queueingFollowUp) entry.running = false
-        }
-        return result
+    if (!entry) return { ok: false, error: 'bridge not found' }
+    const conversationKey = this.conversationPromptKey(entry)
+    if (this.activeConversationPrompts.has(conversationKey)) {
+      const followUpId = `${bridgeId}-brain-queue-${Date.now().toString(36)}-${(++this.followUpSequence).toString(36)}`
+      const queue = this.conversationPromptQueues.get(conversationKey) ?? []
+      queue.push({ bridgeId, followUpId, text, options })
+      this.conversationPromptQueues.set(conversationKey, queue)
+      this.emit({ type: 'follow_up_queued', bridgeId, followUpId, text })
+      return { ok: true }
+    }
+    this.activeConversationPrompts.set(conversationKey, bridgeId)
+    return this.sendConversationPrompt(entry, text, options)
   }
 
   compact(bridgeId: string): Promise<{ ok: boolean; error?: string; unsupported?: boolean }> {
     const entry = this.bridges.get(bridgeId)
     if (!entry) return Promise.resolve({ ok: false, error: 'bridge not found' })
     return entry.bridge.compact?.() ?? Promise.resolve({ ok: false, unsupported: true, error: 'provider does not support compaction' })
+  }
+
+  resetSession(conversationKey: string, sessionKey?: string): { ok: true } | { error: string } {
+    if (!conversationKey) return { error: 'conversation scope is required' }
+    if (sessionKey) clearSessionId(sessionKey)
+    clearConversation(conversationKey)
+    return { ok: true }
   }
 
   async handoff(bridgeId: string, sourceConversationKey: string, options: HandoffPromptOptions): Promise<{ ok: boolean; error?: string }> {
@@ -270,6 +319,14 @@ export class AgentBridgeService {
   removeFollowUp(bridgeId: string, followUpId: string): Promise<{ ok: boolean; error?: string }> {
     const entry = this.bridges.get(bridgeId)
     if (!entry) return Promise.resolve({ ok: false, error: 'bridge not found' })
+    for (const [conversationKey, queue] of this.conversationPromptQueues) {
+      const index = queue.findIndex(item => item.bridgeId === bridgeId && item.followUpId === followUpId)
+      if (index === -1) continue
+      queue.splice(index, 1)
+      if (queue.length === 0) this.conversationPromptQueues.delete(conversationKey)
+      this.emit({ type: 'follow_up_removed', bridgeId, followUpId, reason: 'removed' })
+      return Promise.resolve({ ok: true })
+    }
     return entry.bridge.removeFollowUp?.(followUpId) ?? Promise.resolve({ ok: false, error: 'provider does not support removing follow-ups' })
   }
 
@@ -331,6 +388,8 @@ export class AgentBridgeService {
     this.cancelPendingRequests(bridgeId)
     const entry = this.bridges.get(bridgeId)
     if (entry) entry.running = false
+    this.clearQueuedPromptsForBridge(bridgeId)
+    this.releaseConversationPrompt(bridgeId)
     await entry?.bridge.abort().catch(() => {})
     return { ok: true }
   }
@@ -339,6 +398,8 @@ export class AgentBridgeService {
     this.turnPermissionGrants.clearBridge(bridgeId)
     this.cancelPendingRequests(bridgeId)
     const entry = this.bridges.get(bridgeId)
+    this.clearQueuedPromptsForBridge(bridgeId)
+    this.releaseConversationPrompt(bridgeId)
     if (entry) await entry.bridge.stop().catch(() => {})
     this.bridges.delete(bridgeId)
     return { ok: true }
@@ -357,6 +418,11 @@ export class AgentBridgeService {
     for (const bridgeId of [...this.bridges.keys()]) this.cancelPendingRequests(bridgeId)
     await Promise.all([...this.bridges.values()].map(entry => entry.bridge.stop().catch(() => {})))
     this.bridges.clear()
+    for (const queue of this.conversationPromptQueues.values()) {
+      for (const item of queue) this.emit({ type: 'follow_up_removed', bridgeId: item.bridgeId, followUpId: item.followUpId, reason: 'cleared' })
+    }
+    this.conversationPromptQueues.clear()
+    this.activeConversationPrompts.clear()
     this.pendingRequests.clear()
     this.turnPermissionGrants.clear()
   }
@@ -372,6 +438,78 @@ export class AgentBridgeService {
       this.pendingRequests.delete(requestId)
       pending.resolve({ requestId, action: 'cancel' })
       for (const listener of this.listeners) listener({ type: 'user_request_resolved', bridgeId, requestId })
+    }
+  }
+
+  private emit(event: BridgeEvent): void {
+    for (const listener of this.listeners) listener(event)
+  }
+
+  private conversationPromptKey(entry: BridgeEntry): string {
+    return entry.opts.conversationKey || `bridge:${entry.opts.bridgeId}`
+  }
+
+  private async sendConversationPrompt(entry: BridgeEntry, text: string, options?: PromptOptions): Promise<{ ok: boolean; error?: string }> {
+    const bridgeId = entry.opts.bridgeId
+    if (entry.pendingMode) {
+      entry.opts.mode = entry.pendingMode
+      entry.pendingMode = undefined
+    }
+    entry.running = true
+    entry.pendingPrompts.push(text)
+    const history = entry.opts.conversationKey ? loadConversation(entry.opts.conversationKey) : []
+    const shouldInjectHistory = entry.injectHistoryOnNextPrompt && history.length > 0
+    const wireText = shouldInjectHistory ? historyAsPrompt(history) + text : text
+    if (shouldInjectHistory) entry.injectHistoryOnNextPrompt = false
+    const result = await entry.bridge.prompt(wireText, options)
+    if (!result.ok) {
+      const index = entry.pendingPrompts.indexOf(text)
+      if (index >= 0) entry.pendingPrompts.splice(index, 1)
+      if (shouldInjectHistory) entry.injectHistoryOnNextPrompt = true
+      entry.running = false
+      this.releaseConversationPrompt(bridgeId)
+    }
+    return result
+  }
+
+  private releaseConversationPrompt(bridgeId: string): void {
+    const entry = this.bridges.get(bridgeId)
+    const key = entry ? this.conversationPromptKey(entry) : [...this.activeConversationPrompts].find(([, owner]) => owner === bridgeId)?.[0]
+    if (!key || this.activeConversationPrompts.get(key) !== bridgeId) return
+    this.activeConversationPrompts.delete(key)
+    queueMicrotask(() => { void this.drainConversationPrompt(key) })
+  }
+
+  private async drainConversationPrompt(conversationKey: string): Promise<void> {
+    if (this.activeConversationPrompts.has(conversationKey)) return
+    const queue = this.conversationPromptQueues.get(conversationKey)
+    while (queue?.length) {
+      const next = queue.shift()!
+      if (queue.length === 0) this.conversationPromptQueues.delete(conversationKey)
+      const entry = this.bridges.get(next.bridgeId)
+      if (!entry || this.conversationPromptKey(entry) !== conversationKey) {
+        this.emit({ type: 'follow_up_removed', bridgeId: next.bridgeId, followUpId: next.followUpId, reason: 'cleared' })
+        continue
+      }
+      this.activeConversationPrompts.set(conversationKey, next.bridgeId)
+      this.emit({ type: 'follow_up_removed', bridgeId: next.bridgeId, followUpId: next.followUpId, reason: 'sent' })
+      const result = await this.sendConversationPrompt(entry, next.text, next.options)
+      // A rejected prompt releases synchronously and may immediately drain the
+      // next item. An accepted prompt retains the lease until its terminal
+      // bridge event arrives.
+      if (result.ok) return
+    }
+  }
+
+  private clearQueuedPromptsForBridge(bridgeId: string): void {
+    for (const [key, queue] of [...this.conversationPromptQueues]) {
+      const retained: QueuedConversationPrompt[] = []
+      for (const item of queue) {
+        if (item.bridgeId === bridgeId) this.emit({ type: 'follow_up_removed', bridgeId, followUpId: item.followUpId, reason: 'cleared' })
+        else retained.push(item)
+      }
+      if (retained.length) this.conversationPromptQueues.set(key, retained)
+      else this.conversationPromptQueues.delete(key)
     }
   }
 

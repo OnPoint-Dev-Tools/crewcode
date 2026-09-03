@@ -2,7 +2,7 @@ import type { AgentInfo, AgentProviderId, ChatAttachment, ChatPromptOptions, Mes
 import type { Skill } from '../types/prompts'
 import type { EffortLevel } from '../components/composer/EffortPicker'
 import type { McpServerConfig } from './useSettings'
-import type { CrewCoderMode } from '../../../shared/crewcoder-types'
+import type { CrewCoderApprovalMode, CrewCoderMode } from '../../../shared/crewcoder-types'
 import { createTurnActivity, settleCurrentTurnActivity } from '../components/thread/turn-activity'
 
 interface BridgesLike {
@@ -20,6 +20,7 @@ interface BridgesLike {
     freshSession?: boolean,
     externalDirectories?: string[],
     crewcoderMode?: CrewCoderMode,
+    crewcoderApprovalMode?: CrewCoderApprovalMode,
   ) => Promise<{ bridgeId: string } | { error: string }>
   prompt: (bridgeId: string, text: string, options?: ChatPromptOptions) => Promise<{ ok: boolean; error?: string }>
 }
@@ -41,6 +42,7 @@ export interface SendChatSessionPromptArgs {
   effort: EffortLevel
   mode: ModeLevel
   crewcoderMode?: CrewCoderMode
+  crewcoderApprovalMode?: CrewCoderApprovalMode
   effectivePath: string
   bridges: BridgesLike
   pty: PtyLike
@@ -224,6 +226,7 @@ export async function sendChatSessionPrompt(opts: SendChatSessionPromptArgs): Pr
     takeDelegationReports,
     externalDirectories,
     crewcoderMode,
+    crewcoderApprovalMode,
   } = opts
 
   if (!text.trim() || !activeWs) return
@@ -322,7 +325,7 @@ export async function sendChatSessionPrompt(opts: SendChatSessionPromptArgs): Pr
     const provider = agent.id as AgentProviderId
     const ensure = (force: boolean) => provider === 'crewcoder'
       ? bridges.ensureBridge(
-          sessActive, agent.id, provider, effectivePath, model || undefined, effort, mode, undefined, force, mcpServers, !!promptOptions?.handoff, externalDirectories, crewcoderMode,
+          sessActive, agent.id, provider, effectivePath, model || undefined, effort, mode, undefined, force, mcpServers, !!promptOptions?.handoff, externalDirectories, crewcoderMode, crewcoderApprovalMode,
         )
       : bridges.ensureBridge(
           sessActive, agent.id, provider, effectivePath, model || undefined, effort, mode, undefined, force, mcpServers, !!promptOptions?.handoff, externalDirectories,

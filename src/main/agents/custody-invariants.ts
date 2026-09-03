@@ -35,6 +35,7 @@ export interface CustodyAuthority {
   cwd: string
   mode: ModeLevel
   crewcoderMode: string
+  crewcoderApprovalMode: string
   toolPolicy: string
   externalDirectories: string[]
   mcpServers: string[]
@@ -45,6 +46,7 @@ export interface CustodyAuthorityInput {
   cwd: string
   mode?: ModeLevel
   crewcoderMode?: string
+  crewcoderApprovalMode?: string
   toolPolicy?: string
   externalDirectories?: string[]
   mcpServers?: Array<{ name?: string } | string>
@@ -57,6 +59,7 @@ export function normalizeAuthority(input: CustodyAuthorityInput): CustodyAuthori
     cwd: input.cwd,
     mode: input.mode ?? 'build',
     crewcoderMode: input.crewcoderMode ?? 'configured',
+    crewcoderApprovalMode: input.crewcoderApprovalMode ?? 'review',
     toolPolicy: input.toolPolicy ?? 'default',
     externalDirectories: [...(input.externalDirectories ?? [])].sort(),
     mcpServers: (input.mcpServers ?? [])
@@ -78,7 +81,7 @@ function render(value: string | string[]): string {
 
 /** Field-by-field comparison. Empty result means the live authority still matches the record. */
 export function diffAuthority(recorded: CustodyAuthority, observed: CustodyAuthority): AuthorityDrift[] {
-  const fields: Array<keyof CustodyAuthority> = ['provider', 'cwd', 'mode', 'crewcoderMode', 'toolPolicy', 'externalDirectories', 'mcpServers']
+  const fields: Array<keyof CustodyAuthority> = ['provider', 'cwd', 'mode', 'crewcoderMode', 'crewcoderApprovalMode', 'toolPolicy', 'externalDirectories', 'mcpServers']
   const drift: AuthorityDrift[] = []
   for (const field of fields) {
     const before = render(recorded[field])

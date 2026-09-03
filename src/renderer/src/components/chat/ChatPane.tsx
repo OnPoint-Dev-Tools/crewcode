@@ -38,7 +38,7 @@ import { useVoiceSessionController } from '../../hooks/useVoiceSessionController
 import { getCrewCodeClient } from '../../runtime/crewcode-client'
 import { isCrewLaneSessionKey } from '../../../../shared/custody-types'
 import { isSessionDrag, readSessionDrag, type SessionDragPayload } from '../thread/session-drag'
-import { crewCoderProfileLocksExecutionMode, type CrewCoderMode } from '../../../../shared/crewcoder-types'
+import { crewCoderApprovalForProfile, crewCoderProfileLocksExecutionMode, type CrewCoderApprovalMode, type CrewCoderMode } from '../../../../shared/crewcoder-types'
 
 type CrewBranchWithMessagesProps = Omit<React.ComponentProps<typeof CrewBranch>, 'messagesByTab'>
 
@@ -305,6 +305,9 @@ export function ChatPane({
   const model = activeSession?.model ?? ''
   const effort = (activeSession?.effort ?? 'medium') as EffortLevel
   const crewcoderMode = activeSession?.crewcoderMode
+  // Full access is visible and effective only for the concrete CrewCoder
+  // profile; switching profiles must never leave hidden elevated authority.
+  const crewcoderApprovalMode = crewCoderApprovalForProfile(crewcoderMode, activeSession?.crewcoderApprovalMode)
   const crewCoderProfileActive = crewCoderProfileLocksExecutionMode(activeAgentId, crewcoderMode)
   const modeLevel = crewCoderProfileActive ? 'build' : normalizeModeLevel(activeSession?.mode ?? settingsDefaultMode)
   const composerMode: Mode = MODE_FROM_SETTINGS[modeLevel] ?? 'Build'
@@ -379,7 +382,12 @@ export function ChatPane({
     chatSessions.update(tabId, sessActive, {
       crewcoderMode: nextMode,
       ...(nextMode ? { mode: 'build' as const } : {}),
+      ...(nextMode === 'crewcoder' ? {} : { crewcoderApprovalMode: 'review' as const }),
     })
+  }, [tabId, sessActive, chatSessions])
+
+  const setCrewCoderApprovalMode = useCallback((nextMode: CrewCoderApprovalMode) => {
+    chatSessions.update(tabId, sessActive, { crewcoderApprovalMode: nextMode })
   }, [tabId, sessActive, chatSessions])
 
   const setComposerMode = useCallback((m: Mode) => {
@@ -455,6 +463,7 @@ export function ChatPane({
     model,
     effort,
     crewcoderMode,
+    crewcoderApprovalMode,
     mode: modeLevel,
     effectivePath,
     bridges,
@@ -478,6 +487,7 @@ export function ChatPane({
     workspaceName: workspace.name,
     workspaceBranch: worktreeBranch ?? effectiveBranch,
     externalDirectories: activeSession?.externalDirectories ?? [],
+    onSessionUsed: () => chatSessions.touchLastUsed(tabId, sessActive),
   })
 
   const sendWithSessionTitle = useCallback(async (overrideText?: string) => {
@@ -621,6 +631,7 @@ export function ChatPane({
     setHandoffError(null)
     setHandoffOpen(false)
     chatSessions.activate(target.tabId, target.id)
+    chatSessions.touchLastUsed(target.tabId, target.id)
     onHandoffDestinationActivate(target)
 
     const targetAgent = agents.find(agent => agent.id === target!.agentId)
@@ -863,6 +874,8 @@ export function ChatPane({
             setEffort={setEffort}
             crewcoderMode={crewcoderMode}
             setCrewCoderMode={setCrewCoderMode}
+            crewcoderApprovalMode={crewcoderApprovalMode}
+            setCrewCoderApprovalMode={setCrewCoderApprovalMode}
             delegationEnabled={delegation.enabled}
             onToggleDelegation={canSessionDelegate(activeSession) ? toggleDelegation : undefined}
             modePromptsEnabled={modePromptsEnabled}
@@ -991,6 +1004,7 @@ export function ChatPane({
             width={gitWidth}
             {...git.handlers}
             onOpenFileDiff={onOpenGitFileDiff}
+            onOpenConflictFile={onOpenFile}
             onOpenTerminal={openTerminalForPath}
             pluginGitLenses={pluginGitLenses}
             onPluginGitLens={onPluginGitLens}
