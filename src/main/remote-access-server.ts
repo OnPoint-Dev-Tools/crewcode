@@ -25,7 +25,7 @@ import { PtyService } from './pty-service'
 import { AgentBridgeService, webConversationKey, type AgentPathResolver } from './agents/bridge-service'
 import { headlessAgentRegistry, listHeadlessAgentModels } from './headless-agent-resolver'
 import { readMcpConfig } from './mcp-config-service'
-import { getGhStatus, getGitHubAvatar, getGitHubStatus, getPullRequestCatalogue, getPullRequestCheckLog, getPullRequestChecksContext, getPullRequestCreateContext, getPullRequestDetail, getPullRequestDiff, getPullRequestManagementContext, getPullRequestReviewContext, preparePullRequestConflictResolution, pullRequestActionArgs, pullRequestCommentArgs, pullRequestCreateArgs, pullRequestEditArgs, pullRequestMergeArgs, pullRequestMetadataArgs, pullRequestReviewArgs, rerunPullRequestCheck, runGh, submitPullRequestReview, updatePullRequestMergeAutomation, updatePullRequestReviewThread, updatePullRequestViewedFile } from './github-service'
+import { createPullRequest, getGhStatus, getGitHubAvatar, getGitHubStatus, getPullRequestCatalogue, getPullRequestCheckLog, getPullRequestChecksContext, getPullRequestCreateContext, getPullRequestDetail, getPullRequestDiff, getPullRequestManagementContext, getPullRequestReviewContext, preparePullRequestConflictResolution, pullRequestActionArgs, pullRequestCommentArgs, pullRequestEditArgs, pullRequestMergeArgs, pullRequestMetadataArgs, pullRequestReviewArgs, rerunPullRequestCheck, runGh, submitPullRequestReview, updatePullRequestMergeAutomation, updatePullRequestReviewThread, updatePullRequestViewedFile } from './github-service'
 import type { GitHubMergeMethod, GitHubPullRequestCheckRerunOptions, GitHubPullRequestCreateOptions, GitHubPullRequestEditOptions, GitHubPullRequestMergeAutomationOptions, GitHubPullRequestMetadataOptions, GitHubPullRequestReviewOptions, GitHubPullRequestViewedFileOptions } from '../shared/github-types'
 import { RemoteGhService } from './remote-gh-service'
 import { RemoteEditorLanguageServer } from './remote-editor-language-server'
@@ -443,6 +443,7 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
     ['git.unstage', params => gitService.unstage(registeredRoot({ root: params.cwd }), Array.isArray(params.paths) ? params.paths.map(String) : [])],
     ['git.discard', params => gitService.discard(registeredRoot({ root: params.cwd }), String(params.path ?? ''))],
     ['git.diff', params => gitService.diff(registeredRoot({ root: params.cwd }), String(params.path ?? ''), params.staged === true)],
+    ['git.conflictDiff', params => gitService.conflictDiff(registeredRoot({ root: params.cwd }), String(params.path ?? ''))],
     ['git.changesVsRef', params => gitService.changesVsRef(registeredRoot({ root: params.cwd }), String(params.ref ?? ''))],
     ['git.diffVsRef', params => gitService.diffVsRef(registeredRoot({ root: params.cwd }), String(params.ref ?? ''), String(params.path ?? ''))],
     ['git.log', params => gitService.log(registeredRoot({ root: params.cwd }), Number(params.limit ?? 20))],
@@ -465,7 +466,7 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
     ['github.avatar', params => getGitHubAvatar(registeredRoot({ root: params.cwd }), String(params.login ?? ''))],
     ['gh.status', () => getGhStatus()],
     ['gh.prCreate', params => {
-      try { return runGh(registeredRoot({ root: params.cwd }), pullRequestCreateArgs(params.options as GitHubPullRequestCreateOptions)) }
+      try { return createPullRequest(registeredRoot({ root: params.cwd }), params.options as GitHubPullRequestCreateOptions) }
       catch (error) { return { ok: false, output: '', error: error instanceof Error ? error.message : String(error) } }
     }],
     ['gh.prMerge', params => {

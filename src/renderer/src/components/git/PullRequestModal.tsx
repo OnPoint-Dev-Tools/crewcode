@@ -15,13 +15,33 @@ interface PullRequestModalProps {
 }
 
 const STEPS = ['Branches', 'Details', 'Review'] as const
+const PR_BODY_FIELDS = [
+  { key: 'description', label: 'Description', placeholder: 'Briefly summarize this pull request.' },
+  { key: 'problem', label: 'Problem', placeholder: 'What problem or limitation does this address?' },
+  { key: 'whatChanged', label: 'What changed', placeholder: 'List the important implementation changes.' },
+  { key: 'whyChanged', label: 'Why it changed', placeholder: 'Explain why this approach was chosen.' },
+  { key: 'solution', label: 'Solution', placeholder: 'Describe how the result solves the problem.' },
+] as const
+type PullRequestBodyField = typeof PR_BODY_FIELDS[number]['key']
+type PullRequestBodyValues = Record<PullRequestBodyField, string>
+const EMPTY_BODY_VALUES: PullRequestBodyValues = { description: '', problem: '', whatChanged: '', whyChanged: '', solution: '' }
+
+export function buildPullRequestBody(values: PullRequestBodyValues): string {
+  return PR_BODY_FIELDS.flatMap(field => {
+    const value = values[field.key].trim()
+    return value ? [`## ${field.label}\n\n${value}`] : []
+  }).join('\n\n')
+}
 
 export function PullRequestModal({ open, repoPath, head, branches, defaultBase, defaultTitle, onCreate, onClose }: PullRequestModalProps) {
   const [step, setStep] = useState(0)
   const [title, setTitle] = useState(defaultTitle)
-  const [body, setBody] = useState('')
+  const [bodyValues, setBodyValues] = useState<PullRequestBodyValues>(EMPTY_BODY_VALUES)
   const [base, setBase] = useState(defaultBase)
   const [draft, setDraft] = useState(true)
+  const [commitScope, setCommitScope] = useState<'all' | 'selected'>('all')
+  const [selectedCommits, setSelectedCommits] = useState<string[]>([])
+  const [selectedBranch, setSelectedBranch] = useState('')
   const [creating, setCreating] = useState(false)
   const [comparison, setComparison] = useState<{ loading: boolean; value?: GitHubPullRequestCreateContext; error?: string }>({ loading: false })
   const titleRef = useRef<HTMLInputElement>(null)
@@ -30,11 +50,14 @@ export function PullRequestModal({ open, repoPath, head, branches, defaultBase, 
     if (!open) return
     setStep(0)
     setTitle(defaultTitle)
-    setBody('')
+    setBodyValues(EMPTY_BODY_VALUES)
     setBase(defaultBase)
     setDraft(true)
+    setCommitScope('all')
+    setSelectedCommits([])
+    setSelectedBranch(`${head.replace(/[^A-Za-z0-9._/-]+/g, '-').replace(/^[-/.]+|[-/.]+$/g, '') || 'changes'}-selected`)
     setCreating(false)
-  }, [open, defaultBase, defaultTitle])
+  }, [open, defaultBase, defaultTitle, head])
 
   useEffect(() => {
     if (!open || !repoPath || !base.trim()) return
@@ -71,14 +94,21 @@ export function PullRequestModal({ open, repoPath, head, branches, defaultBase, 
     if (!title.trim() || !base.trim() || creating) return
     setCreating(true)
     try {
-      const ok = await onCreate({ title: title.trim(), body: body.trim() || undefined, base: base.trim(), draft })
+      const body = buildPullRequestBody(bodyValues)
+      const ok = await onCreate({
+        title: title.trim(), body: body || undefined, base: base.trim(), draft,
+        selectedCommits: commitScope === 'selected' ? selectedCommits : undefined,
+        selectedBranch: commitScope === 'selected' ? selectedBranch.trim() : undefined,
+      })
       if (ok) onClose()
     } finally {
       setCreating(false)
     }
   }
 
+  const validSelectedBranch = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(selectedBranch) && !selectedBranch.includes('..') && !selectedBranch.endsWith('/')
   const canContinueBranches = !!base.trim() && !comparison.loading && !!comparison.value
+    && (commitScope === 'all' || (selectedCommits.length > 0 && validSelectedBranch && selectedBranch !== base.trim()))
   const canContinueDetails = !!title.trim()
 
   return (
@@ -110,11 +140,33 @@ export function PullRequestModal({ open, repoPath, head, branches, defaultBase, 
               </div>
 
               <div className="pr-branch-route">
-                <label><span>Source branch</span><div className="pr-branch-fixed"><Icon name="gitBranch" size={11} /><code>{head || 'HEAD'}</code></div></label>
+                <label><span>Source branch</span><div className="pr-branch-fixed"><Icon name="gitBranch" size={11} /><code>{commitScope === 'selected' ? selectedBranch || 'new branch' : head || 'HEAD'}</code></div></label>
                 <Icon name="chevRight" size={13} />
                 <label><span>Target branch</span><div className="pr-branch-input"><Icon name="gitBranch" size={11} /><input list="pr-base-branches" value={base} onChange={event => setBase(event.target.value)} aria-label="Target branch" /></div></label>
                 <datalist id="pr-base-branches">{branches.filter(branch => branch !== head).map(branch => <option key={branch} value={branch} />)}</datalist>
               </div>
+
+              <div className="pr-commit-scope" role="group" aria-label="Pull request commit scope">
+                <button type="button" className={commitScope === 'all' ? 'active' : ''} onClick={() => setCommitScope('all')}>
+                  <strong>All new commits</strong><span>Open the PR directly from <code>{head || 'HEAD'}</code>.</span>
+                </button>
+                <button type="button" className={commitScope === 'selected' ? 'active' : ''} onClick={() => setCommitScope('selected')}>
+                  <strong>Pick commits</strong><span>Create a clean branch from the latest <code>{base || 'base'}</code>.</span>
+                </button>
+              </div>
+
+              {commitScope === 'selected' && <div className="pr-commit-picker">
+                <label className="pr-flow-field"><span>New source branch</span><input value={selectedBranch} onChange={event => setSelectedBranch(event.target.value)} aria-invalid={!validSelectedBranch} /></label>
+                <header><div><strong>Commit history</strong><span>{selectedCommits.length} selected</span></div><button type="button" onClick={() => setSelectedCommits(selectedCommits.length === (comparison.value?.commits.length ?? 0) ? [] : (comparison.value?.commits ?? []).map(commit => commit.oid))}>{selectedCommits.length === (comparison.value?.commits.length ?? 0) ? 'Clear' : 'Select all'}</button></header>
+                <div className="pr-commit-list">
+                  {(comparison.value?.commits ?? []).map(commit => <label key={commit.oid}>
+                    <input type="checkbox" checked={selectedCommits.includes(commit.oid)} onChange={event => setSelectedCommits(current => event.target.checked ? [...current, commit.oid] : current.filter(oid => oid !== commit.oid))} />
+                    <code>{commit.oid.slice(0, 7)}</code><span><strong>{commit.title || 'Untitled commit'}</strong><small>{commit.author} · {new Date(commit.committedAt).toLocaleString()}</small></span>
+                  </label>)}
+                  {!comparison.loading && comparison.value?.commits.length === 0 && <p>No commits are available between this base and the current branch.</p>}
+                </div>
+                <p className="pr-commit-warning">CrewCode will fetch the latest base, create this branch in an isolated worktree, cherry-pick the selected commits in history order, push it, then open the PR. Your current branch stays unchanged.</p>
+              </div>}
 
               <div className="pr-comparison" aria-live="polite">
                 <div><strong>{comparison.value?.ahead ?? '—'}</strong><span>ahead</span></div>
@@ -136,7 +188,9 @@ export function PullRequestModal({ open, repoPath, head, branches, defaultBase, 
                 <p>Give reviewers enough context to understand the intent and verify the result.</p>
               </div>
               <label className="pr-flow-field"><span>Title</span><input ref={titleRef} value={title} onChange={event => setTitle(event.target.value)} /></label>
-              <label className="pr-flow-field"><span>Description <small>Markdown supported</small></span><textarea value={body} onChange={event => setBody(event.target.value)} placeholder="What changed, why, and how was it verified?" /></label>
+              <div className="pr-structured-fields">
+                {PR_BODY_FIELDS.map(field => <label className={`pr-flow-field ${field.key === 'description' ? 'wide' : ''}`} key={field.key}><span>{field.label} <small>Optional · Markdown supported</small></span><textarea value={bodyValues[field.key]} onChange={event => setBodyValues(current => ({ ...current, [field.key]: event.target.value }))} placeholder={field.placeholder} /></label>)}
+              </div>
               <label className="pr-draft-choice"><input type="checkbox" checked={draft} onChange={event => setDraft(event.target.checked)} /><span><strong>Create as draft</strong><small>Review can begin, but merging stays disabled until the PR is marked ready.</small></span></label>
             </section>
           )}
@@ -148,13 +202,13 @@ export function PullRequestModal({ open, repoPath, head, branches, defaultBase, 
                 <h3 id="pr-review-title">Create one pull request</h3>
                 <p>Confirm the exact branches and details before sending them to GitHub.</p>
               </div>
-              <div className="pr-review-route"><code>{head || 'HEAD'}</code><Icon name="chevRight" size={12} /><code>{base}</code></div>
+              <div className="pr-review-route"><code>{commitScope === 'selected' ? selectedBranch : head || 'HEAD'}</code><Icon name="chevRight" size={12} /><code>{base}</code></div>
               <div className="pr-review-summary">
                 <div><span>Title</span><strong>{title}</strong></div>
                 <div><span>Status</span><strong>{draft ? 'Draft' : 'Ready for review'}</strong></div>
-                <div><span>Changes</span><strong>{comparison.value?.changedFiles ?? 0} files · {comparison.value?.ahead ?? 0} commits ahead</strong></div>
+                <div><span>Changes</span><strong>{commitScope === 'selected' ? `${selectedCommits.length} selected commit${selectedCommits.length === 1 ? '' : 's'}` : `${comparison.value?.changedFiles ?? 0} files · ${comparison.value?.ahead ?? 0} commits ahead`}</strong></div>
               </div>
-              <div className="pr-review-description">{body || 'No description provided.'}</div>
+              <div className="pr-review-structured">{PR_BODY_FIELDS.map(field => { const value = bodyValues[field.key].trim(); return <section className={value ? '' : 'empty'} key={field.key}><h4>{field.label}</h4><p>{value || 'Not provided.'}</p></section> })}</div>
               <div className="pr-merge-note"><Icon name="gitMerge" size={13} /><span><strong>Merge method is chosen after review.</strong> Merge commit, squash, and rebase remain available from the PR review workspace.</span></div>
             </section>
           )}

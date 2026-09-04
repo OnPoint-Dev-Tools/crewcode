@@ -333,6 +333,7 @@ export function createWebCrewCodeClient(sessionOrTransport: string | WebClientTr
     gitUnstage: (cwd, paths) => rpc('git.unstage', { cwd, paths }),
     gitDiscard: (cwd, path) => rpc('git.discard', { cwd, path }),
     gitDiff: (cwd, path, staged) => rpc('git.diff', { cwd, path, staged }),
+    gitConflictDiff: (cwd, path) => rpc('git.conflictDiff', { cwd, path }),
     gitChangesVsRef: (cwd, ref) => rpc('git.changesVsRef', { cwd, ref }),
     gitDiffVsRef: (cwd, ref, path) => rpc('git.diffVsRef', { cwd, ref, path }),
     gitLog: (cwd, limit = 20) => rpc('git.log', { cwd, limit }),
