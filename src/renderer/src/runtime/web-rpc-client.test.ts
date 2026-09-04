@@ -16,6 +16,25 @@ beforeEach(() => {
 })
 
 describe('web RPC client', () => {
+  it('uses authenticated Hub control-plane routes for machine state without sending them through Brain RPC', async () => {
+    const rpc = vi.fn()
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ machines: [{ id: 'a'.repeat(32), name: 'cortex', status: 'online' }] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ csrf: 'csrf-token' }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, machine: { id: 'a'.repeat(32), name: 'cortex', status: 'disabled' } }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const client = createWebCrewCodeClient({ rpc, subscribe: () => () => undefined }, { hubControl: true })
+
+    expect((await client.hubMachinesList?.())?.machines[0]?.name).toBe('cortex')
+    expect((await client.hubMachineSetEnabled?.('a'.repeat(32), false))?.machine.status).toBe('disabled')
+    expect(rpc).not.toHaveBeenCalled()
+    expect(fetchMock).toHaveBeenNthCalledWith(3, `/api/v1/hub/machines/${'a'.repeat(32)}/enabled`, expect.objectContaining({
+      method: 'POST',
+      headers: expect.objectContaining({ 'x-crewcode-csrf': 'csrf-token' }),
+      body: JSON.stringify({ enabled: false }),
+    }))
+  })
+
   it('exchanges and stores a pairing session', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ sessionToken: 'session' }), { status: 200 })))
     expect(await exchangePairingToken('pair')).toBe('session')

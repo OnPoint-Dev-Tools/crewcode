@@ -144,7 +144,7 @@ export interface GitSidebarHandlers {
   onDiscardFile?: (path: string) => void
   /** Open the unified diff for a changed file in the code editor. */
   onOpenFileDiff?: (path: string, staged: boolean) => void
-  onCommit?:      (opts: { message: string; amend: boolean; push: boolean; sync?: boolean }) => void
+  onCommit?:      (opts: { message: string; amend: boolean; push: boolean; sync?: boolean }) => Promise<boolean> | void
 
   // Worktrees
   onCreateWorktree?: (branch: string) => void

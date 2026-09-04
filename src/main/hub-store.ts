@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'crypto'
 import { chmodSync, mkdirSync } from 'fs'
 import { dirname } from 'path'
 import type { AuthenticatorTransportFuture, WebAuthnCredential } from '@simplewebauthn/server'
+import type { HubMachineSummary } from '../shared/hub-machine-types'
 
 const { DatabaseSync } = require('node:sqlite') as typeof import('node:sqlite')
 type DatabaseSync = import('node:sqlite').DatabaseSync
@@ -30,20 +31,10 @@ export interface HubSession {
   expiresAt: number
 }
 
-export interface HubMachineSummary {
-  id: string
-  name: string
-  status: 'offline' | 'online' | 'revoked'
-  platform: string | null
-  version: string | null
-  createdAt: number
-  lastSeenAt: number | null
-  revokedAt: number | null
-}
-
 export interface HubMachineIdentity {
   id: string
   ownerUserId: string
+  disabledAt: number | null
   revokedAt: number | null
 }
 
@@ -70,6 +61,7 @@ interface MachineRow {
   version: string | null
   created_at: number
   last_seen_at: number | null
+  disabled_at: number | null
   revoked_at: number | null
 }
 
@@ -125,6 +117,7 @@ export class HubStore {
         version TEXT,
         created_at INTEGER NOT NULL,
         last_seen_at INTEGER,
+        disabled_at INTEGER,
         revoked_at INTEGER
       ) STRICT;
       CREATE TABLE IF NOT EXISTS audit_events (
@@ -141,6 +134,9 @@ export class HubStore {
     const machineColumns = this.db.prepare('PRAGMA table_info(machines)').all() as Array<{ name: string }>
     if (!machineColumns.some(column => column.name === 'credential_digest')) {
       this.db.exec('ALTER TABLE machines ADD COLUMN credential_digest TEXT')
+    }
+    if (!machineColumns.some(column => column.name === 'disabled_at')) {
+      this.db.exec('ALTER TABLE machines ADD COLUMN disabled_at INTEGER')
     }
     this.db.exec('CREATE UNIQUE INDEX IF NOT EXISTS machines_credential_digest ON machines(credential_digest)')
   }
@@ -250,7 +246,7 @@ export class HubStore {
       .run(id, input.userId, input.publicKey, digest(secret), input.name, input.platform, input.version, input.now, input.now)
     this.audit('hub.machine.enrolled', input.userId, id, { name: input.name, platform: input.platform }, input.now)
     return {
-      machine: { id, name: input.name, status: 'online', platform: input.platform, version: input.version, createdAt: input.now, lastSeenAt: input.now, revokedAt: null },
+      machine: { id, name: input.name, status: 'online', platform: input.platform, version: input.version, createdAt: input.now, lastSeenAt: input.now, disabledAt: null, revokedAt: null },
       token: `${id}.${secret}`,
     }
   }
@@ -260,19 +256,19 @@ export class HubStore {
     if (separator < 1) return null
     const id = token.slice(0, separator)
     const secret = token.slice(separator + 1)
-    const row = this.db.prepare('SELECT id, owner_user_id, revoked_at FROM machines WHERE id = ? AND credential_digest = ? AND revoked_at IS NULL')
-      .get(id, digest(secret)) as { id: string; owner_user_id: string; revoked_at: number | null } | undefined
-    return row ? { id: row.id, ownerUserId: row.owner_user_id, revokedAt: row.revoked_at } : null
+    const row = this.db.prepare('SELECT id, owner_user_id, disabled_at, revoked_at FROM machines WHERE id = ? AND credential_digest = ? AND revoked_at IS NULL')
+      .get(id, digest(secret)) as { id: string; owner_user_id: string; disabled_at: number | null; revoked_at: number | null } | undefined
+    return row ? { id: row.id, ownerUserId: row.owner_user_id, disabledAt: row.disabled_at, revokedAt: row.revoked_at } : null
   }
 
   machineAuthorityForUser(userId: string, machineId: string): HubMachineAuthority | null {
-    const row = this.db.prepare('SELECT id, owner_user_id, public_key, revoked_at FROM machines WHERE id = ? AND owner_user_id = ? AND revoked_at IS NULL')
-      .get(machineId, userId) as { id: string; owner_user_id: string; public_key: string; revoked_at: number | null } | undefined
-    return row ? { id: row.id, ownerUserId: row.owner_user_id, publicKey: row.public_key, revokedAt: row.revoked_at } : null
+    const row = this.db.prepare('SELECT id, owner_user_id, public_key, disabled_at, revoked_at FROM machines WHERE id = ? AND owner_user_id = ? AND disabled_at IS NULL AND revoked_at IS NULL')
+      .get(machineId, userId) as { id: string; owner_user_id: string; public_key: string; disabled_at: number | null; revoked_at: number | null } | undefined
+    return row ? { id: row.id, ownerUserId: row.owner_user_id, publicKey: row.public_key, disabledAt: row.disabled_at, revokedAt: row.revoked_at } : null
   }
 
   heartbeatMachine(machineId: string, platform: string | null, version: string | null, now: number): boolean {
-    const result = this.db.prepare("UPDATE machines SET status = 'online', platform = ?, version = ?, last_seen_at = ? WHERE id = ? AND revoked_at IS NULL")
+    const result = this.db.prepare("UPDATE machines SET status = 'online', platform = ?, version = ?, last_seen_at = ? WHERE id = ? AND disabled_at IS NULL AND revoked_at IS NULL")
       .run(platform, version, now, machineId)
     return Number(result.changes) === 1
   }
@@ -285,16 +281,29 @@ export class HubStore {
     return true
   }
 
+  setMachineEnabled(userId: string, machineId: string, enabled: boolean, now: number): HubMachineSummary | null {
+    const current = this.machinesForUser(userId, now).find(machine => machine.id === machineId && machine.revokedAt === null)
+    if (!current) return null
+    if ((current.disabledAt === null) === enabled) return current
+    const result = enabled
+      ? this.db.prepare("UPDATE machines SET disabled_at = NULL, status = 'offline', last_seen_at = NULL WHERE id = ? AND owner_user_id = ? AND revoked_at IS NULL AND disabled_at IS NOT NULL").run(machineId, userId)
+      : this.db.prepare("UPDATE machines SET disabled_at = ?, status = 'offline' WHERE id = ? AND owner_user_id = ? AND revoked_at IS NULL AND disabled_at IS NULL").run(now, machineId, userId)
+    if (Number(result.changes) !== 1) return null
+    this.audit(enabled ? 'hub.machine.enabled' : 'hub.machine.disabled', userId, machineId, {}, now)
+    return this.machinesForUser(userId, now).find(machine => machine.id === machineId) ?? null
+  }
+
   machinesForUser(userId: string, now = Date.now(), onlineWindowMs = 90_000): HubMachineSummary[] {
-    const rows = this.db.prepare('SELECT id, name, status, platform, version, created_at, last_seen_at, revoked_at FROM machines WHERE owner_user_id = ? ORDER BY name COLLATE NOCASE').all(userId) as unknown as MachineRow[]
+    const rows = this.db.prepare('SELECT id, name, status, platform, version, created_at, last_seen_at, disabled_at, revoked_at FROM machines WHERE owner_user_id = ? ORDER BY name COLLATE NOCASE').all(userId) as unknown as MachineRow[]
     return rows.map(row => ({
       id: row.id,
       name: row.name,
-      status: row.revoked_at ? 'revoked' : row.last_seen_at !== null && row.last_seen_at > now - onlineWindowMs ? 'online' : 'offline',
+      status: row.revoked_at !== null ? 'revoked' : row.disabled_at !== null ? 'disabled' : row.last_seen_at !== null && row.last_seen_at > now - onlineWindowMs ? 'online' : 'offline',
       platform: row.platform,
       version: row.version,
       createdAt: row.created_at,
       lastSeenAt: row.last_seen_at,
+      disabledAt: row.disabled_at,
       revokedAt: row.revoked_at,
     }))
   }

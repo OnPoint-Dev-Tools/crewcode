@@ -77,6 +77,7 @@ describe('Hub store', () => {
     const migrated = new DatabaseSync(path)
     const columns = migrated.prepare('PRAGMA table_info(machines)').all() as Array<{ name: string }>
     expect(columns.some(column => column.name === 'credential_digest')).toBe(true)
+    expect(columns.some(column => column.name === 'disabled_at')).toBe(true)
     migrated.close()
   })
 
@@ -257,12 +258,38 @@ describe('Hub HTTP security boundary', () => {
     machines = await (await fetch(`${running.url}/api/v1/hub/machines`, { headers: { cookie } })).json() as { machines: Array<{ status: string }> }
     expect(machines.machines[0]?.status).toBe('online')
 
+    const disabledResponse = await fetch(`${running.url}/api/v1/hub/machines/${enrolled.machineId}/enabled`, {
+      method: 'POST', headers: browserHeaders, body: JSON.stringify({ enabled: false }),
+    })
+    expect(disabledResponse.status).toBe(200)
+    expect(await disabledResponse.json()).toMatchObject({ ok: true, machine: { status: 'disabled', disabledAt: time } })
+    const whileDisabled = await fetch(`${running.url}/api/v1/hub/machines/heartbeat`, {
+      method: 'POST', headers: { authorization: `Bearer ${enrolled.token}`, 'content-type': 'application/json' }, body: '{}',
+    })
+    expect(whileDisabled.status).toBe(423)
+    machines = await (await fetch(`${running.url}/api/v1/hub/machines`, { headers: { cookie } })).json() as { machines: Array<{ status: string }> }
+    expect(machines.machines[0]?.status).toBe('disabled')
+
+    const enabledResponse = await fetch(`${running.url}/api/v1/hub/machines/${enrolled.machineId}/enabled`, {
+      method: 'POST', headers: browserHeaders, body: JSON.stringify({ enabled: true }),
+    })
+    expect(enabledResponse.status).toBe(200)
+    expect(await enabledResponse.json()).toMatchObject({ ok: true, machine: { status: 'offline', disabledAt: null } })
+    const afterEnable = await fetch(`${running.url}/api/v1/hub/machines/heartbeat`, {
+      method: 'POST', headers: { authorization: `Bearer ${enrolled.token}`, 'content-type': 'application/json' }, body: '{}',
+    })
+    expect(afterEnable.status).toBe(200)
+
     const revoked = await fetch(`${running.url}/api/v1/hub/machines/${enrolled.machineId}/revoke`, { method: 'POST', headers: browserHeaders, body: '{}' })
     expect(revoked.status).toBe(200)
     const afterRevoke = await fetch(`${running.url}/api/v1/hub/machines/heartbeat`, {
       method: 'POST', headers: { authorization: `Bearer ${enrolled.token}`, 'content-type': 'application/json' }, body: '{}',
     })
     expect(afterRevoke.status).toBe(401)
+    const cannotEnableRevoked = await fetch(`${running.url}/api/v1/hub/machines/${enrolled.machineId}/enabled`, {
+      method: 'POST', headers: browserHeaders, body: JSON.stringify({ enabled: true }),
+    })
+    expect(cannotEnableRevoked.status).toBe(404)
   })
 
   it('serves the standalone setup screen with a restrictive CSP', async () => {

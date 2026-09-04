@@ -76,7 +76,9 @@ plan is a normal composer message; CrewCoder treats that as a new
 
 The bridge performs this handshake before reporting ready:
 
-1. `initialize` with protocol version 1 and text-file capabilities.
+1. `initialize` with protocol version 1 and text-file capabilities. The bridge
+   recognizes the exact `_meta["crewcoder/sessionCompact"].method ===
+   "session/compact"` advertisement; it does not assume the extension exists.
 2. `session/load` when CrewCode has a saved native session id; unknown ids fall
    back to `session/new`.
 3. `session/set_external_directories` with CrewCode's complete session grant list, including `[]`
@@ -84,11 +86,15 @@ The bridge performs this handshake before reporting ready:
 4. `session/set_model` when a model is selected.
 5. `session/set_reasoning_effort` applies CrewCode's selected effort to CrewCoder's provider client.
 6. `session/prompt` runs each turn; `session/follow_up` queues an instruction into an active CrewCoder turn, and `session/cancel` is an ACP notification.
+7. An idle `/compact` calls advertised `session/compact` with the durable
+   `sessionId`. Older CrewCoder versions without the advertisement keep the
+   existing CrewCode summary-reset fallback.
 
 CrewCoder transcript replay contains user/assistant text only. When CrewCode's
 richer local transcript exists, provider replay is suppressed. CrewCoder remains
-a native-resume provider and uses summary-reset for manual compaction because it
-has no native compact RPC.
+a native-resume provider. Its advertised compact RPC rewrites that durable
+session in place, so CrewCode must not clear the native session id, stop the
+bridge, or seed a replacement session after a successful native compact.
 
 ## Event mapping
 
@@ -105,13 +111,17 @@ has no native compact RPC.
 CrewCoder's compaction update is an additive namespaced ACP extension carrying
 started/completed/failed status, automatic intent, progress, and a human-readable
 message. The bridge treats it as authoritative and does not also infer
-compaction from the later context-token drop. The compacted summary remains in
-CrewCoder's durable session and is not copied into CrewCode's transcript.
-CrewCode deliberately retains the full visible transcript as history; it is not
-the provider context. On authoritative completion, CrewCode clears the stale
-live context occupancy from memory, disk, and the latest visible usage strip
-without fabricating `0` tokens. The next CrewCoder usage report repopulates the
-meter with the compacted context's measured size.
+compaction from the later context-token drop. Automatic updates omit the summary
+body; the compacted summary remains only in CrewCoder's durable session.
+Host-requested `session/compact` returns the authoritative summary and includes
+it on the completed update. CrewCode replaces only its provider replay shard
+with that summary and appends the visible compact-summary card; it deliberately
+retains the full rich chat transcript as display history. A skipped update does
+not reset context usage. After an applied completion, CrewCode clears stale live
+context occupancy from memory, disk, and the latest visible usage strip without
+fabricating `0` tokens. The next CrewCoder usage report repopulates the meter
+with the compacted context's measured size. Idle compact progress must not
+fabricate a model `turn_start`.
 
 CrewCoder emits genuine reasoning, so the Hermes cosmetic-thinking filter must
 not be applied. Gated tools are announced as pending before the permission

@@ -66,6 +66,26 @@ reconciliation, startup, or session switching. Preserve global delivery for
 newly appended live errors and active-scope delivery for live agent-exit
 warnings. See `docs/notifications.md`.
 
+Git and GitHub notification-bar events are live and user-triggered only. Publish
+observed successful commit, push, pull, fetch, sync, merge, repository-publish,
+and PR mutation results; never notify from polling, catalogue refresh, startup,
+or restored state. The Git Workspace PR launcher badge counts only observed open
+and draft PRs, excluding closed and merged PRs. See `docs/notifications.md` and
+`docs/github-pull-requests.md`.
+
+Active Git surfaces silently refresh the bounded GitHub pull-request catalogue
+once per minute so PRs created or changed by other users update the Browser and
+open-count badge. Keep that poll single-flight, preserve selection when possible,
+and never turn polled transitions into notification-bar events.
+
+Git tabs retain meaningful unfinished UI state across inactive-tab unmounts in
+bounded process-session memory keyed by exact outer tab/worktree identity. Keep
+commit/amend drafts, PR creation fields/step, PR Browser location, review summary,
+and queued inline comments; clear the applicable draft on explicit cancel or
+successful submission. Never retain credentials, mutation locks, destructive
+confirmations, or infer repository outcomes from UI memory. See
+`docs/git-workspace.md` and `docs/github-pull-requests.md`.
+
 Inactive standalone terminal tabs stay mounted to preserve their PTYs, but must
 pass `active={false}` through `TermColumn` to `XTermPane`. Buffer their output
 without `term.write()`, then refit and replay it with bounded frame work and
@@ -272,6 +292,16 @@ while Electron Background Brain owns it.
 
 Remote-access credentials are authority boundaries. Pairing tokens must remain short-lived, memory-only, and single-use. Persist only device-session digests in owner-only atomic stores; enforce expiry and revocation. Browser HTTP/WebSocket origins must match exactly or be explicitly configured—never reflect arbitrary `Origin`/forwarded headers. Keep authentication limiters bounded, and do not hardcode CJ's `crewcode.logixhub.icu` deployment as a default Hub URL.
 
+Hub-connected web Settings lists every machine enrolled to the authenticated owner and
+keeps reversible disablement distinct from permanent revocation. Disable must persist
+the authority suspension, reject heartbeats/tickets/new Brain relays, close existing
+Brain and browser relay sessions, and preserve the machine credential for explicit
+re-enable. Enable clears the suspension but reports offline until a fresh Brain relay
+and heartbeat are observed. Keep these same-origin, session/CSRF-protected Hub control
+operations behind the typed CrewCode client; never route them through the selected
+Brain, expose Hub credentials, show the surface in direct-server/Electron-only
+Settings, or infer machine availability from the mutation response.
+
 Browser delegation keeps its agent-facing endpoint Brain-loopback and bearer-scoped;
 delegate requests, editor watches, and LSP handles remain bound to the authenticated
 browser session that owns them. Browser plugin iframes load only approved plugin
@@ -339,6 +369,8 @@ CrewCoder `crew-tasks` activity remains provider-owned and optional. Preserve th
 YuHeard PTY integration must remain bundle-safe. `PtyService` receives the active YuHeard server through an injected accessor and statically imports its shell-wrapper helpers; do not use runtime relative `require('./yuheard-*')` calls from PTY code because electron-vite can move that code into a chunk without emitting the required sibling modules. CLI launch, initial TUI paint, and prompt submission are not completed turns. Codex must use only its exact `approval-requested` and `agent-turn-complete` hook events—never generic PTY idle/BEL heuristics—while output fallback detection remains available for agents without an exact hook. Suppress every YuHeard surface only when the exact completing terminal owns keyboard focus in the focused CrewCode window; a different pane must still alert. See `docs/yuheard.md`.
 
 CrewCoder agent profiles are separate from CrewCode execution modes. Show the desktop model-row profile picker only when the installed CrewCoder provider is active; disable it during a running turn, persist the optional session-scoped `crewcoderMode`, omit `--mode` for Configured default, and pass only `general | crewcoder | plugin | extension` to `crewcoder acp --mode`. A concrete profile locks the underlying CrewCode permission policy to Build and disables Ask/Plan/Build/Full on desktop and phone; Configured default re-enables those controls. Never retain a hidden prior Ask, Plan, or Full Access policy under a concrete profile. When the concrete `crewcoder` profile is active, show the separate desktop approval picker and persist `crewcoderApprovalMode`; expose only CrewCoder's `review`, `always`, `never`, `full-access`, and `sandboxed` values, with `review` as the fail-closed default. Treat approval changes as immutable launch authority: disable them during a running turn, drop only the idle bridge, include the value in custody, and native-resume on the next prompt. Never suppresses prompts but continues to block dangerous calls; Sandboxed applies the native sandbox policy where supported; Full access bypasses CrewCoder approval requests and dangerous-command blocking, so label that risk truthfully and never imply CrewCode Build still interposes. Never route Ask/Plan/Build/Full into CrewCoder's `--mode`. The `crewcoder` profile's plan gate is CrewCoder-owned: project `crewcoder_clarify` / `crewcoder_propose_plan` into the activity overlay and send `/approve-plan` as a prompt, never as a tool-permission Allow/Deny. See `docs/crewcoder-provider.md`.
+
+CrewCoder manual compaction is capability-gated. Expose the bridge `compact()` path only after observing exact `initialize._meta["crewcoder/sessionCompact"].method === "session/compact"`; older CrewCoder versions retain summary-reset. Call the advertised method only while idle and keep CrewCoder's durable session id and ACP child after success. Use the returned summary to replace CrewCode's replay shard and add the visible compact-summary card while retaining the full rich display transcript. Treat `_crewcoder/compaction_update` as authoritative, never infer a duplicate from usage, never fabricate a turn for idle progress, and do not clear usage/replay when the provider reports a skipped compact. See `docs/crewcoder-provider.md` and `docs/conversation-storage.md`.
 
 Provider context handoff is initiated from the Solo Chat header or `/handoff`. Its Used chats tab mirrors the current workspace's live Sessions catalogue across chat tabs; starting either a new or used destination closes the card immediately and moves progress/failure feedback to the destination meter. Preserve each selected destination's owner tab/worktree, existing provider/model/effort locking, and disposable destination-provider summary flow documented in `docs/provider-context-handoff.md`.
 

@@ -161,6 +161,12 @@ function record(value: unknown): Record<string, unknown> | undefined {
     : undefined
 }
 
+export function crewCoderCompactMethod(initializeResult: unknown): string | undefined {
+  const meta = record(record(initializeResult)?._meta)
+  const capability = record(meta?.['crewcoder/sessionCompact'])
+  return capability?.method === 'session/compact' ? 'session/compact' : undefined
+}
+
 function finiteNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }
@@ -226,13 +232,13 @@ export function crewCoderEventsFromUpdate(
     return [{
       type: 'compaction_event',
       bridgeId,
-      turnId,
+      ...(turnId ? { turnId } : {}),
       status,
       automatic,
       message,
       percent,
       provider: 'crewcoder',
-      ...(status === 'completed' ? { resetContext: true } : {}),
+      ...(status === 'completed' && update.phase !== 'skipped' ? { resetContext: true } : {}),
     }]
   }
   if (kind === 'agent_message_chunk' || kind === 'agent_thought_chunk') {
@@ -446,6 +452,7 @@ export async function createCrewCoderBridge(
   let replayTurnId: string | null = null
   let tools = createCrewCoderToolProjectionState()
   let promptWatchdog: InactivityWatchdog | null = null
+  let compactMethod: string | undefined
   let unusable = false
   let unusableReason = 'bridge must restart after an unresponsive cancellation'
   let stopping = false
@@ -601,7 +608,12 @@ export async function createCrewCoderBridge(
     if (!update || handleReplayUpdate(update)) return
     if (sessionId && params.sessionId !== sessionId) return
     promptWatchdog?.activity()
-    const turnId = startTurn()
+    // Host-requested session/compact runs while the session is idle. Its
+    // namespaced progress notifications are not model turns and must not leave
+    // a fabricated turn_start waiting forever for a turn_end.
+    const turnId = update.sessionUpdate === '_crewcoder/compaction_update'
+      ? currentTurnId ?? ''
+      : startTurn()
     for (const event of crewCoderEventsFromUpdate(update, opts.bridgeId, turnId, tools)) emit(event)
     if (!['user_message_chunk', 'agent_message_chunk', 'agent_thought_chunk', 'tool_call', 'tool_call_update'].includes(update.sessionUpdate)) {
       dbg('<<', `unhandled sessionUpdate:${update.sessionUpdate}`, JSON.stringify(update).slice(0, 240))
@@ -805,7 +817,8 @@ export async function createCrewCoderBridge(
   })
 
   try {
-    await request('initialize', crewCoderInitializeParams(remote))
+    const initializeResult = await request('initialize', crewCoderInitializeParams(remote))
+    compactMethod = crewCoderCompactMethod(initializeResult)
 
     let resumed = false
     if (opts.resumeSessionId) {
@@ -871,7 +884,7 @@ export async function createCrewCoderBridge(
     emit({ type: 'error', bridgeId: opts.bridgeId, message: (error as Error).message })
   }
 
-  return {
+  const bridge: AgentBridge = {
     bridgeId: opts.bridgeId,
     pid: proc.pid ?? null,
     async prompt(text: string, options) {
@@ -929,4 +942,25 @@ export async function createCrewCoderBridge(
       }, 500)
     },
   }
+  if (compactMethod) {
+    bridge.compact = async () => {
+      if (!sessionId) return { ok: false, error: 'crewcoder acp: session not established' }
+      if (unusable) return { ok: false, error: `crewcoder acp: ${unusableReason}` }
+      if (currentTurnId) return { ok: false, error: 'crewcoder acp: cannot compact while a turn is running' }
+      try {
+        const result = record(await request(compactMethod!, { sessionId }, 120_000))
+        const summary = typeof result?.summary === 'string' && result.summary.trim()
+          ? result.summary.trim()
+          : undefined
+        return {
+          ok: true,
+          compacted: typeof result?.compacted === 'boolean' ? result.compacted : undefined,
+          summary,
+        }
+      } catch (error) {
+        return { ok: false, error: (error as Error).message }
+      }
+    }
+  }
+  return bridge
 }

@@ -7,6 +7,7 @@ import { GitPageChanges } from './GitPageChanges'
 import { GitPageCommit } from './GitPageCommit'
 import { PullRequestModal } from './PullRequestModal'
 import { PullRequestBrowser } from './PullRequestBrowser'
+import { readGitTabMemory, writeGitTabMemory, type GitPageMemory } from './git-tab-memory'
 
 function remoteWebUrl(remote: string): string | null {
   if (!remote) return null
@@ -25,20 +26,32 @@ export function GitPage(props: GitSidebarProps) {
     onCheckoutBranch, onCreateBranch, onCreatePR, onMergePR, onUpdatePRBranch,
     onReadyPR, onDraftPR, onReopenPR, onEditPR, onMetadataPR, onRerunPRCheck, onMergeAutomationPR, onPreparePRConflicts, onClosePR, onReviewPR, onOpenTerminal,
   } = props
+  const stateKey = props.stateKey ?? workspace.path
+  const pageMemoryKey = `${stateKey}:git-page`
+  const rememberedPage = readGitTabMemory<GitPageMemory>(pageMemoryKey)
   const staged = (state.changes || []).filter(change => change.staged).length
   const unstaged = Math.max(0, (state.changes || []).length - staged)
   const conflicts = (state.conflicts || []).length
-  const prs = (state.prs || []).length
+  const openPrs = (state.prs || []).filter(pr => pr.status === 'open' || pr.status === 'draft').length
   const history = (state.history || []).length
   const webUrl = state.remoteUrl ? remoteWebUrl(state.remoteUrl) : null
 
   const [branchOpen, setBranchOpen] = useState(false)
   const [branchQuery, setBranchQuery] = useState('')
   const [createBranchOpen, setCreateBranchOpen] = useState(false)
-  const [createPrOpen, setCreatePrOpen] = useState(false)
-  const [prBrowserOpen, setPrBrowserOpen] = useState(false)
+  const [createPrOpen, setCreatePrOpenState] = useState(rememberedPage?.createPullRequestOpen ?? false)
+  const [prBrowserOpen, setPrBrowserOpenState] = useState(rememberedPage?.pullRequestBrowserOpen ?? false)
   const [menu, setMenu] = useState<{ top: number; left: number } | null>(null)
   const moreRef = useRef<HTMLButtonElement>(null)
+
+  const setCreatePrOpen = (open: boolean) => {
+    setCreatePrOpenState(open)
+    writeGitTabMemory<GitPageMemory>(pageMemoryKey, { createPullRequestOpen: open, pullRequestBrowserOpen: prBrowserOpen })
+  }
+  const setPrBrowserOpen = (open: boolean) => {
+    setPrBrowserOpenState(open)
+    writeGitTabMemory<GitPageMemory>(pageMemoryKey, { createPullRequestOpen: createPrOpen, pullRequestBrowserOpen: open })
+  }
 
   const openMenu = () => {
     const rect = moreRef.current?.getBoundingClientRect()
@@ -73,7 +86,11 @@ export function GitPage(props: GitSidebarProps) {
           <p>{workspace.path}</p>
         </div>
         <div className="git-page-header-tools" aria-label="Git actions">
-          <button type="button" className="git-page-pr-browser-button" onClick={() => setPrBrowserOpen(true)} disabled={!webUrl}><Icon name="gitPullRequest" size={12} />Pull requests</button>
+          <button type="button" className="git-page-pr-browser-button" onClick={() => setPrBrowserOpen(true)} disabled={!webUrl}>
+            <Icon name="gitPullRequest" size={12} />
+            <span>Pull requests</span>
+            {openPrs > 0 && <span className="git-page-pr-count" aria-label={`${openPrs} open pull request${openPrs === 1 ? '' : 's'}`}>{openPrs}</span>}
+          </button>
           <div className="git-page-sync-strip" aria-label="Git sync status">
             <span><Icon name="arrowUp" size={10} />{state.ahead || 0}</span>
             <span><Icon name="arrowDown" size={10} />{state.behind || 0}</span>
@@ -109,6 +126,7 @@ export function GitPage(props: GitSidebarProps) {
           onClose={() => setCreateBranchOpen(false)}
         />
         <PullRequestModal
+          memoryKey={`${stateKey}:page-pr-create`}
           open={createPrOpen}
           repoPath={workspace.path}
           head={workspace.branch}
@@ -154,6 +172,7 @@ export function GitPage(props: GitSidebarProps) {
       </header>
 
       <GitPageCommit
+        memoryKey={`${stateKey}:page-commit`}
         branch={workspace.branch}
         stagedCount={staged}
         onCommit={onCommit}
@@ -188,7 +207,7 @@ export function GitPage(props: GitSidebarProps) {
           <div className="git-page-card-row">
             <div className="git-page-card">
               <div className="git-page-card-k">PRs</div>
-              <div className="git-page-card-v small">{prs}</div>
+              <div className="git-page-card-v small">{openPrs}</div>
             </div>
             <div className="git-page-card">
               <div className="git-page-card-k">Commits</div>

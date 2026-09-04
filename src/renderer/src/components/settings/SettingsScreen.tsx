@@ -42,6 +42,7 @@ import {
 import { getCrewCodeClient, getCrewCodeRuntime } from '../../runtime/crewcode-client'
 import { BrainAuthorizationSection } from './BrainAuthorizationSection'
 import type { EditorThemeId } from '../../../../shared/editor-theme-types'
+import type { HubMachineSummary } from '../../../../shared/hub-machine-types'
 import type {
   RemoteVoiceProviderId,
   VoiceProviderAvailabilityMap,
@@ -560,6 +561,93 @@ function BrainContinuitySection() {
               : <button className="ss-btn primary" type="button" disabled={busy || !status?.enrolled} onClick={() => void enable()}>{busy ? 'starting…' : 'Enable'}</button>}
           </div>
         </div>
+      </div>
+    </section>
+  )
+}
+
+function HubMachinesSection() {
+  const client = getCrewCodeClient()
+  const currentMachineId = new URLSearchParams(window.location.search).get('machine')
+  const [machines, setMachines] = useState<HubMachineSummary[] | null>(null)
+  const [busyId, setBusyId] = useState<string | null>(null)
+  const [error, setError] = useState('')
+
+  const refresh = useCallback(async () => {
+    if (!client.hubMachinesList) return
+    try {
+      const result = await client.hubMachinesList()
+      setMachines(result.machines)
+      setError('')
+    } catch (cause) {
+      setError((cause as Error).message)
+    }
+  }, [client])
+
+  useEffect(() => { void refresh() }, [refresh])
+
+  const setEnabled = async (machine: HubMachineSummary, enabled: boolean) => {
+    if (!client.hubMachineSetEnabled) return
+    if (!enabled && !window.confirm(`Disable ${machine.name}? Its Hub relay and connected browser sessions will be disconnected until you enable it again.`)) return
+    setBusyId(machine.id)
+    setError('')
+    try {
+      await client.hubMachineSetEnabled(machine.id, enabled)
+      await refresh()
+    } catch (cause) {
+      setError((cause as Error).message)
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  return (
+    <section id="hub-machines" className="ss-section">
+      <div className="ss-section-h">
+        <h2>Hub Machines</h2>
+        <span className="desc">enrolled machine access</span>
+      </div>
+      <div className="ss-card tight">
+        <div className="ss-row" data-q="hub machines enrolled enable disable remote access">
+          <div>
+            <div className="label">Enrolled machines</div>
+            <div className="help">Disabling suspends the machine credential and disconnects its Hub relay. It does not delete the enrollment, local files, or Brain data.</div>
+            {error ? <div className="help" style={{ color: 'var(--destructive)' }}>{error}</div> : null}
+          </div>
+          <button className="ss-btn" type="button" disabled={busyId !== null} onClick={() => void refresh()}>
+            <Icon name="refresh" size={12} />Refresh
+          </button>
+        </div>
+        {machines === null ? (
+          <div className="ss-row"><div className="help">Loading enrolled machines…</div></div>
+        ) : machines.length === 0 ? (
+          <div className="ss-row"><div className="help">No machines are enrolled with this Hub.</div></div>
+        ) : machines.map(machine => {
+          const disabled = machine.status === 'disabled'
+          const revoked = machine.status === 'revoked'
+          const lastSeen = machine.lastSeenAt === null ? 'never seen' : new Date(machine.lastSeenAt).toLocaleString()
+          return (
+            <div className="ss-row ss-hub-machine" data-q="hub machine online offline disabled revoked" key={machine.id}>
+              <div>
+                <div className="label">{machine.name}{machine.id === currentMachineId ? ' · current' : ''}</div>
+                <div className="help mono">{machine.status} · {machine.platform || 'platform unknown'}{machine.version ? ` · ${machine.version}` : ''}</div>
+                <div className="help">Last seen {lastSeen}</div>
+              </div>
+              {revoked ? (
+                <span className="ss-pill">revoked</span>
+              ) : (
+                <button
+                  className={`ss-btn${disabled ? ' primary' : ' danger'}`}
+                  type="button"
+                  disabled={busyId !== null}
+                  onClick={() => void setEnabled(machine, disabled)}
+                >
+                  {busyId === machine.id ? (disabled ? 'enabling…' : 'disabling…') : (disabled ? 'Enable' : 'Disable')}
+                </button>
+              )}
+            </div>
+          )
+        })}
       </div>
     </section>
   )
@@ -2329,14 +2417,16 @@ const SECTIONS: NavGroup[] = [
 
 export function SettingsScreen({ activeWorkspace }: { activeWorkspace?: Workspace | null } = {}) {
   const { state, set, savedAt } = useSettings()
-  const webRuntime = getCrewCodeRuntime().kind === 'web'
+  const runtime = getCrewCodeRuntime()
+  const webRuntime = runtime.kind === 'web'
+  const hubControl = runtime.hubControl === true
   const sections = useMemo(() => webRuntime
     ? SECTIONS.map(group => group.group === 'connectivity'
-      ? { ...group, items: [...group.items, { id: 'brain-authorization', label: 'Brain Access', icon: 'server' as IconName }] }
+      ? { ...group, items: [...group.items, ...(hubControl ? [{ id: 'hub-machines', label: 'Hub Machines', icon: 'server' as IconName }] : []), { id: 'brain-authorization', label: 'Brain Access', icon: 'server' as IconName }] }
       : group)
     : SECTIONS.map(group => group.group === 'connectivity'
       ? { ...group, items: [{ id: 'brain-continuity', label: 'Desktop & Web', icon: 'server' as IconName }, ...group.items] }
-      : group), [webRuntime])
+      : group), [hubControl, webRuntime])
 
   const [query, setQuery] = useState('')
   const searchRef = useRef<HTMLInputElement>(null)
@@ -2526,6 +2616,7 @@ export function SettingsScreen({ activeWorkspace }: { activeWorkspace?: Workspac
               <VoiceSection            state={state} set={set} />
               <EditorCompletionSection state={state} set={set} />
               <IntegrationsSection     state={state} set={set} />
+              {hubControl && <HubMachinesSection />}
               {webRuntime && <BrainAuthorizationSection />}
               {!webRuntime && <BrainContinuitySection />}
               <McpSection          state={state} set={set} />

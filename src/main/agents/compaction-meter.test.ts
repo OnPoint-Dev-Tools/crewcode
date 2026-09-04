@@ -17,8 +17,8 @@ describe('compactionStrategy', () => {
   })
 
   it('uses summary-reset for native-session providers with no compact rpc', () => {
-    // pi/hermes/CrewCoder keep server-side sessions and expose no compaction rpc,
-    // so the agent summarizes its own context and we seed a fresh session with it.
+    // Pi/Hermes and older CrewCoder versions keep server-side sessions without
+    // an advertised compact RPC, so we seed a fresh session with a summary.
     expect(compactionStrategy({ ...base, provider: 'pi', hasNativeCompact: false, nativeResume: true })).toBe('summary-reset')
     expect(compactionStrategy({ ...base, provider: 'hermes', hasNativeCompact: false, nativeResume: true })).toBe('summary-reset')
     expect(compactionStrategy({ ...base, provider: 'crewcoder', hasNativeCompact: false, nativeResume: true })).toBe('summary-reset')

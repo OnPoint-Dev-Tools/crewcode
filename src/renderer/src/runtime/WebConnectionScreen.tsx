@@ -483,8 +483,8 @@ function WebRuntimeConnectionScreen() {
           })
           executionPoll = setInterval(() => { void refreshExecutions() }, 10_000)
           setRelay(connectedRelay)
-          const client = createWebCrewCodeClient(connectedRelay.transport)
-          installCrewCodeRuntime({ kind: 'web', client })
+          const client = createWebCrewCodeClient(connectedRelay.transport, { hubControl: true })
+          installCrewCodeRuntime({ kind: 'web', client, hubControl: true })
           await hydrateContinuityState()
           // Hydrate the authoritative browser transcript first, then merge any
           // reply that completed in Brain custody while the page was absent.

@@ -195,7 +195,16 @@ export interface AgentBridge {
   // can sample the bridge's per-process CPU/memory. null if the spawn has no pid.
   readonly pid: number | null
   prompt(text: string, options?: PromptOptions): Promise<{ ok: boolean; error?: string }>
-  compact?(): Promise<{ ok: boolean; error?: string; unsupported?: boolean }>
+  compact?(): Promise<{
+    ok: boolean
+    error?: string
+    unsupported?: boolean
+    // Native compactors may return the authoritative replacement context.
+    // This stays behind the main/Brain boundary; callers project it into the
+    // local replay shard and visible handoff-summary event.
+    summary?: string
+    compacted?: boolean
+  }>
   // Cancel a locally queued follow-up before it is sent. Only bridges that
   // queue follow-ups themselves (claude) implement this; providers that queue
   // upstream (pi) cannot un-send and leave it undefined.

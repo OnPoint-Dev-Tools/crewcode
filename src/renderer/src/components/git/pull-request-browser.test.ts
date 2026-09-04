@@ -15,9 +15,14 @@ describe('repository pull request browser', () => {
 
   it('opens from Git Workspace and selects the current branch pull request', () => {
     expect(page).toContain('className="git-page-pr-browser-button"')
+    expect(page).toContain("pr.status === 'open' || pr.status === 'draft'")
+    expect(page).toContain('className="git-page-pr-count"')
+    expect(styles).toContain('.git-page-pr-count {')
     expect(page).toContain('<PullRequestBrowser')
     expect(browser).toContain('item.head === currentBranch')
     expect(browser).toContain('githubPrCatalogue(repoPath)')
+    expect(browser).toContain('loadCatalogue(true)')
+    expect(browser).toContain('setTimeout(pollCatalogue, 60_000)')
   })
 
   it('offers the requested filters and observed repository evidence', () => {
@@ -64,6 +69,7 @@ describe('repository pull request browser', () => {
     expect(browser).toContain('gitMergeAbort(repoPath)')
     expect(browser).toContain('gitPush(repoPath)')
     expect(browser).not.toContain('Return to Git Workspace')
+    expect(browser).toContain("runConflictOperation('Push resolved head', () => getCrewCodeClient().gitPush(repoPath), true)")
     expect(styles).toContain('.pr-browser-conflicts {')
   })
 

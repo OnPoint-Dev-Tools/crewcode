@@ -11,7 +11,7 @@ import { MobileBrand, useHubMobileDarkMode } from './MobileBrand'
 export interface MobileHubMachine {
   id: string
   name: string
-  status: 'online' | 'offline' | 'revoked'
+  status: 'online' | 'offline' | 'disabled' | 'revoked'
   platform: string | null
   version: string | null
   lastSeenAt: number | null
