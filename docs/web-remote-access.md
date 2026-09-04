@@ -284,7 +284,8 @@ user ids so multi-user access can be added without changing machine identity.
 3. The brain exchanges the approved device code for a revocable machine credential.
    Only a digest/encrypted form is persisted, with owner-only filesystem permissions.
 4. The Hub stores the machine public key, owner, display name, created time,
-   last-seen time, and revocation state. It never receives provider keys, workspace
+   last-seen time, reversible disabled state, and revocation state. It never receives
+   provider keys, workspace
    credentials, source files, transcripts, or terminal output as control-plane data.
 5. Re-enrollment and ownership transfer require explicit confirmation. A revoked
    machine credential cannot be refreshed.
@@ -299,7 +300,7 @@ proves possession of its machine key with a Hub nonce, and sends a bounded
 capability/presence record. The machine list exposes only metadata such as:
 
 - stable opaque machine id and user-selected name;
-- online, offline, connecting, or revoked status;
+- online, offline, disabled, connecting, or revoked status;
 - platform, CrewCode version, protocol version, and coarse capabilities;
 - last seen time and an optional user-selected location label.
 
@@ -313,9 +314,10 @@ never evidence that a command or agent turn completed.
 2. The Hub issues a very short-lived, single-use connection ticket bound to the
    local user, browser session, machine id, requested protocol, and random nonce.
 3. The browser presents the opaque ticket once to the Hub relay. The Hub consumes
-   it, revalidates machine ownership/revocation, and sends immutable user/session/
+   it, revalidates machine ownership/disabled/revocation state, and sends immutable
+   user/session/
    scope claims over the machine-authenticated outbound channel. Expired, replayed,
-   wrong-machine, offline, or revoked tickets are rejected. Tickets are memory-only,
+   wrong-machine, offline, disabled, or revoked tickets are rejected. Tickets are memory-only,
    not self-contained bearer claims or durable signed tokens.
 4. The browser and brain perform an authenticated end-to-end handshake using the
    enrolled machine public key and a browser ephemeral key before privileged RPC is
@@ -327,6 +329,17 @@ never evidence that a command or agent turn completed.
 
 The Hub adapter belongs behind `crewcode-client.ts`. Components and hooks must not
 know whether frames use direct HTTP/WebSocket or the Hub relay.
+
+When the shared renderer is opened through an authenticated Hub, **Settings → Hub
+Machines** lists every machine enrolled to that owner. **Disable** is a reversible
+authority suspension, not a visual preference: the Hub records `disabled_at`, closes
+the machine relay and its browser tunnels, refuses heartbeats and new connection
+tickets, and preserves the enrollment credential for a later explicit **Enable**.
+Enable clears the suspension and reports the machine offline until its Brain
+reconnects and a new heartbeat is observed. The Settings adapter uses the Hub's
+same-origin HttpOnly session plus a freshly observed CSRF value; it never routes this
+owner control through the selected Brain or exposes a Hub credential to renderer
+storage. Direct-server and Electron-only Settings do not show this Hub-owner surface.
 
 ### Network deployment
 
@@ -366,10 +379,15 @@ or become a general-purpose TCP proxy.
 
 ### Revocation and custody
 
-- Owners can inspect and revoke browser sessions, users, and enrolled machines from
-  the Hub.
+- Owners can inspect enrolled machines and reversibly enable/disable them from Hub
+  web Settings. Permanent revocation remains a separate Hub administration action.
+- Disabling a machine immediately refuses new authority and closes its active relay
+  sessions. The local Brain may retain local execution custody and retry its outbound
+  connection; disabling remote access is not evidence that local work completed or
+  stopped.
 - A brain periodically revalidates machine status and immediately closes new and
-  active tunnels when revocation is observed.
+  active tunnels when disablement or revocation is observed. Revocation remains
+  terminal: its credential cannot be enabled again.
 - If identity, scope, relay continuity, or session authority becomes unknown, the
   brain refuses new privileged actions and applies the execution-custody rules in
   `docs/execution-custody.md`.
@@ -398,7 +416,7 @@ Minimum Hub data model:
 
 ```text
 LocalUser(id, credential, role, created_at, revoked_at)
-Machine(id, owner_user_id, public_key, name, status, created_at, last_seen_at, revoked_at)
+Machine(id, owner_user_id, public_key, name, status, created_at, last_seen_at, disabled_at, revoked_at)
 BrowserSession(id, user_id, created_at, expires_at, revoked_at)
 ConnectionTicket(id, user_id, machine_id, browser_session_id, expires_at, used_at)
 AuditEvent(id, user_id?, machine_id?, browser_session_id?, type, created_at, metadata)
@@ -422,7 +440,8 @@ AuditEvent(id, user_id?, machine_id?, browser_session_id?, type, created_at, met
    tickets remain.**
 8. Implement `crewcode enroll`, persistent machine identity, outbound presence, and
    explicit machine revocation. **Enrollment, owner-only machine credentials,
-   outbound heartbeat presence, dashboard status, and revocation are complete.
+   outbound heartbeat presence, dashboard status, reversible Settings disable/enable,
+   and revocation are complete.
    Machine logout/credential rotation remain.**
 9. Implement the bounded Hub relay and a transport-neutral multiplexed tunnel with
    authenticated end-to-end browser-to-brain encryption. **Preview complete:**
@@ -546,8 +565,11 @@ Enrollment creates an Ed25519 machine identity plus a random bearer credential i
 stores the public key and only a SHA-256 digest of the bearer secret. `crewcode brain`
 then maintains an authenticated outbound WebSocket relay and sends HTTPS heartbeats
 every 30 seconds; the dashboard marks a machine offline after 90 seconds without a
-successful heartbeat. Revoking it closes active relay sessions and rejects later
-heartbeats. Enrollment tokens are never written
+successful heartbeat. Disabling it from **Settings → Hub Machines** closes active
+relay sessions and rejects heartbeats/tickets until it is explicitly enabled again;
+the preserved Brain process can then reconnect with the same credential. Revoking it
+closes active relay sessions and permanently rejects later heartbeats. Enrollment
+tokens are never written
 to the Hub database and are invalidated by Hub restart, expiry, first successful use,
 or a failed guess against their id.
 
@@ -589,7 +611,8 @@ The initial CLI implementation is available from a source checkout through
 It builds/serves the shared renderer, defaults to loopback, prints a single-use
 pairing URL, resolves installed provider CLIs without Electron, and shuts down
 cleanly on SIGINT/SIGTERM. The direct-auth CLI and remaining machine-management
-commands above remain planned. Enrollment, dashboard revocation, machine selection,
+commands above remain planned. Enrollment, dashboard revocation, Settings machine
+enable/disable, machine selection,
 and shared CrewCode workspace-client launch through the encrypted Hub relay are
 implemented.
 

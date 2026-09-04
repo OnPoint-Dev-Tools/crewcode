@@ -1515,6 +1515,52 @@ export function registerAgentBridgeIpc(resolveAgentPath: AgentPathResolver): voi
         provider: entry.provider,
       } satisfies BridgeEvent)
     }
+
+    // Newer CrewCoder ACP agents advertise an authoritative durable-session
+    // compact method. Keep the same session/bridge alive, install the returned
+    // summary only into CrewCode's replay shard, and let CrewCoder's
+    // _crewcoder/compaction_update notifications own progress/completion.
+    if (entry.provider === 'crewcoder' && strategy === 'native' && entry.bridge.compact) {
+      const compactionTurnId = `${bridgeId}:compaction:${Date.now().toString(36)}`
+      entry.userInitiatedStop = false
+      entry.running = true
+      entry.lastActivityAt = Date.now()
+      custodyJournal().patch(bridgeId, {
+        status: 'running', turnId: compactionTurnId, turnStartedAt: Date.now(),
+        activePrompt: 'Compact the current CrewCoder session', authority: authorityOf(entry.opts),
+      })
+      try {
+        const result = await entry.bridge.compact()
+        if (!result.ok) {
+          emitCompaction('failed', result.error ?? 'CrewCoder compaction failed.')
+          return { ok: false, error: result.error ?? 'CrewCoder compaction failed' }
+        }
+        if (result.compacted !== false && result.summary?.trim()) {
+          saveCompactedSummary(entry.conversationKey, result.summary)
+          webContents.fromId(entry.webContentsId)?.send('bridge:event', {
+            type: 'handoff_summary',
+            bridgeId,
+            summary: result.summary,
+            fromProvider: entry.provider,
+            toProvider: entry.provider,
+            reason: 'compact',
+          } satisfies BridgeEvent)
+        }
+        if (result.compacted !== false) {
+          entry.lastUsage = undefined
+          if (entry.sessionKey) clearUsageSnapshot(entry.sessionKey)
+        }
+        return { ok: true }
+      } finally {
+        entry.running = false
+        entry.lastActivityAt = Date.now()
+        const record = custodyJournal().get(bridgeId)
+        if (record?.status === 'running' && record.turnId === compactionTurnId) {
+          custodyJournal().patch(bridgeId, { status: 'idle', turnId: undefined, turnStartedAt: undefined, activePrompt: undefined })
+        }
+      }
+    }
+
     emitCompaction('started', `${entry.provider} compaction requested`)
 
     const history = entry.conversationKey ? loadConversation(entry.conversationKey) : []

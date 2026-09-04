@@ -1483,6 +1483,21 @@ body.dark .gs-pr-detail .check-row .ico.f { color: #f87171; }
 }
 .git-page-pr-browser-button:hover { border-color: #285a48; background: color-mix(in srgb, #285a48 20%, var(--card)); }
 .git-page-pr-browser-button:disabled { opacity: .45; cursor: not-allowed; }
+.git-page-pr-count {
+  min-width: 17px;
+  height: 17px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 5px;
+  border: 1px solid color-mix(in srgb, var(--crew-green-bright) 45%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--crew-green-bright) 14%, var(--card));
+  color: var(--crew-green-bright);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+}
 .git-page-sync-strip {
   min-width: 0;
   display: inline-flex;

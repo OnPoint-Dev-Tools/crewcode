@@ -18,6 +18,15 @@ control and shared runtime state, not cloud file synchronization.
    `agent` as needed, then **Save and renew tunnel**. Hub identity alone never
    grants those.
 
+The Hub-connected web application also exposes **Settings → Hub Machines**. It lists
+all machines enrolled to the signed-in Hub owner, not only the currently selected
+machine. Disabling a row immediately suspends that machine's Hub credential, closes
+its relay/browser sessions, and blocks new tickets and heartbeats while preserving
+the enrollment for a later Enable. If the current machine is disabled, the Brain
+tunnel disconnects but the same-origin Hub control plane remains available so the
+owner can enable it again. The machine stays offline until its Brain reconnects and
+the Hub observes a fresh heartbeat.
+
 **Settings → Desktop & Web** probes the enrolled Hub and displays its observed canonical
 browser/passkey origin with **Open Hub**; it never treats the enrollment address as proof
 of browser origin or reachability. Background Brain and Hub are separate processes:
@@ -169,6 +178,11 @@ Hub. The control endpoint only supports status, stop, and the small trusted-desk
 credential allowlist. Hub relay frames remain end-to-end encrypted and every browser
 operation still passes the Brain-local scope and registered-workspace checks.
 Revoked machine authority stops the Brain instead of silently reconnecting.
+Reversible Hub disablement is different: it withdraws remote authority and closes
+Hub tunnels, but a running local/background Brain retains local custody and retries
+the outbound relay. Re-enabling does not assert that the Brain is online; only its
+subsequent observed connection and heartbeat do. Permanent revocation still stops
+the Brain and requires re-enrollment.
 
 If a relay closes during initial browser hydration, the connection screen preserves
 the first observed close reason instead of replacing it with a later generic
@@ -212,8 +226,10 @@ reported as a successful revocation.
 - `src/main/brain-desktop-rendezvous.ts` — owner-only connection/preferences files.
 - `src/main/hub-machine-enrollment.ts` and `src/main/hub-brain-relay.ts` — detached
   Brain startup, local backend lifetime, Hub relay, revocation handling.
+- `src/main/hub-store.ts` and `src/main/hub-server.ts` — owner-scoped machine
+  enable/disable state, CSRF-protected mutations, and relay containment.
 - `src/renderer/src/runtime/web-rpc-client.ts` — composite Brain-attached Electron
-  client.
+  client plus authenticated Hub control-plane adapter for Hub web Settings.
 - `src/main/continuity-state-service.ts` and
   `src/renderer/src/runtime/continuity-state.ts` — bounded catalogue continuity.
 - `src/main/agents/bridge-service.ts` — stable-start coalescing and per-conversation

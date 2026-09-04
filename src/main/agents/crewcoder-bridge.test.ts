@@ -9,6 +9,7 @@ vi.mock('./agent-spawn', () => ({ spawnAgentProcess }))
 import {
   CREWCODER_PROMPT_INACTIVITY_TIMEOUT_MS,
   createCrewCoderBridge,
+  crewCoderCompactMethod,
   crewCoderInitializeParams,
   crewCoderAcpErrorMessage,
   createCrewCoderToolProjectionState,
@@ -17,6 +18,18 @@ import {
   crewCoderPermissionOptions,
   crewCoderUsageFromPromptResult,
 } from './crewcoder-bridge'
+
+describe('CrewCoder compact capability', () => {
+  it('accepts only the advertised CrewCoder session compact method', () => {
+    expect(crewCoderCompactMethod({
+      _meta: { 'crewcoder/sessionCompact': { method: 'session/compact', preview: true, editedSummary: true } },
+    })).toBe('session/compact')
+    expect(crewCoderCompactMethod({
+      _meta: { 'crewcoder/sessionCompact': { method: 'session/delete' } },
+    })).toBeUndefined()
+    expect(crewCoderCompactMethod({})).toBeUndefined()
+  })
+})
 
 describe('CrewCoder filesystem custody handshake', () => {
   it('keeps local ACP file capabilities separate from virtual custody', () => {
@@ -51,7 +64,7 @@ class FakeAcpProcess extends EventEmitter {
   }
 }
 
-function crewCoderAcpHarness(options: { directoryError?: string } = {}): { proc: FakeAcpProcess; sent: Array<Record<string, unknown>> } {
+function crewCoderAcpHarness(options: { directoryError?: string; compact?: boolean } = {}): { proc: FakeAcpProcess; sent: Array<Record<string, unknown>> } {
   const proc = new FakeAcpProcess()
   const sent: Array<Record<string, unknown>> = []
   let input = ''
@@ -66,7 +79,13 @@ function crewCoderAcpHarness(options: { directoryError?: string } = {}): { proc:
       const message = JSON.parse(line) as Record<string, unknown>
       sent.push(message)
       if (message.method === 'initialize') {
-        proc.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: message.id, result: {} })}\n`)
+        proc.stdout.write(`${JSON.stringify({
+          jsonrpc: '2.0',
+          id: message.id,
+          result: options.compact
+            ? { _meta: { 'crewcoder/sessionCompact': { method: 'session/compact', preview: true, editedSummary: true } } }
+            : {},
+        })}\n`)
       } else if (message.method === 'session/new') {
         proc.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { sessionId: 'session-1' } })}\n`)
       } else if (message.method === 'session/set_external_directories') {
@@ -77,11 +96,72 @@ function crewCoderAcpHarness(options: { directoryError?: string } = {}): { proc:
         proc.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { queued: true } })}\n`)
       } else if (message.method === 'session/set_reasoning_effort') {
         proc.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: message.id, result: {} })}\n`)
+      } else if (message.method === 'session/compact') {
+        proc.stdout.write(`${JSON.stringify({
+          jsonrpc: '2.0',
+          method: 'session/update',
+          params: {
+            sessionId: 'session-1',
+            update: {
+              sessionUpdate: '_crewcoder/compaction_update',
+              status: 'completed',
+              automatic: false,
+              percent: 100,
+              message: 'Context compacted.',
+              summary: 'Authoritative compact summary.',
+            },
+          },
+        })}\n`)
+        proc.stdout.write(`${JSON.stringify({
+          jsonrpc: '2.0',
+          id: message.id,
+          result: { compacted: true, summary: 'Authoritative compact summary.' },
+        })}\n`)
       }
     }
   })
   return { proc, sent }
 }
+
+describe('CrewCoder native compaction', () => {
+  it('exposes compact only when advertised and calls session/compact without fabricating a turn', async () => {
+    const harness = crewCoderAcpHarness({ compact: true })
+    const events: BridgeEvent[] = []
+    spawnAgentProcess.mockResolvedValue({ proc: harness.proc, dir: '/repo', remote: false })
+
+    const bridge = await createCrewCoderBridge('crewcoder', {
+      bridgeId: 'bridge',
+      provider: 'crewcoder',
+      cwd: '/repo',
+      mode: 'build',
+    }, event => events.push(event))
+
+    await expect(bridge.compact?.()).resolves.toEqual({
+      ok: true,
+      compacted: true,
+      summary: 'Authoritative compact summary.',
+    })
+    expect(harness.sent).toContainEqual(expect.objectContaining({
+      method: 'session/compact',
+      params: { sessionId: 'session-1' },
+    }))
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'compaction_event',
+      automatic: false,
+      resetContext: true,
+    }))
+    expect(events.some(event => event.type === 'turn_start')).toBe(false)
+  })
+
+  it('keeps compact absent for older CrewCoder ACP agents', async () => {
+    const harness = crewCoderAcpHarness()
+    spawnAgentProcess.mockResolvedValue({ proc: harness.proc, dir: '/repo', remote: false })
+    const bridge = await createCrewCoderBridge('crewcoder', {
+      bridgeId: 'bridge-old', provider: 'crewcoder', cwd: '/repo', mode: 'build',
+    }, () => {})
+    expect(bridge.compact).toBeUndefined()
+  })
+})
 
 describe('CrewCoder ACP errors', () => {
   it('prefers actionable RequestError data over the generic JSON-RPC message', () => {
@@ -511,6 +591,17 @@ describe('CrewCoder ACP update projection', () => {
       provider: 'crewcoder',
       resetContext: true,
     }])
+
+    expect(crewCoderEventsFromUpdate({
+      sessionUpdate: '_crewcoder/compaction_update',
+      status: 'completed',
+      automatic: false,
+      phase: 'skipped',
+      percent: 100,
+      message: 'Nothing to compact yet.',
+    }, 'bridge', '', createCrewCoderToolProjectionState())).toEqual([expect.not.objectContaining({
+      resetContext: true,
+    })])
   })
 
   it('ignores malformed compaction and unknown session update kinds', () => {

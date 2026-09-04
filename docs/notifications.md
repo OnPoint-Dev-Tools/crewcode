@@ -19,6 +19,16 @@ notification-worthy chat records only when they are newly appended through the
 live per-scope message path. Live errors remain global; an `agent exited`
 warning is shown only when its scope is currently active.
 
+Git and GitHub notifications are also live-event-only. A card is published
+after CrewCode observes a successful user-triggered commit, push, pull, fetch,
+sync, local merge, merge continuation/abort, repository publish, or pull-request
+mutation. Background Git polling, GitHub catalogue refreshes, startup hydration,
+and restored PR state stay silent. Failures remain in the contextual Git banner;
+they are not announced as successful operations. The shared Git controller
+publishes these events for Git Workspace and embedded Git sidebars, while the PR
+Browser publishes its direct conflict-workspace continue, abort, and resolved-head
+push results.
+
 Each notification card features:
 - Color-coded left border and icon indicating type
 - Semi-transparent glassmorphism background with backdrop blur
@@ -113,6 +123,7 @@ NotificationBar (UI Component)
 | **Integration** | `src/renderer/src/App.tsx` | Wires notification triggers to app events |
 | **Chat event gate** | `src/renderer/src/stores/chat-messages-store.ts` | Publishes only newly appended live chat errors/exits; suppresses restored history |
 | **Chat host** | `src/renderer/src/components/thread/ChatNotifications.tsx` | Maps gated live chat events onto notification cards |
+| **Git event gate** | `src/renderer/src/hooks/useGitSidebar.ts` | Publishes successful user-triggered Git and pull-request mutations only |
 | **Native toast** | `src/main/notify.ts` | Shows the cross-platform Electron notification and handles click focus |
 | **Sounds** | `src/renderer/src/notifications/notification-sounds.ts` | Validates presets and synthesizes custom tones |
 | **Styles** | `src/renderer/src/styles/styles.css` | CSS classes for layout, colors, and animations |

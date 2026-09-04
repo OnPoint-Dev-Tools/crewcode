@@ -10,7 +10,9 @@ import type {
   GitBranchRef, GitWorktreeRef, GitBanner, ChangeStatus, CheckState, GitSidebarHandlers,
   GitActionOutcome,
 } from '../components/git/git-state'
+import type { GitHubPullRequestCatalogueItem } from '../../../shared/github-types'
 import { getCrewCodeClient } from '../runtime/crewcode-client'
+import { useOptionalNotifications } from './useNotifications'
 
 /** Synthetic id for the repo's primary checkout — git's worktree list omits it. */
 const MAIN_ID = '__main__'
@@ -56,6 +58,29 @@ function runState(r: GitHubRun): CheckState {
 function githubPrUrl(remoteUrl: string, num: number): string | null {
   const normalized = remoteUrl.trim().replace(/^https?:\/\//, '').replace(/\.git$/, '')
   return normalized ? `https://${normalized}/pull/${num}` : null
+}
+
+function catalogueItemToPr(item: GitHubPullRequestCatalogueItem, existing?: GitPrRef): GitPrRef {
+  return {
+    num: item.number,
+    status: item.state === 'MERGED' ? 'merged' : item.state === 'CLOSED' ? 'closed' : item.isDraft ? 'draft' : 'open',
+    title: item.title,
+    head: item.head,
+    base: item.base,
+    author: item.author,
+    updated: item.updatedAt,
+    url: item.url,
+    body: item.body,
+    mergeStateStatus: existing?.mergeStateStatus ?? 'UNKNOWN',
+    reviewDecision: item.reviewDecision,
+    checks: existing?.checks ?? [],
+    runs: existing?.runs ?? [],
+  }
+}
+
+function samePullRequests(left: GitPrRef[], right: GitPrRef[]): boolean {
+  if (left.length !== right.length) return false
+  return left.every((item, index) => JSON.stringify(item) === JSON.stringify(right[index]))
 }
 
 export interface GitAuthRequest {
@@ -105,6 +130,9 @@ export function useGitSidebar(args: UseGitSidebarArgs): UseGitSidebarResult {
     enabled, onSwitchWorktree, onAskAgent, onWorktreesChanged, onRequestGitAuth, onRequestSigningPassphrase,
     alwaysCommitUnsigned,
   } = args
+  const notifications = useOptionalNotifications()
+  const notifyRef = useRef(notifications?.show)
+  notifyRef.current = notifications?.show
 
   // Read the latest toggle inside handlers without rebuilding them on every flip.
   const alwaysUnsignedRef = useRef(alwaysCommitUnsigned)
@@ -114,6 +142,7 @@ export function useGitSidebar(args: UseGitSidebarArgs): UseGitSidebarResult {
   const [actionBanner, setActionBanner] = useState<GitBanner | null>(null)
 
   const lastFetchRef = useRef<string>('never')
+  const currentBranchRef = useRef<string>('')
   const worktreesRef = useRef<Worktree[]>([])   // extra worktrees (no primary)
   const prsRef       = useRef<GitPrRef[]>([])
   const bannerTimer  = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -180,6 +209,7 @@ export function useGitSidebar(args: UseGitSidebarArgs): UseGitSidebarResult {
 
     const user = auth?.user ?? undefined
     const stOk = !!st && !st.error
+    currentBranchRef.current = stOk ? (st!.branch || '') : ''
 
     // Working-tree changes + conflict derivation.
     const changes: GitChange[] = []
@@ -266,32 +296,67 @@ export function useGitSidebar(args: UseGitSidebarArgs): UseGitSidebarResult {
     })
   }, [repoPath, workspacePath, mainBranch, comparisonRef, currentWorktreeId])
 
+  const refreshPullRequests = useCallback(async (): Promise<void> => {
+    if (!workspacePath) return
+    const result = await getCrewCodeClient().githubPrCatalogue(workspacePath).catch(() => null)
+    if (!result || 'error' in result) return
+    const previousByNumber = new Map(ghRef.current.prs.map(pr => [pr.num, pr]))
+    const prs = result.items.map(item => catalogueItemToPr(item, previousByNumber.get(item.number)))
+    ghRef.current = { ...ghRef.current, prs }
+    prsRef.current = prs
+    setState(current => {
+      const nextUser = result.viewer ?? current.user
+      return samePullRequests(current.prs, prs) && current.user === nextUser
+        ? current
+        : { ...current, prs, user: nextUser }
+    })
+  }, [workspacePath])
+
   // Fetch shortly after opening so the sidebar can paint/animate first; GitHub
   // status is the slow path and should not make the pane feel blocked.
   useEffect(() => {
     if (!enabled) return
     const initial = setTimeout(() => refresh({ github: true }), 180)
     const poll = setInterval(() => refresh(), 30_000)
+    let stopped = false
+    let pullRequestTimer: ReturnType<typeof setTimeout> | null = null
+    const pollPullRequests = async (): Promise<void> => {
+      await refreshPullRequests()
+      if (!stopped) pullRequestTimer = setTimeout(pollPullRequests, 60_000)
+    }
+    pullRequestTimer = setTimeout(pollPullRequests, 60_000)
     return () => {
+      stopped = true
       clearTimeout(initial)
       clearInterval(poll)
+      if (pullRequestTimer) clearTimeout(pullRequestTimer)
     }
-  }, [enabled, refresh])
+  }, [enabled, refresh, refreshPullRequests])
 
   /** Run an action, surface pending / done / error as a sidebar banner, then refresh. */
   const runAction = useCallback(async (
     pending: string,
     fn: () => Promise<ActionResult>,
     okText: string,
-    opts?: { github?: boolean },
+    opts?: { github?: boolean; notify?: boolean },
   ): Promise<boolean> => {
     showBanner({ kind: '', text: pending, spinning: true, auto: 0 })
     let ok = false
     try {
       const r = await fn()
       if (r && r.error)     showBanner({ kind: 'err', text: r.error, auto: 7000 })
-      else if (r && r.warn) { showBanner({ kind: 'warn', text: r.warn, auto: 7000 }); ok = true }
-      else                  { showBanner({ kind: '', text: okText, auto: 3000 }); ok = true }
+      else if (r && r.warn) {
+        showBanner({ kind: 'warn', text: r.warn, auto: 7000 })
+        if (opts?.notify) notifyRef.current?.({ type: 'warning', message: `Git: ${r.warn}` })
+        ok = true
+      } else {
+        showBanner({ kind: '', text: okText, auto: 3000 })
+        if (opts?.notify) {
+          const branch = currentBranchRef.current
+          notifyRef.current?.({ type: 'success', message: `Git: ${okText}${branch ? ` on ${branch}` : ''}` })
+        }
+        ok = true
+      }
     } catch (e) {
       showBanner({ kind: 'err', text: e instanceof Error ? e.message : String(e), auto: 7000 })
     }
@@ -313,6 +378,10 @@ export function useGitSidebar(args: UseGitSidebarArgs): UseGitSidebarResult {
       }
       showBanner({ kind: result?.warn ? 'warn' : '', text: result?.warn ?? okText, auto: result?.warn ? 7000 : 3000 })
       await refresh({ github: true })
+      notifyRef.current?.({
+        type: result?.warn ? 'warning' : 'success',
+        message: `Pull request: ${result?.warn ?? okText}`,
+      })
       return { ok: true }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -341,11 +410,11 @@ export function useGitSidebar(args: UseGitSidebarArgs): UseGitSidebarResult {
   }
 
   const handlers: GitSidebarHandlers = useMemo(() => ({
-    onPush:  () => runAction('pushing…',  pushWithOptionalCredentials,  'pushed'),
-    onPull:  () => runAction('pulling…',  () => window.electronAPI!.gitPull(repoPath),  'pulled', { github: true }),
+    onPush:  () => runAction('pushing…',  pushWithOptionalCredentials,  'pushed', { notify: true }),
+    onPull:  () => runAction('pulling…',  () => window.electronAPI!.gitPull(repoPath),  'pulled', { github: true, notify: true }),
     onFetch: () => {
       lastFetchRef.current = 'just now'
-      runAction('fetching…', () => window.electronAPI!.gitFetch(repoPath), 'fetched', { github: true })
+      runAction('fetching…', () => window.electronAPI!.gitFetch(repoPath), 'fetched', { github: true, notify: true })
     },
     onSync: () => runAction(
       'syncing…',
@@ -355,7 +424,7 @@ export function useGitSidebar(args: UseGitSidebarArgs): UseGitSidebarResult {
         return pushWithOptionalCredentials()
       },
       'synced',
-      { github: true },
+      { github: true, notify: true },
     ),
 
     onCheckoutBranch: (ref) => {
@@ -451,7 +520,7 @@ export function useGitSidebar(args: UseGitSidebarArgs): UseGitSidebarResult {
         return { ...c, warn }
       },
       sync ? 'committed & synced' : push ? 'committed & pushed' : amend ? 'amended' : 'committed',
-      sync ? { github: true } : undefined,
+      { github: sync, notify: true },
     ),
 
     onSwitchWorktree: (id) => onSwitchWorktree(id === MAIN_ID ? null : id),
@@ -491,6 +560,7 @@ export function useGitSidebar(args: UseGitSidebarArgs): UseGitSidebarResult {
         `merging ${src.branch} → ${dst.branch}…`,
         () => window.electronAPI!.gitMerge(dst.path, src.branch),
         `merged ${src.branch} → ${dst.branch}`,
+        { notify: true },
       )
     },
 
@@ -509,8 +579,8 @@ export function useGitSidebar(args: UseGitSidebarArgs): UseGitSidebarResult {
         showBanner({ kind: '', text: `asked agent to resolve ${file}`, auto: 3000 })
       }
     },
-    onAbortMerge:    () => runAction('aborting merge…',  () => window.electronAPI!.gitMergeAbort(repoPath),    'merge aborted'),
-    onContinueMerge: () => runAction('continuing merge…', () => window.electronAPI!.gitMergeContinue(repoPath), 'merge committed'),
+    onAbortMerge:    () => runAction('aborting merge…',  () => window.electronAPI!.gitMergeAbort(repoPath),    'merge aborted', { notify: true }),
+    onContinueMerge: () => runAction('continuing merge…', () => window.electronAPI!.gitMergeContinue(repoPath), 'merge committed', { notify: true }),
 
     onCreatePR:  (options) => runPrAction(
       'creating pull request…',
@@ -518,7 +588,7 @@ export function useGitSidebar(args: UseGitSidebarArgs): UseGitSidebarResult {
       options.draft ? 'draft pull request created' : 'pull request created',
     ),
     onMergePR:   (num, method, headCommitId) => runPrAction(`merging #${num} with ${method}…`,  () => getCrewCodeClient().ghPrMerge(repoPath, num, method, headCommitId),   `#${num} merged with ${method}`),
-    onApprovePR: (num) => runAction(`approving #${num}…`, () => window.electronAPI!.ghPrApprove(repoPath, num), `#${num} approved`, { github: true }),
+    onApprovePR: (num) => runAction(`approving #${num}…`, () => window.electronAPI!.ghPrApprove(repoPath, num), `#${num} approved`, { github: true, notify: true }),
     onUpdatePRBranch: (num) => runPrAction(`updating #${num}…`, () => getCrewCodeClient().ghPrUpdateBranch(repoPath, num), `#${num} updated`),
     onReadyPR: (num) => runPrAction(`marking #${num} ready for review…`, () => getCrewCodeClient().ghPrReady(repoPath, num), `#${num} is ready for review`),
     onDraftPR: (num) => runPrAction(`converting #${num} to draft…`, () => getCrewCodeClient().ghPrDraft(repoPath, num), `#${num} is now a draft`),
@@ -543,7 +613,7 @@ export function useGitSidebar(args: UseGitSidebarArgs): UseGitSidebarResult {
         return { ok: false, conflicts: [], output: '', error: message }
       }
     },
-    onCommentPR: (num, body) => runAction(`commenting on #${num}…`, () => getCrewCodeClient().ghPrComment(repoPath, num, body), `comment added to #${num}`, { github: true }),
+    onCommentPR: (num, body) => runAction(`commenting on #${num}…`, () => getCrewCodeClient().ghPrComment(repoPath, num, body), `comment added to #${num}`, { github: true, notify: true }),
     onClosePR: (num) => runPrAction(`closing #${num}…`, () => getCrewCodeClient().ghPrClose(repoPath, num), `#${num} closed`),
     onReviewPR: (num, options) => runPrAction(`submitting review for #${num}…`, () => getCrewCodeClient().ghPrReview(repoPath, num, options), `review submitted for #${num}`),
     onOpenPR: (num) => {
@@ -564,7 +634,7 @@ export function useGitSidebar(args: UseGitSidebarArgs): UseGitSidebarResult {
       `publishing ${opts.name}…`,
       () => window.electronAPI!.ghRepoCreate(workspacePath, opts),
       `published ${opts.name}`,
-      { github: true },
+      { github: true, notify: true },
     ),
   }), [repoPath, workspacePath, mainBranch, runAction, resolveWt, showBanner,
        onSwitchWorktree, onAskAgent, onWorktreesChanged, onRequestGitAuth, onRequestSigningPassphrase, runPrAction, refresh])

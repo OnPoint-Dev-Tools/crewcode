@@ -50,6 +50,21 @@ available only for real working-tree changes.
   sections render on the right (with the commit/changes sections hidden, since
   the page has its own).
 
+## Switching tabs without losing work
+
+Inactive Git tabs may unmount so CrewCode does not keep duplicate repository
+pollers and Git controllers running. Meaningful unfinished UI state is retained
+in bounded, process-session memory keyed by the exact outer tab and worktree.
+Returning to a tab restores its commit message and amend choice, PR creation
+step and fields, whether the PR creator or Browser was open, PR Browser
+navigation, review summary, and queued inline review comments.
+
+Explicitly cancelling a PR creator or successfully submitting a commit/PR clears
+that workflow's draft. Credentials, loading indicators, mutation locks,
+conflict-editor working buffers, and destructive confirmation dialogs are not
+retained. Repository state is always reloaded from Git/GitHub rather than cached
+as a successful outcome.
+
 ## Authentication prompts
 
 - Pushes that need credentials open the one-shot

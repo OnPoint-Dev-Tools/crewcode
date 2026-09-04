@@ -27,6 +27,7 @@ import { splitPullRequestPatch } from './pull-request-diff'
 import type { GitActionOutcome } from './git-state'
 import type { GitStatus } from '../../types'
 import type { GitConflictDiffResult } from '../../../../shared/git-conflict-types'
+import { useOptionalNotifications } from '../../hooks/useNotifications'
 
 type PullRequestFilter = 'all' | 'open' | 'closed' | 'assigned'
 type PullRequestBrowserTab = 'overview' | 'timeline' | 'changes' | 'checks' | 'conflicts'
@@ -43,6 +44,9 @@ interface PullRequestBrowserMemory {
   base: string
   head: string
   review: PullRequestReviewFilter
+  reviewEvent?: GitHubPullRequestReviewOptions['event']
+  reviewBody?: string
+  pendingCommentsByNumber?: Record<number, GitHubPullRequestInlineCommentDraft[]>
 }
 
 const browserMemoryByRepo = new Map<string, PullRequestBrowserMemory>()
@@ -113,6 +117,7 @@ export function PullRequestBrowser({
   onReview,
   onClose,
 }: PullRequestBrowserProps) {
+  const notifications = useOptionalNotifications()
   const [catalogue, setCatalogue] = useState<GitHubPullRequestCatalogue | null>(null)
   const initialMemory = browserMemoryByRepo.get(repoPath)
   const [selectedNumber, setSelectedNumber] = useState<number | null>(initialMemory?.selectedNumber ?? null)
@@ -122,7 +127,7 @@ export function PullRequestBrowser({
   const [reviewContextError, setReviewContextError] = useState('')
   const [reviewContextLoading, setReviewContextLoading] = useState(false)
   const [localViewedByNumber, setLocalViewedByNumber] = useState<Record<number, string[]>>({})
-  const [pendingCommentsByNumber, setPendingCommentsByNumber] = useState<Record<number, GitHubPullRequestInlineCommentDraft[]>>({})
+  const [pendingCommentsByNumber, setPendingCommentsByNumber] = useState<Record<number, GitHubPullRequestInlineCommentDraft[]>>(initialMemory?.pendingCommentsByNumber ?? {})
   const [inlineTarget, setInlineTarget] = useState<{ path: string; side: 'LEFT' | 'RIGHT'; line: number } | null>(null)
   const [inlineBody, setInlineBody] = useState('')
   const [selectedPath, setSelectedPath] = useState(initialMemory?.selectedPath ?? '')
@@ -143,8 +148,8 @@ export function PullRequestBrowser({
   const [avatarByLogin, setAvatarByLogin] = useState<Record<string, string | null>>({})
   const [mutation, setMutation] = useState<{ kind: string; number: number } | null>(null)
   const [notice, setNotice] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null)
-  const [reviewEvent, setReviewEvent] = useState<GitHubPullRequestReviewOptions['event']>('comment')
-  const [reviewBody, setReviewBody] = useState('')
+  const [reviewEvent, setReviewEvent] = useState<GitHubPullRequestReviewOptions['event']>(initialMemory?.reviewEvent ?? 'comment')
+  const [reviewBody, setReviewBody] = useState(initialMemory?.reviewBody ?? '')
   const [mergeMethod, setMergeMethod] = useState<GitHubMergeMethod>('squash')
   const [confirmAction, setConfirmAction] = useState<'merge' | 'auto' | 'disable-auto' | 'queue' | 'close' | 'reopen' | 'draft' | 'resolve' | null>(null)
   const [conflictPreparation, setConflictPreparation] = useState<GitHubPullRequestConflictPreparationResult | null>(null)
@@ -174,10 +179,12 @@ export function PullRequestBrowser({
   const previousSelectedRef = useRef(selectedNumber)
   const restoringRepoRef = useRef(false)
 
-  const loadCatalogue = useCallback(async () => {
+  const loadCatalogue = useCallback(async (background = false) => {
     if (!open) return
-    setLoading(true)
-    setError('')
+    if (!background) {
+      setLoading(true)
+      setError('')
+    }
     try {
       const result = await getCrewCodeClient().githubPrCatalogue(repoPath)
       if ('error' in result) throw new Error(result.error)
@@ -187,9 +194,9 @@ export function PullRequestBrowser({
         return result.items.find(item => item.head === currentBranch)?.number ?? result.items[0]?.number ?? null
       })
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : String(loadError))
+      if (!background) setError(loadError instanceof Error ? loadError.message : String(loadError))
     } finally {
-      setLoading(false)
+      if (!background) setLoading(false)
     }
   }, [currentBranch, open, repoPath])
 
@@ -208,6 +215,21 @@ export function PullRequestBrowser({
   }, [open, repoPath, loadCatalogue])
 
   useEffect(() => {
+    if (!open) return
+    let stopped = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const pollCatalogue = async (): Promise<void> => {
+      await loadCatalogue(true)
+      if (!stopped) timer = setTimeout(pollCatalogue, 60_000)
+    }
+    timer = setTimeout(pollCatalogue, 60_000)
+    return () => {
+      stopped = true
+      if (timer) clearTimeout(timer)
+    }
+  }, [loadCatalogue, open])
+
+  useEffect(() => {
     if (previousRepoRef.current === repoPath) return
     previousRepoRef.current = repoPath
     restoringRepoRef.current = true
@@ -222,6 +244,9 @@ export function PullRequestBrowser({
     setBaseFilter(memory?.base ?? '')
     setHeadFilter(memory?.head ?? '')
     setReviewFilter(memory?.review ?? 'any')
+    setReviewEvent(memory?.reviewEvent ?? 'comment')
+    setReviewBody(memory?.reviewBody ?? '')
+    setPendingCommentsByNumber(memory?.pendingCommentsByNumber ?? {})
     setCatalogue(null)
     setDetailByNumber({})
     setPatchByNumber({})
@@ -233,8 +258,12 @@ export function PullRequestBrowser({
 
   useEffect(() => {
     if (!open) return
-    browserMemoryByRepo.set(repoPath, { selectedNumber, selectedPath, tab, filter, query, author: authorFilter, label: labelFilter, base: baseFilter, head: headFilter, review: reviewFilter })
-  }, [authorFilter, baseFilter, filter, headFilter, labelFilter, open, query, repoPath, reviewFilter, selectedNumber, selectedPath, tab])
+    browserMemoryByRepo.set(repoPath, {
+      selectedNumber, selectedPath, tab, filter, query,
+      author: authorFilter, label: labelFilter, base: baseFilter, head: headFilter, review: reviewFilter,
+      reviewEvent, reviewBody, pendingCommentsByNumber,
+    })
+  }, [authorFilter, baseFilter, filter, headFilter, labelFilter, open, pendingCommentsByNumber, query, repoPath, reviewBody, reviewEvent, reviewFilter, selectedNumber, selectedPath, tab])
 
   useEffect(() => {
     if (previousSelectedRef.current === selectedNumber) return
@@ -785,7 +814,11 @@ export function PullRequestBrowser({
     }
   }
 
-  const runConflictOperation = async (label: string, action: () => Promise<{ ok?: boolean; error?: string }>) => {
+  const runConflictOperation = async (
+    label: string,
+    action: () => Promise<{ ok?: boolean; error?: string }>,
+    publishNotification = false,
+  ) => {
     if (!detail || conflictOperation || actionLocked) return false
     setConflictOperation(label)
     setLocalConflictError('')
@@ -797,6 +830,7 @@ export function PullRequestBrowser({
       if (!result.ok) throw new Error(result.error || `${label} did not complete`)
       await loadLocalConflictStatus()
       setNotice({ kind: 'ok', text: `${label} completed for #${detail.number}.` })
+      if (publishNotification) notifications?.show({ type: 'success', message: `Pull request #${detail.number}: ${label.toLowerCase()}` })
       return true
     } catch (operationError) {
       setLocalConflictError(operationError instanceof Error ? operationError.message : String(operationError))
@@ -821,7 +855,7 @@ export function PullRequestBrowser({
 
   const pushResolvedHead = async () => {
     if (!detail) return
-    const pushed = await runConflictOperation('Push resolved head', () => getCrewCodeClient().gitPush(repoPath))
+    const pushed = await runConflictOperation('Push resolved head', () => getCrewCodeClient().gitPush(repoPath), true)
     if (pushed) {
       try {
         await refreshSelectedEvidence(detail.number)
@@ -835,7 +869,7 @@ export function PullRequestBrowser({
   }
 
   const abortLocalMerge = async () => {
-    const aborted = await runConflictOperation('Abort merge', () => getCrewCodeClient().gitMergeAbort(repoPath))
+    const aborted = await runConflictOperation('Abort merge', () => getCrewCodeClient().gitMergeAbort(repoPath), true)
     if (aborted) {
       setConflictPreparation(null)
       setTab('overview')
@@ -1051,7 +1085,7 @@ export function PullRequestBrowser({
                   </div>
                   <section className="pr-conflict-result"><header><div><span>Resolution result</span><strong>Remove every conflict marker, then save this file.</strong></div><button className="gs-btn primary" disabled={!!conflictOperation || actionLocked || conflictFileLoading} onClick={() => void saveResolvedConflict()}>{conflictOperation || 'Save and mark resolved'}</button></header>{conflictFileLoading ? <div className="pr-browser-loading">Loading editable result…</div> : <textarea className="pr-conflict-editor" value={conflictFileText} disabled={!!conflictOperation || actionLocked} spellCheck={false} onChange={event => setConflictFileText(event.target.value)} aria-label={`Resolve conflicts in ${selectedConflictPath}`} />}</section>
                 </> : <div className="pr-conflict-completion">
-                  {localConflictStatus?.mergeInProgress ? <><Icon name="check" size={18} /><strong>All conflict files are resolved</strong><p>Create the local merge commit. CrewCode keeps the default Git merge message and remains on <code>{detail.head}</code>.</p><button className="gs-btn primary" disabled={!!conflictOperation || actionLocked} onClick={() => void runConflictOperation('Continue merge', () => getCrewCodeClient().gitMergeContinue(repoPath))}>{conflictOperation || 'Continue merge'}</button></> : <><Icon name="gitBranch" size={18} /><strong>Push the resolved head branch</strong><p>This updates PR #{detail.number}. GitHub will recalculate checks and mergeability from the new head.</p><button className="gs-btn primary" disabled={!!conflictOperation || actionLocked} onClick={() => void pushResolvedHead()}>{conflictOperation || `Push ${detail.head}`}</button></>}
+                  {localConflictStatus?.mergeInProgress ? <><Icon name="check" size={18} /><strong>All conflict files are resolved</strong><p>Create the local merge commit. CrewCode keeps the default Git merge message and remains on <code>{detail.head}</code>.</p><button className="gs-btn primary" disabled={!!conflictOperation || actionLocked} onClick={() => void runConflictOperation('Continue merge', () => getCrewCodeClient().gitMergeContinue(repoPath), true)}>{conflictOperation || 'Continue merge'}</button></> : <><Icon name="gitBranch" size={18} /><strong>Push the resolved head branch</strong><p>This updates PR #{detail.number}. GitHub will recalculate checks and mergeability from the new head.</p><button className="gs-btn primary" disabled={!!conflictOperation || actionLocked} onClick={() => void pushResolvedHead()}>{conflictOperation || `Push ${detail.head}`}</button></>}
                 </div>}
                 <div className="pr-conflict-abort"><span>Abort restores the branch to its state before this local merge.</span><button className="gs-btn danger" disabled={!!conflictOperation || actionLocked || !localConflictStatus?.mergeInProgress} onClick={() => void abortLocalMerge()}>Abort merge</button></div>
               </main>

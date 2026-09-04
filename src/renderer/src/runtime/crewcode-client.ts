@@ -5,6 +5,8 @@ export type CrewCodeClient = NonNullable<Window['electronAPI']>
 export interface CrewCodeRuntime {
   kind: CrewCodeRuntimeKind
   client: CrewCodeClient
+  /** Present only when the renderer was opened through an authenticated Hub. */
+  hubControl?: true
 }
 
 let runtime: CrewCodeRuntime | null = null
