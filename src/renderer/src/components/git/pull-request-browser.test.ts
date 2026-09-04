@@ -7,6 +7,12 @@ const browser = readFileSync(fileURLToPath(new URL('./PullRequestBrowser.tsx', i
 const styles = readFileSync(fileURLToPath(new URL('../../styles/git-sidebar.css', import.meta.url)), 'utf8')
 
 describe('repository pull request browser', () => {
+  it('declares every React hook before the closed-browser early return', () => {
+    const earlyReturn = browser.indexOf('if (!open) return null')
+    expect(earlyReturn).toBeGreaterThan(-1)
+    expect(browser.slice(earlyReturn)).not.toMatch(/\buse(?:Callback|Effect|Memo|Ref|State)\s*\(/)
+  })
+
   it('opens from Git Workspace and selects the current branch pull request', () => {
     expect(page).toContain('className="git-page-pr-browser-button"')
     expect(page).toContain('<PullRequestBrowser')
@@ -17,7 +23,7 @@ describe('repository pull request browser', () => {
   it('offers the requested filters and observed repository evidence', () => {
     expect(browser).toContain("['all', 'open', 'closed', 'assigned']")
     expect(browser).toContain('item.assignees, ...item.reviewers')
-    expect(browser).toContain("['overview', 'timeline', 'changes', 'checks']")
+    expect(browser).toContain("['overview', 'timeline', 'changes', 'checks', ...(showConflictFlow")
     expect(browser).toContain('opened this pull request on')
     expect(browser).toContain('exactDateLabel(createdAt)')
     expect(browser).toContain('githubProfile(author)')
@@ -45,6 +51,20 @@ describe('repository pull request browser', () => {
     expect(browser).toContain('Submit review')
     expect(browser).toContain('Update branch')
     expect(browser).toContain('Confirm close')
+  })
+
+  it('keeps conflict resolution inside the selected pull request workspace', () => {
+    expect(browser).toContain("tab === 'conflicts'")
+    expect(browser).toContain('Save and mark resolved')
+    expect(browser).toContain('gitConflictDiff(repoPath, selectedConflictPath)')
+    expect(browser).toContain('<PierreDiff patch={conflictDiff.patch}')
+    expect(browser).toContain("gitResolveConflict(repoPath, selectedConflictPath, 'ours')")
+    expect(browser).toContain("gitResolveConflict(repoPath, selectedConflictPath, 'theirs')")
+    expect(browser).toContain('gitMergeContinue(repoPath)')
+    expect(browser).toContain('gitMergeAbort(repoPath)')
+    expect(browser).toContain('gitPush(repoPath)')
+    expect(browser).not.toContain('Return to Git Workspace')
+    expect(styles).toContain('.pr-browser-conflicts {')
   })
 
   it('renders observed comments after the overview description sections', () => {

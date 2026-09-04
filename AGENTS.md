@@ -17,6 +17,28 @@ menu for stage, stage-all, unstage, and explicitly confirmed discard actions.
 
 GitHub pull-request creation, review, and management stay inside Git Workspace/Git Sidebar through the typed CrewCode client. Preserve the single-PR Branches → Details → Review creation flow, measured base-relative evidence, the compact current-branch PR sidebar launcher, and the canonical repository PR Browser with real on-demand detail/diff/check evidence, PierreDiff per-file review, overall review submission, explicit draft-to-ready action, visible action-gate reasons, explicit merge confirmation, and merge/squash/rebase choices. The Browser must capture the exact selected PR/branches, lock selection/navigation during every mutation, and refresh authoritative evidence after the observed result; do not restore a second review shell or mutation state. PR conflict preparation must require explicit confirmation, the exact clean PR-head worktree, validated refs, observed fetch/merge outcomes, and must surface conflicts through the existing merge card without implicit checkout; retain `MERGE_HEAD` visibility after the last file is staged, then require explicit continue and push. `--auto` is not conflict resolution. Read methods remain registered-root `workspace:read`; mutations require `workspace:write`. Never expose GitHub credentials to the renderer/browser, fabricate inline comments, imply self-approval is available, or infer readiness/merge from silence. Crew integration remains a separate provenance-journal and behavioral-verification workflow. See `docs/github-pull-requests.md`.
 
+Pull-request creation may select a bounded subset of the observed base-to-head
+commit history. Revalidate full commit ids after fetching the latest base, then
+create and push a new named head branch by cherry-picking in history order from
+an isolated temporary worktree; never rewrite, checkout, or dirty the user's
+current branch. Abort and remove the isolated operation without pushing when a
+selected commit conflicts. Keep PR conflict file editing, ours/theirs,
+exact-file staging, continue, abort, and push in the PR Browser's contextual
+Conflicts tab. Recheck the selected PR head branch before every local mutation
+and refresh GitHub detail/check evidence after the resolved head is pushed.
+
+PR creation Details keeps optional Description, Problem, What changed, Why it
+changed, and Solution fields. Submit only non-empty author content under exact
+level-two Markdown headings and show explicit not-provided states in Review;
+never fabricate a missing section. The PR Browser Conflicts tab must render one
+bounded, canonical PierreDiff patch from Git's exact stage-2 ours and stage-3
+theirs blobs for the selected unresolved path, label the PR-head/base sides,
+and keep Use ours/Use theirs actions beside that evidence. Manual resolution
+remains editable, must reject standard conflict markers before exact-file
+staging, and must not treat the marker-filled working file as side evidence.
+Conflict-side reads require registered-root `workspace:read`; resolution writes
+and staging retain `workspace:write`.
+
 The Git Workspace repository PR browser loads a bounded all-state catalogue through the typed client, selects the current branch's head PR when present, and filters the observed catalogue locally by all/open/closed/assigned-to-viewer. Treat merged PRs as closed and assigned as observed assignee or requested-reviewer identity only. Load selected PR details on demand and identify the author with the observed GitHub username plus exact creation timestamp. Keep Overview, Timeline, Code changes, and Checks in the middle pane: Overview always exposes Description/Problem/What changed/Why it changed/Solution while marking absent author content as not provided rather than inventing it; Timeline chronologically combines the observed open event, commits, comments, and submitted reviews; Code changes loads GitHub's combined base-to-head diff on demand, never the `--patch` format-patch mail series, strips defensive mail boundaries, folds repeated paths under one canonical `diff --git` header, and sends one selected file patch to PierreDiff; Checks shows observed status and links only as an external fallback. Keep non-heading copy across every PR surface at the readable PR body scale rather than terminal-label sizes. Show real reviewers, assignees, labels, checks, branches, and change metrics. Keep mutation actions in the Browser inspector with exact target confirmation and mutation locking. Preserve the stacked mobile catalogue/detail and file-list/diff layouts and the explicit SSH-unavailable result. See `docs/github-pull-requests.md`.
 
 PR authorship avatars must be retrieved only through the trusted main/Brain boundary. Restrict every redirect and bounded raster response to GitHub-controlled hosts, return only a data URL to the renderer, cache successful images by username, and keep the GitHub-mark fallback when retrieval fails. Keep observed GitHub comments and submitted review summaries at the bottom of PR Browser Overview after the description sections, with author, state, exact timestamp, Markdown body, and an explicit empty state.

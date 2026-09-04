@@ -1,7 +1,7 @@
 import { ipcMain, BrowserWindow, shell } from 'electron'
 import { spawn, spawnSync, ChildProcess } from 'child_process'
 import { publishRepository, type PublishRepoOpts } from './github-publish'
-import { getGitHubAvatar, getPullRequestCatalogue, getPullRequestCheckLog, getPullRequestChecksContext, getPullRequestCreateContext, getPullRequestDetail, getPullRequestDiff, getPullRequestManagementContext, getPullRequestReviewContext, ghAvailable, getGhStatus, preparePullRequestConflictResolution, pullRequestActionArgs, pullRequestCommentArgs, pullRequestCreateArgs, pullRequestEditArgs, pullRequestMergeArgs, pullRequestMetadataArgs, pullRequestReviewArgs, rerunPullRequestCheck, runGh, submitPullRequestReview, updatePullRequestMergeAutomation, updatePullRequestReviewThread, updatePullRequestViewedFile } from './github-service'
+import { createPullRequest, getGitHubAvatar, getPullRequestCatalogue, getPullRequestCheckLog, getPullRequestChecksContext, getPullRequestCreateContext, getPullRequestDetail, getPullRequestDiff, getPullRequestManagementContext, getPullRequestReviewContext, ghAvailable, getGhStatus, preparePullRequestConflictResolution, pullRequestActionArgs, pullRequestCommentArgs, pullRequestEditArgs, pullRequestMergeArgs, pullRequestMetadataArgs, pullRequestReviewArgs, rerunPullRequestCheck, runGh, submitPullRequestReview, updatePullRequestMergeAutomation, updatePullRequestReviewThread, updatePullRequestViewedFile } from './github-service'
 import type { GitHubMergeMethod, GitHubPullRequestCheckRerunOptions, GitHubPullRequestCreateOptions, GitHubPullRequestEditOptions, GitHubPullRequestMergeAutomationOptions, GitHubPullRequestMetadataOptions, GitHubPullRequestReviewOptions, GitHubPullRequestViewedFileOptions } from '../shared/github-types'
 
 export interface GhStatus {
@@ -139,7 +139,7 @@ export function registerGhIpc(): void {
 
   // Pull-request operations for the Git Sidebar.
   ipcMain.handle('gh:prCreate',  (_e, cwd: string, options: GitHubPullRequestCreateOptions) => {
-    try { return runGh(cwd, pullRequestCreateArgs(options)) }
+    try { return createPullRequest(cwd, options) }
     catch (error) { return { ok: false, output: '', error: error instanceof Error ? error.message : String(error) } }
   })
   ipcMain.handle('gh:prMerge',   (_e, cwd: string, num: number, method: GitHubMergeMethod, headCommitId?: string) => {

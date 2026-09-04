@@ -2,6 +2,7 @@ import { execFile } from 'child_process'
 import { parseLog, parseStatus } from './git-porcelain-parse'
 import { unstagePaths } from './git-unstage'
 import { discardPath } from './git-discard'
+import { getGitConflictDiff } from './git-conflict-diff'
 
 interface GitResult { stdout: string; stderr: string }
 
@@ -51,6 +52,10 @@ export class GitService {
       try { return { ok: true, diff: (await this.run(cwd, ['diff', ...prefix, '--no-index', '--', '/dev/null', path])).stdout } }
       catch (error) { return { ok: true, diff: (error as { stdout?: string }).stdout ?? '' } }
     } catch (error) { return { error: this.message(error) } }
+  }
+
+  async conflictDiff(cwd: string, path: string) {
+    return getGitConflictDiff(path, args => this.run(cwd, args))
   }
 
   async changesVsRef(cwd: string, ref: string) {

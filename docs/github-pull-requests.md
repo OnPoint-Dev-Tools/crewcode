@@ -7,10 +7,30 @@ CrewCode's Git Sidebar and Git Workspace provide an in-app pull-request workflow
 Open **Pull Requests**, then select **Create pull request**. CrewCode presents one pull request through three focused steps:
 
 1. **Branches** selects the source and base, then measures ahead/behind counts, changed files, and merge conflicts directly against that base.
-2. **Details** collects the title, optional Markdown description, and draft or ready-for-review state.
+2. **Details** collects the title, five optional Markdown sections—Description,
+   Problem, What changed, Why it changed, and Solution—and the draft or
+   ready-for-review state.
 3. **Review** confirms the exact source, target, evidence, and content before creation.
 
 New pull requests default to draft. Branch comparison uses read-only Git commands and never checks out or moves a ref. CrewCode passes each creation value as a separate `gh` argument, refreshes GitHub state after the command completes, and reports the observed result in the Git banner. It does not infer success from a URL or open the new pull request in a browser.
+
+Each Details section is optional. CrewCode includes only non-empty sections in
+the submitted PR body, using the visible field label as a level-two Markdown
+heading. The Review step shows every section and marks omitted content as not
+provided, so the author sees the structure before creation. CrewCode does not
+generate or infer problem statements, rationale, or solutions.
+
+The Branches step can use **All new commits** or **Pick commits**. The default
+uses the current branch as the PR head, so a fresh `dev` to `main` PR contains
+only commits that GitHub has not already merged into `main`. Pick-commit mode
+assembles a smaller release from the current base-to-head history. Select up to
+100 full commit identities and name a new source branch. On confirmation, the
+trusted service fetches the latest `origin/<base>`, revalidates every selected
+commit against that authoritative range, creates an isolated temporary
+worktree from the latest base, and cherry-picks the commits in history order.
+Only the new branch is pushed and used as the PR head; the current branch and
+worktree are never checked out, rewritten, or dirtied. A cherry-pick conflict
+aborts the temporary operation and no branch is pushed.
 
 A draft cannot be merged. The review inspector explains that gate and provides
 **Mark ready for review**, backed by `gh pr ready`. After GitHub confirms the
@@ -46,7 +66,8 @@ service, accepts only bounded raster content from GitHub-controlled hosts, and
 returns a `data:` image to the renderer. Images are cached by username for the
 app session; a failed or rejected image falls back to the GitHub mark.
 
-The middle pane has four views:
+The middle pane has four standard views, plus a contextual **Conflicts** view
+while local PR conflict resolution is active:
 
 - **Overview** always shows **Description**, **Problem**, **What changed**,
   **Why it changed**, and **Solution**. Authored headings and common aliases map
@@ -79,6 +100,17 @@ The middle pane has four views:
   whole workflow. Third-party status providers that do not expose a GitHub
   Actions run retain their observed status and external details link, while
   CrewCode states that in-app logs and reruns are unavailable.
+- **Conflicts** appears for a conflicting PR or active conflict-resolution
+  operation. It lists the exact unmerged paths and reads Git's stage-2 ours blob
+  and stage-3 theirs blob through the trusted registered-root boundary. One
+  canonical per-file patch renders those sides in PierreDiff, labeled with the
+  PR head and base branch. You can accept the complete ours/theirs side from the
+  comparison or edit the resolution result below it. CrewCode refuses to mark a
+  manual result resolved while standard conflict markers remain, then saves and
+  stages only that exact file. It retains merge-in-progress evidence after the
+  last path is staged and keeps explicit continue, abort, and push actions in
+  the PR workspace. Binary or oversized evidence is reported explicitly while
+  ours/theirs resolution remains available when Git exposes that side.
 
 Non-heading copy across the creation flow, sidebar PR card, repository browser,
 timeline, file catalogue, inspector, and review workspace uses the shared
@@ -197,15 +229,22 @@ git merge --no-edit origin/<base>
 ```
 
 Every argument is passed separately and both refs are validated. If the merge
-is clean, CrewCode reports that the local head must be pushed. If Git observes
-unmerged paths, the review returns to Git Workspace and the existing
-**Conflicts** card lists the exact files. Each file can be opened in CrewCode's
-editable Code Editor, resolved with ours/theirs, or assigned to an agent. Save
-manual edits and stage the resolved file. **Continue merge** remains available after
-the last conflict is staged because merge-in-progress state comes from observed
-`MERGE_HEAD`, not from the continued presence of an unmerged file. **Abort**
-restores the pre-merge state. After continuing, explicitly push the PR head and
-refresh the PR before attempting the confirmed GitHub merge again.
+is clean, CrewCode opens the contextual **Conflicts** tab at its push step. If
+Git observes unmerged paths, that tab lists the exact files instead of sending
+you back to Git Workspace. Select a file and edit its conflict markers, or
+explicitly choose **Use ours** or **Use theirs** for the complete file. **Save
+and mark resolved** writes through the registered-root filesystem boundary and
+stages that exact path after checking that standard conflict markers were
+removed. The comparison is an observed, bounded stage-2-to-stage-3 Git diff;
+it is not reconstructed from the marker-filled working file. **Continue
+merge** remains available after the last
+conflict is staged because merge-in-progress state comes from observed
+`MERGE_HEAD`, not from the continued presence of an unmerged file. **Abort
+merge** restores the pre-merge state and exits the contextual workspace. After
+continuing, **Push `<head>`** updates the exact PR branch, reloads GitHub detail
+and check evidence, and returns to Checks before another confirmed merge
+attempt. Every local mutation rechecks that the worktree is still on the
+selected PR head; target drift is refused.
 
 GitHub's suggested `--auto` flag is intentionally not treated as conflict
 resolution. Auto-merge only queues the final merge after conflicts, checks,
@@ -213,7 +252,7 @@ reviews, and repository rules are satisfied.
 
 ## Desktop and web behavior
 
-Electron invokes the local authenticated `gh` CLI. A browser connected to a Brain uses the same typed CrewCode client contract. PR catalogue, comparison, detail, diff, public avatar, review-context, management choices, detailed check context, and bounded check-log methods require `workspace:read`; creation, detail and metadata editing, draft/ready transitions, review submission, branch update, check reruns, auto-merge or queue changes, close/reopen, and merge require `workspace:write`. Every operation remains confined to a registered workspace root. GitHub credentials never cross into the renderer or browser.
+Electron invokes the local authenticated `gh` CLI. A browser connected to a Brain uses the same typed CrewCode client contract. PR catalogue, comparison, detail, diff, conflict-side evidence, public avatar, review-context, management choices, detailed check context, and bounded check-log methods require `workspace:read`; creation, conflict resolution and staging, detail and metadata editing, draft/ready transitions, review submission, branch update, check reruns, auto-merge or queue changes, close/reopen, and merge require `workspace:write`. Every operation remains confined to a registered workspace root. GitHub credentials never cross into the renderer or browser.
 
 This GitHub workflow is separate from crew integration. Crew lane merges continue to use the provenance journal, behavioral verification, and explicit apply gate documented in [Behavioral merge review](behavioral-merge-review.md).
 

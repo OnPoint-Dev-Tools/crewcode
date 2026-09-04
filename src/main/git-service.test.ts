@@ -72,7 +72,14 @@ describe('GitService', () => {
     try { execFileSync('git', ['merge', 'base'], { cwd: root, stdio: 'pipe' }) } catch { /* expected conflict */ }
 
     expect(await service.status(root)).toMatchObject({ ok: true, mergeInProgress: true })
+    const evidence = await service.conflictDiff(root, 'README.md')
+    expect(evidence).toMatchObject({ ok: true, oursAvailable: true, theirsAvailable: true })
+    expect(evidence.patch).toContain('diff --git a/README.md b/README.md')
+    expect(evidence.patch).toContain('ours (PR head)')
+    expect(evidence.patch).toContain('theirs (base)')
+    expect((evidence.patch.match(/^diff --git /gm) ?? [])).toHaveLength(1)
     expect(await service.resolveConflict(root, 'README.md', 'ours')).toEqual({ ok: true })
+    expect(await service.conflictDiff(root, 'README.md')).toMatchObject({ ok: false, error: expect.stringContaining('no longer an unresolved') })
     expect(await service.status(root)).toMatchObject({ ok: true, mergeInProgress: true, unstaged: [] })
     expect(await service.mergeContinue(root)).toMatchObject({ ok: true })
     expect(await service.status(root)).toMatchObject({ ok: true, mergeInProgress: false })
