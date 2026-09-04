@@ -114,7 +114,7 @@ export interface WebClientTransport {
 
 /** A Proxy keeps unsupported privileged methods explicit while the web surface
  * grows; supported calls retain the desktop client's exact TypeScript shape. */
-export function createWebCrewCodeClient(sessionOrTransport: string | WebClientTransport): CrewCodeClient {
+export function createWebCrewCodeClient(sessionOrTransport: string | WebClientTransport, options: { hubControl?: boolean } = {}): CrewCodeClient {
   const directSession = typeof sessionOrTransport === 'string' ? sessionOrTransport : null
   const transport: WebClientTransport = typeof sessionOrTransport === 'string'
     ? {
@@ -437,6 +437,23 @@ export function createWebCrewCodeClient(sessionOrTransport: string | WebClientTr
       ensureEvents()
       return () => bridgeListeners.delete(callback)
     },
+  }
+  if (options.hubControl) {
+    const hubJson = async <T,>(path: string, init?: RequestInit): Promise<T> => {
+      const response = await fetch(path, { cache: 'no-store', credentials: 'same-origin', ...init })
+      const body = await response.json() as T & { error?: string }
+      if (!response.ok) throw new WebRpcError(body.error ?? `Hub request failed with ${response.status}`, response.status === 401 ? 'UNAUTHENTICATED' : 'FORBIDDEN', response.status)
+      return body
+    }
+    supported.hubMachinesList = () => hubJson('/api/v1/hub/machines')
+    supported.hubMachineSetEnabled = async (machineId, enabled) => {
+      const session = await hubJson<{ csrf: string }>('/api/v1/hub/session')
+      return hubJson(`/api/v1/hub/machines/${encodeURIComponent(machineId)}/enabled`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-crewcode-csrf': session.csrf },
+        body: JSON.stringify({ enabled }),
+      })
+    }
   }
   return new Proxy(supported as CrewCodeClient, {
     get(target, property, receiver) {

@@ -2,8 +2,10 @@ import { useEffect, useRef, useState } from 'react'
 import type { GitHubPullRequestCreateContext, GitHubPullRequestCreateOptions } from '../../../../shared/github-types'
 import { getCrewCodeClient } from '../../runtime/crewcode-client'
 import { Icon } from '../ui/Icon'
+import { clearGitTabMemory, readGitTabMemory, writeGitTabMemory, type PullRequestCreationDraft } from './git-tab-memory'
 
 interface PullRequestModalProps {
+  memoryKey: string
   open: boolean
   repoPath: string
   head: string
@@ -33,21 +35,35 @@ export function buildPullRequestBody(values: PullRequestBodyValues): string {
   }).join('\n\n')
 }
 
-export function PullRequestModal({ open, repoPath, head, branches, defaultBase, defaultTitle, onCreate, onClose }: PullRequestModalProps) {
-  const [step, setStep] = useState(0)
-  const [title, setTitle] = useState(defaultTitle)
-  const [bodyValues, setBodyValues] = useState<PullRequestBodyValues>(EMPTY_BODY_VALUES)
-  const [base, setBase] = useState(defaultBase)
-  const [draft, setDraft] = useState(true)
-  const [commitScope, setCommitScope] = useState<'all' | 'selected'>('all')
-  const [selectedCommits, setSelectedCommits] = useState<string[]>([])
-  const [selectedBranch, setSelectedBranch] = useState('')
+export function PullRequestModal({ memoryKey, open, repoPath, head, branches, defaultBase, defaultTitle, onCreate, onClose }: PullRequestModalProps) {
+  const remembered = readGitTabMemory<PullRequestCreationDraft>(memoryKey)
+  const [step, setStep] = useState(remembered?.step ?? 0)
+  const [title, setTitle] = useState(remembered?.title ?? defaultTitle)
+  const [bodyValues, setBodyValues] = useState<PullRequestBodyValues>(remembered?.bodyValues ?? EMPTY_BODY_VALUES)
+  const [base, setBase] = useState(remembered?.base ?? defaultBase)
+  const [draft, setDraft] = useState(remembered?.draft ?? true)
+  const [commitScope, setCommitScope] = useState<'all' | 'selected'>(remembered?.commitScope ?? 'all')
+  const [selectedCommits, setSelectedCommits] = useState<string[]>(remembered?.selectedCommits ?? [])
+  const [selectedBranch, setSelectedBranch] = useState(remembered?.selectedBranch ?? '')
   const [creating, setCreating] = useState(false)
   const [comparison, setComparison] = useState<{ loading: boolean; value?: GitHubPullRequestCreateContext; error?: string }>({ loading: false })
   const titleRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (!open) return
+    const saved = readGitTabMemory<PullRequestCreationDraft>(memoryKey)
+    if (saved) {
+      setStep(saved.step)
+      setTitle(saved.title)
+      setBodyValues(saved.bodyValues)
+      setBase(saved.base)
+      setDraft(saved.draft)
+      setCommitScope(saved.commitScope)
+      setSelectedCommits(saved.selectedCommits)
+      setSelectedBranch(saved.selectedBranch)
+      setCreating(false)
+      return
+    }
     setStep(0)
     setTitle(defaultTitle)
     setBodyValues(EMPTY_BODY_VALUES)
@@ -57,7 +73,14 @@ export function PullRequestModal({ open, repoPath, head, branches, defaultBase, 
     setSelectedCommits([])
     setSelectedBranch(`${head.replace(/[^A-Za-z0-9._/-]+/g, '-').replace(/^[-/.]+|[-/.]+$/g, '') || 'changes'}-selected`)
     setCreating(false)
-  }, [open, defaultBase, defaultTitle, head])
+  }, [open, defaultBase, defaultTitle, head, memoryKey])
+
+  useEffect(() => {
+    if (!open) return
+    writeGitTabMemory<PullRequestCreationDraft>(memoryKey, {
+      step, title, bodyValues, base, draft, commitScope, selectedCommits, selectedBranch,
+    })
+  }, [base, bodyValues, commitScope, draft, memoryKey, open, selectedBranch, selectedCommits, step, title])
 
   useEffect(() => {
     if (!open || !repoPath || !base.trim()) return
@@ -78,17 +101,25 @@ export function PullRequestModal({ open, repoPath, head, branches, defaultBase, 
   useEffect(() => {
     if (!open) return
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !creating) onClose()
+      if (event.key === 'Escape' && !creating) {
+        clearGitTabMemory(memoryKey)
+        onClose()
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [open, creating, onClose])
+  }, [open, creating, memoryKey, onClose])
 
   useEffect(() => {
     if (open && step === 1) setTimeout(() => titleRef.current?.select(), 30)
   }, [open, step])
 
   if (!open) return null
+
+  const discardAndClose = () => {
+    clearGitTabMemory(memoryKey)
+    onClose()
+  }
 
   const submit = async () => {
     if (!title.trim() || !base.trim() || creating) return
@@ -100,7 +131,7 @@ export function PullRequestModal({ open, repoPath, head, branches, defaultBase, 
         selectedCommits: commitScope === 'selected' ? selectedCommits : undefined,
         selectedBranch: commitScope === 'selected' ? selectedBranch.trim() : undefined,
       })
-      if (ok) onClose()
+      if (ok) discardAndClose()
     } finally {
       setCreating(false)
     }
@@ -112,14 +143,14 @@ export function PullRequestModal({ open, repoPath, head, branches, defaultBase, 
   const canContinueDetails = !!title.trim()
 
   return (
-    <div className="im-backdrop pr-flow-backdrop" onClick={() => { if (!creating) onClose() }}>
+    <div className="im-backdrop pr-flow-backdrop" onClick={() => { if (!creating) discardAndClose() }}>
       <div className="im-modal pr-flow" role="dialog" aria-modal="true" aria-labelledby="pr-create-title" onClick={event => event.stopPropagation()}>
         <header className="pr-flow-head">
           <div>
             <span className="pr-flow-index">01</span>
             <h2 id="pr-create-title">Create pull request</h2>
           </div>
-          <button type="button" className="im-close" onClick={onClose} disabled={creating} aria-label="Close pull request dialog"><Icon name="close" size={13} /></button>
+          <button type="button" className="im-close" onClick={discardAndClose} disabled={creating} aria-label="Close pull request dialog"><Icon name="close" size={13} /></button>
         </header>
 
         <nav className="pr-flow-steps" aria-label="Pull request creation steps">
@@ -215,7 +246,7 @@ export function PullRequestModal({ open, repoPath, head, branches, defaultBase, 
         </div>
 
         <footer className="pr-flow-actions">
-          <button type="button" className="gs-btn ghost" onClick={() => step === 0 ? onClose() : setStep(current => current - 1)} disabled={creating}>{step === 0 ? 'Cancel' : 'Back'}</button>
+          <button type="button" className="gs-btn ghost" onClick={() => step === 0 ? discardAndClose() : setStep(current => current - 1)} disabled={creating}>{step === 0 ? 'Cancel' : 'Back'}</button>
           {step < 2 ? (
             <button type="button" className="gs-btn primary" onClick={() => setStep(current => current + 1)} disabled={step === 0 ? !canContinueBranches : !canContinueDetails}>Next step <Icon name="chevRight" size={11} /></button>
           ) : (

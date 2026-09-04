@@ -263,10 +263,32 @@ export class AgentBridgeService {
     return this.sendConversationPrompt(entry, text, options)
   }
 
-  compact(bridgeId: string): Promise<{ ok: boolean; error?: string; unsupported?: boolean }> {
+  async compact(bridgeId: string): Promise<{ ok: boolean; error?: string; unsupported?: boolean }> {
     const entry = this.bridges.get(bridgeId)
-    if (!entry) return Promise.resolve({ ok: false, error: 'bridge not found' })
-    return entry.bridge.compact?.() ?? Promise.resolve({ ok: false, unsupported: true, error: 'provider does not support compaction' })
+    if (!entry) return { ok: false, error: 'bridge not found' }
+    if (!entry.bridge.compact) return { ok: false, unsupported: true, error: 'provider does not support compaction' }
+    if (entry.running) return { ok: false, error: 'cannot compact while the conversation is running' }
+    entry.running = true
+    try {
+      const result = await entry.bridge.compact()
+      if (result.ok && result.compacted !== false && result.summary && entry.opts.conversationKey) {
+        saveConversation(entry.opts.conversationKey, [
+          { role: 'user', content: 'Continue from this compacted conversation summary.' },
+          { role: 'assistant', content: result.summary },
+        ])
+        this.emit({
+          type: 'handoff_summary',
+          bridgeId,
+          summary: result.summary,
+          fromProvider: entry.opts.provider,
+          toProvider: entry.opts.provider,
+          reason: 'compact',
+        })
+      }
+      return { ok: result.ok, error: result.error, unsupported: result.unsupported }
+    } finally {
+      entry.running = false
+    }
   }
 
   resetSession(conversationKey: string, sessionKey?: string): { ok: true } | { error: string } {

@@ -40,6 +40,24 @@ button as proof that the state changed.
 ## Browse repository pull requests
 
 Select **Pull requests** in the Git Workspace header to open the repository PR
+Browser. The launcher includes a badge when the latest bounded GitHub status
+contains open pull requests; draft pull requests count as open, while closed and
+merged pull requests do not. Background catalogue refreshes update evidence but
+never create notification-bar history.
+
+While a Git surface remains active, CrewCode silently refreshes the bounded PR
+catalogue once per minute. Pull requests created or changed directly on GitHub by
+other users therefore appear in the list and open-count badge without reopening
+the workspace. The refresh loop is single-flight, preserves the current selected
+PR when it still exists, and does not announce historical or externally observed
+state through the notification bar.
+
+Switching outer tabs retains the PR Browser's repository-scoped navigation,
+filters, selected file/tab, review summary, and queued inline comments. The PR
+creation flow also restores its current step, branch/commit selection, title,
+structured body fields, and draft choice. Explicit cancel or successful submit
+clears the creation draft; mutation locks and confirmation dialogs never carry
+across an unmount.
 browser. CrewCode loads up to 100 open, closed, and merged pull requests in one
 catalogue request, then filters that observed result locally by **All**,
 **Open**, **Closed**, or **Assigned to you**. Closed includes merged pull

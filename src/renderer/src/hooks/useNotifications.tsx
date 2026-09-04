@@ -57,3 +57,11 @@ export function useNotifications(): NotificationsCtx {
   if (!ctx) throw new Error('useNotifications must be inside NotificationsProvider')
   return ctx
 }
+
+/**
+ * Shared infrastructure hooks can publish live events when a notification host
+ * is present while remaining usable in isolated tests and embedded surfaces.
+ */
+export function useOptionalNotifications(): NotificationsCtx | null {
+  return useContext(Ctx)
+}

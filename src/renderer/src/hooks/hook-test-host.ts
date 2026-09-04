@@ -9,7 +9,7 @@
  * `*.test.ts` collection glob without a JSX transform.
  */
 
-import { createElement } from 'react'
+import { createElement, type ComponentType, type ReactNode } from 'react'
 import TestRenderer, { act } from 'react-test-renderer'
 import type { ReactTestRenderer } from 'react-test-renderer'
 
@@ -22,7 +22,11 @@ export interface HookHarness<P, R> {
   unmount: () => void
 }
 
-export function renderHook<P, R>(useHook: (props: P) => R, initialProps: P): HookHarness<P, R> {
+export function renderHook<P, R>(
+  useHook: (props: P) => R,
+  initialProps: P,
+  Wrapper?: ComponentType<{ children: ReactNode }>,
+): HookHarness<P, R> {
   const result = { current: undefined as unknown as R }
   let currentProps = initialProps
 
@@ -31,16 +35,20 @@ export function renderHook<P, R>(useHook: (props: P) => R, initialProps: P): Hoo
     return null
   }
 
+  const renderProbe = () => Wrapper
+    ? createElement(Wrapper, null, createElement(Probe))
+    : createElement(Probe)
+
   let renderer!: ReactTestRenderer
   act(() => {
-    renderer = TestRenderer.create(createElement(Probe))
+    renderer = TestRenderer.create(renderProbe())
   })
 
   return {
     result,
     rerender(props: P) {
       currentProps = props
-      act(() => { renderer.update(createElement(Probe)) })
+      act(() => { renderer.update(renderProbe()) })
     },
     unmount() {
       act(() => { renderer.unmount() })

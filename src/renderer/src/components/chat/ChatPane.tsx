@@ -994,6 +994,7 @@ export function ChatPane({
             />
           )}
           <GitSidebar
+            stateKey={`${activeWs}:${layoutTabId}:${effectivePath}`}
             workspace={{
               name:   workspace.name,
               path:   effectivePath,

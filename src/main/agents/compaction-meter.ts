@@ -53,7 +53,8 @@ export type CompactionStrategy = 'native' | 'local-summary' | 'summary-reset' | 
 //                    codex thread/compact, opencode /summarize, plugins).
 // - local-summary → CrewCode owns the replay history (HTTP_ONLY) so it asks for a
 //                    summary and replaces the stored messages with it.
-// - summary-reset → native-session providers with no compaction RPC (pi, hermes, CrewCoder):
+// - summary-reset → native-session providers with no compact RPC (pi, hermes,
+//                    and CrewCoder versions without the advertised extension):
 //                    have the agent summarize its own live context, then start a
 //                    fresh upstream session seeded with that summary.
 // - unsupported   → nothing safe to do; report it instead of sending the literal

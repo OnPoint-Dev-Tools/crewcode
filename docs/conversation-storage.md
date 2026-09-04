@@ -68,11 +68,24 @@ Both maps are cleared together when a session is explicitly reset (`bridge:reset
 | **opencode** | `native` | `POST /session/:id/summarize` (server-side) |
 | **claude** | `native` | `/compact` slash command via the Agent SDK → `compact_boundary` event |
 | **plugins** | `native` | plugin bridge `compact()` (local summary prompt) |
+| **CrewCoder (advertised extension)** | `native` | ACP `session/compact`; durable session is rewritten in place and its returned summary replaces only CrewCode's replay shard |
 | **ollama / openrouter** (HTTP_ONLY) | `local-summary` | `LOCAL_COMPACT_PROMPT` + `compactLocalConversation` replaces our owned replay history |
-| **pi / hermes / CrewCoder** | `summary-reset` | no native RPC → the agent summarizes its own live context, then we seed a fresh session with it (below) |
+| **pi / hermes / older CrewCoder** | `summary-reset` | no advertised native RPC → CrewCode summarizes the bounded transcript, then seeds a fresh session (below) |
 | _any provider with no thread/conversation key_ | `unsupported` | nowhere to persist a summary; reported instead of faked |
 
-### `summary-reset` flow (pi / hermes / CrewCoder)
+### CrewCoder native compact flow
+
+CrewCode exposes `compact()` on the CrewCoder bridge only after observing the
+exact `initialize._meta["crewcoder/sessionCompact"]` method advertisement. An
+idle `/compact` calls `session/compact` with the current durable session id.
+CrewCoder owns summary generation and the durable transcript rewrite, returns
+the installed summary, and emits authoritative `_crewcoder/compaction_update`
+progress. CrewCode replaces its local replay shard with `[continue, summary]`
+and appends a visible compact-summary card, but keeps the full rich display
+transcript, provider session id, and live bridge. If CrewCoder reports a skipped
+small-session compact, CrewCode leaves replay and usage state unchanged.
+
+### `summary-reset` flow (pi / hermes / older CrewCoder)
 
 Native-session providers keep their context server-side and expose no compaction RPC, so we cannot shrink it directly. Instead:
 
@@ -81,7 +94,7 @@ Native-session providers keep their context server-side and expose no compaction
 3. The bridge is torn down via the **idle-stop path** (`idle_stopped` → renderer drops its keys silently, no "agent exited" noise). Teardown + the `completed` event are deferred to a `queueMicrotask` so ordering stays `turn_end → completed → idle_stopped` and the bridge is never stopped re-entrantly from inside its own event.
 4. The **next prompt** calls `bridge:start` with no resume id but local history present → `injectHistoryOnNextPrompt` re-arms → the summary is injected as `<conversation_history>` into a fresh, small upstream session.
 
-> History note: previously every provider without a native `compact()` fell through to `prompt('/compact')`. Codex/HTTP-only/plugins worked, but pi/hermes/opencode/claude received the literal string `/compact`, which the agent simply answered. opencode and claude now compact natively; pi/hermes/CrewCoder use summary-reset.
+> History note: previously every provider without a native `compact()` fell through to `prompt('/compact')`. Codex/HTTP-only/plugins worked, but pi/hermes/opencode/claude received the literal string `/compact`, which the agent simply answered. OpenCode and Claude now compact natively; pi, Hermes, and CrewCoder versions without the advertised extension use summary-reset.
 
 ## Visible chat transcripts (separate from replay history)
 

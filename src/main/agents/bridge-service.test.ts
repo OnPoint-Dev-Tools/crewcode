@@ -4,6 +4,7 @@ import { join } from 'path'
 import { describe, expect, it, vi } from 'vitest'
 import { AgentBridgeService, bridgeSessionStorageKey, webConversationKey } from './bridge-service'
 import type { AgentBridgeFactory } from './bridge-service'
+import type { BridgeEvent } from './bridge-types'
 import { loadConversation, saveConversation } from './conversation-store'
 
 describe('AgentBridgeService', () => {
@@ -131,6 +132,47 @@ describe('AgentBridgeService', () => {
     await expect(service.prompt('missing', 'hello')).resolves.toEqual({ ok: false, error: 'bridge not found' })
     await expect(service.abort('missing')).resolves.toEqual({ ok: true })
     await expect(service.stop('missing')).resolves.toEqual({ ok: true })
+  })
+
+  it('stores a native compact summary without replacing the durable provider session', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'crewcode-native-compact-'))
+    const previousDataDir = process.env.CREWCODE_DATA_DIR
+    process.env.CREWCODE_DATA_DIR = dataDir
+    const conversationKey = `web:native-compact-${Date.now().toString(36)}`
+    const stop = vi.fn(async () => undefined)
+    const factory: AgentBridgeFactory = async (_path, opts) => ({
+      bridgeId: opts.bridgeId,
+      pid: null,
+      prompt: async () => ({ ok: true }),
+      compact: async () => ({ ok: true, compacted: true, summary: 'Durable CrewCoder summary.' }),
+      abort: async () => undefined,
+      stop,
+    })
+    const service = new AgentBridgeService(() => '/bin/fake-agent', factory)
+    const events: BridgeEvent[] = []
+    service.subscribe(event => events.push(event))
+    try {
+      saveConversation(conversationKey, [{ role: 'user', content: 'Original history.' }])
+      await service.start({ bridgeId: 'crewcoder', provider: 'crewcoder', cwd: '/tmp', conversationKey })
+
+      await expect(service.compact('crewcoder')).resolves.toEqual({ ok: true, error: undefined, unsupported: undefined })
+      expect(loadConversation(conversationKey)).toEqual([
+        { role: 'user', content: 'Continue from this compacted conversation summary.' },
+        { role: 'assistant', content: 'Durable CrewCoder summary.' },
+      ])
+      expect(events).toContainEqual(expect.objectContaining({
+        type: 'handoff_summary',
+        bridgeId: 'crewcoder',
+        summary: 'Durable CrewCoder summary.',
+        reason: 'compact',
+      }))
+      expect(stop).not.toHaveBeenCalled()
+    } finally {
+      await service.stopAll()
+      if (previousDataDir === undefined) delete process.env.CREWCODE_DATA_DIR
+      else process.env.CREWCODE_DATA_DIR = previousDataDir
+      rmSync(dataDir, { recursive: true, force: true })
+    }
   })
 
   it('treats a duplicate stable start as an attach without stopping the provider', async () => {

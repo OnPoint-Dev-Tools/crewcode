@@ -2803,6 +2803,7 @@ export default function App() {
     if (hasWs && tabKind === 'git') {
       return (
         <GitPage
+          stateKey={`${activeWs}:${tabId}:${tabWorktree.path}`}
           workspace={{
             name:   activeWorkspace.name,
             path:   effectivePath,

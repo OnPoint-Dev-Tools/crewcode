@@ -17,6 +17,7 @@ import type {
 import { NEW_CHAT_TARGET } from './git-state'
 import { BranchPickerPanel, CreateBranchModal } from './BranchPicker'
 import type { RegisteredPluginGitLens } from '../../../../shared/plugin-types'
+import { clearGitTabMemory, readGitTabMemory, writeGitTabMemory, type GitCommitDraft, type GitPageMemory } from './git-tab-memory'
 
 /* ---------- Generic collapsible card ---------- */
 interface GsCardProps {
@@ -205,9 +206,10 @@ function TopBar({ workspace, branches, ahead, behind, lastFetch, fetching, remot
 
 /* ---------- Commit: standalone composer card ---------- */
 interface CommitBodyProps {
+  memoryKey:   string
   branch:      string
   stagedCount: number
-  onCommit?:   (opts: { message: string; amend: boolean; push: boolean; sync?: boolean }) => void
+  onCommit?:   (opts: { message: string; amend: boolean; push: boolean; sync?: boolean }) => Promise<boolean> | void
   onPush?:     () => void
   onPull?:     () => void
   onFetch?:    () => void
@@ -221,9 +223,10 @@ type CommitMenuItem = {
   disabled?: boolean
 }
 
-function CommitBody({ branch, stagedCount, onCommit, onPush, onPull, onFetch, onSync }: CommitBodyProps) {
-  const [msg, setMsg] = useState('')
-  const [amend, setAmend] = useState(false)
+function CommitBody({ memoryKey, branch, stagedCount, onCommit, onPush, onPull, onFetch, onSync }: CommitBodyProps) {
+  const remembered = readGitTabMemory<GitCommitDraft>(memoryKey)
+  const [msg, setMsgState] = useState(remembered?.message ?? '')
+  const [amend, setAmendState] = useState(remembered?.amend ?? false)
   // null = closed; otherwise the fixed viewport coords to anchor the menu at.
   const [menu, setMenu] = useState<{ top: number; left: number } | null>(null)
   const caretRef = useRef<HTMLButtonElement>(null)
@@ -231,10 +234,18 @@ function CommitBody({ branch, stagedCount, onCommit, onPush, onPull, onFetch, on
   const hasMsg = msg.trim().length > 0
   const canCommit = (stagedCount > 0 || amend) && hasMsg
 
-  const doCommit = (mode: 'plain' | 'push' | 'sync') => {
-    onCommit?.({ message: msg, amend, push: mode === 'push', sync: mode === 'sync' })
-    setMsg('')
-    setAmend(false)
+  const updateDraft = (message: string, nextAmend: boolean) => {
+    setMsgState(message)
+    setAmendState(nextAmend)
+    writeGitTabMemory<GitCommitDraft>(memoryKey, { message, amend: nextAmend })
+  }
+
+  const doCommit = async (mode: 'plain' | 'push' | 'sync') => {
+    if (!onCommit) return
+    const completed = await onCommit({ message: msg, amend, push: mode === 'push', sync: mode === 'sync' })
+    if (completed === false) return
+    updateDraft('', false)
+    clearGitTabMemory(memoryKey)
   }
 
   // The card clips its own overflow, so the menu is portaled to <body> and
@@ -246,8 +257,8 @@ function CommitBody({ branch, stagedCount, onCommit, onPush, onPull, onFetch, on
 
   const items: CommitMenuItem[] = [
     { label: 'push',          icon: 'arrowUp',   run: () => onPush?.() },
-    { label: 'commit & push', icon: 'gitCommit', run: () => doCommit('push'), disabled: !canCommit },
-    { label: 'commit & sync', icon: 'refresh',   run: () => doCommit('sync'), disabled: !canCommit },
+    { label: 'commit & push', icon: 'gitCommit', run: () => { void doCommit('push') }, disabled: !canCommit },
+    { label: 'commit & sync', icon: 'refresh',   run: () => { void doCommit('sync') }, disabled: !canCommit },
     { label: 'pull',          icon: 'arrowDown', run: () => onPull?.() },
     { label: 'sync',          icon: 'refresh',   run: () => onSync?.() },
     { label: 'fetch',         icon: 'refresh',   run: () => onFetch?.() },
@@ -258,16 +269,16 @@ function CommitBody({ branch, stagedCount, onCommit, onPush, onPull, onFetch, on
       <textarea
         placeholder={`commit message on ${branch}\n\nbody (optional)`}
         value={msg}
-        onChange={e => setMsg(e.target.value)}
+        onChange={e => updateDraft(e.target.value, amend)}
         rows={5}
       />
       <div className="gs-commit-foot">
         <label className="gs-amend">
-          <input type="checkbox" checked={amend} onChange={e => setAmend(e.target.checked)} />
+          <input type="checkbox" checked={amend} onChange={e => updateDraft(msg, e.target.checked)} />
           amend
         </label>
         <div className="gs-commit-btns">
-          <button className="gs-btn primary split-main" disabled={!canCommit} onClick={() => doCommit('plain')}>
+          <button className="gs-btn primary split-main" disabled={!canCommit} onClick={() => { void doCommit('plain') }}>
             <Icon name="gitCommit" />commit
           </button>
           <button
@@ -680,6 +691,8 @@ function HistoryBody({ history, onCheckout }: { history: GitHistoryEntry[]; onCh
 
 /* ---------- Main sidebar shell ---------- */
 export interface GitSidebarProps extends GitSidebarHandlers {
+  /** Stable outer-tab/worktree identity used to retain unfinished UI drafts. */
+  stateKey?: string
   workspace: GitSidebarWorkspace
   state:     GitState
   width?:    number
@@ -697,6 +710,7 @@ export interface GitSidebarProps extends GitSidebarHandlers {
 }
 
 export function GitSidebar({
+  stateKey,
   workspace,
   state,
   width = 380,
@@ -716,6 +730,8 @@ export function GitSidebar({
   onPluginGitLens,
   onClose,
 }: GitSidebarProps) {
+  const sidebarMemoryKey = `${stateKey ?? workspace.path}:git-sidebar`
+  const rememberedSidebar = readGitTabMemory<GitPageMemory>(sidebarMemoryKey)
   const hasConflicts = (state.conflicts || []).length > 0
   const mergeInProgress = state.mergeInProgress === true
   // A remote can exist after a partial publish while the branch was never pushed.
@@ -723,8 +739,16 @@ export function GitSidebar({
   const notRepo      = state.isRepo === false
   const noCommits    = (state.history || []).length === 0
   const [publishOpen, setPublishOpen] = useState(false)
-  const [prCreateOpen, setPrCreateOpen] = useState(false)
-  const [prBrowserOpen, setPrBrowserOpen] = useState(false)
+  const [prCreateOpen, setPrCreateOpenState] = useState(rememberedSidebar?.createPullRequestOpen ?? false)
+  const [prBrowserOpen, setPrBrowserOpenState] = useState(rememberedSidebar?.pullRequestBrowserOpen ?? false)
+  const setPrCreateOpen = (value: boolean) => {
+    setPrCreateOpenState(value)
+    writeGitTabMemory<GitPageMemory>(sidebarMemoryKey, { createPullRequestOpen: value, pullRequestBrowserOpen: prBrowserOpen })
+  }
+  const setPrBrowserOpen = (value: boolean) => {
+    setPrBrowserOpenState(value)
+    writeGitTabMemory<GitPageMemory>(sidebarMemoryKey, { createPullRequestOpen: prCreateOpen, pullRequestBrowserOpen: value })
+  }
 
   // Open which cards by default — conflicts always; changes when dirty; others closed.
   const [open, setOpen] = useState({
@@ -874,6 +898,7 @@ export function GitSidebar({
             onToggle={() => toggle('commit')}
           >
             <CommitBody
+              memoryKey={`${stateKey ?? workspace.path}:sidebar-commit`}
               branch={workspace.branch}
               stagedCount={(state.changes || []).filter(c => c.staged).length}
               onCommit={onCommit}
@@ -965,6 +990,7 @@ export function GitSidebar({
         onClose={() => setPublishOpen(false)}
       />
       <PullRequestModal
+        memoryKey={`${stateKey ?? workspace.path}:sidebar-pr-create`}
         open={prCreateOpen}
         repoPath={workspace.path}
         head={workspace.branch}

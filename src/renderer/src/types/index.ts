@@ -936,6 +936,8 @@ declare global {
       brainDesktopRpc: <T = unknown>(method: string, params: Record<string, unknown>) => Promise<T>
       brainDesktopUploadAttachment: (root: string, name: string, body: Uint8Array) => Promise<{ rel?: string; error?: string }>
       onBrainDesktopEvent: (cb: (event: unknown) => void) => () => void
+      hubMachinesList?: () => Promise<import('../../../shared/hub-machine-types').HubMachineListResult>
+      hubMachineSetEnabled?: (machineId: string, enabled: boolean) => Promise<import('../../../shared/hub-machine-types').HubMachineStateResult>
       continuityStateGet: () => Promise<import('../../../shared/continuity-state-types').ContinuityStateSnapshot>
       continuityStateUpdate: (values: Record<string, string>) => Promise<import('../../../shared/continuity-state-types').ContinuityStateSnapshot>
       continuityDesktopSeed?: (values: Record<string, string>) => Promise<import('../../../shared/continuity-state-types').ContinuityStateSnapshot>
