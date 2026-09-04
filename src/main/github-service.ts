@@ -1,4 +1,7 @@
 import { execFile, spawn, spawnSync } from 'child_process'
+import { promises as fsp } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
 import type {
   GitHubMergeMethod,
   GitHubPullRequestCommit,
@@ -263,8 +266,60 @@ export function pullRequestCreateArgs(options: GitHubPullRequestCreateOptions): 
   if (!title) throw new Error('Pull request title is required')
   if (!base) throw new Error('Base branch is required')
   const args = ['pr', 'create', '--title', title, '--base', base, '--body', options.body?.trim() ?? '']
+  if (options.selectedBranch?.trim()) args.push('--head', options.selectedBranch.trim())
   if (options.draft) args.push('--draft')
   return args
+}
+
+export async function createPullRequest(
+  cwd: string,
+  options: GitHubPullRequestCreateOptions,
+  runCommand: GitHubCommandRunner = runGitHubCommand,
+): Promise<{ ok: boolean; output: string; error?: string }> {
+  if (!options.selectedCommits?.length) return runGh(cwd, pullRequestCreateArgs(options), runCommand)
+  if (/^ssh:\/\//i.test(cwd)) return { ok: false, output: '', error: 'Selected-commit pull requests are not available for SSH workspaces yet' }
+  const selectedBranch = options.selectedBranch?.trim() ?? ''
+  if (!validGitRef(selectedBranch) || selectedBranch === options.base.trim()) return { ok: false, output: '', error: 'A valid new source branch is required for selected commits' }
+  const selected = [...new Set(options.selectedCommits.map(oid => oid.trim()))]
+  if (selected.length > 100 || selected.some(oid => !/^[0-9a-f]{40}$/i.test(oid))) return { ok: false, output: '', error: 'Selected commits must contain at most 100 full commit IDs' }
+
+  const fetch = await runCommand('git', ['fetch', 'origin', options.base.trim()], cwd)
+  if (fetch.status !== 0) return { ok: false, output: '', error: (fetch.stderr || fetch.stdout).trim() || `Could not fetch origin/${options.base.trim()}` }
+  const available = await runCommand('git', ['rev-list', '--reverse', `origin/${options.base.trim()}..HEAD`], cwd)
+  if (available.status !== 0) return { ok: false, output: '', error: (available.stderr || available.stdout).trim() || 'Could not validate selected commits' }
+  const orderedAvailable = available.stdout.split(/\r?\n/).filter(Boolean)
+  if (selected.some(oid => !orderedAvailable.includes(oid))) return { ok: false, output: '', error: 'A selected commit is no longer in the current base-to-head range' }
+  const ordered = orderedAvailable.filter(oid => selected.includes(oid))
+
+  const localBranch = await runCommand('git', ['show-ref', '--verify', '--quiet', `refs/heads/${selectedBranch}`], cwd)
+  if (localBranch.status === 0) return { ok: false, output: '', error: `Branch ${selectedBranch} already exists locally` }
+  const remoteBranch = await runCommand('git', ['ls-remote', '--exit-code', '--heads', 'origin', selectedBranch], cwd)
+  if (remoteBranch.status === 0) return { ok: false, output: '', error: `Branch ${selectedBranch} already exists on origin` }
+
+  const temporaryRoot = await fsp.mkdtemp(join(tmpdir(), 'crewcode-pr-'))
+  const temporaryWorktree = join(temporaryRoot, 'worktree')
+  let branchCreated = false
+  let pushed = false
+  try {
+    const add = await runCommand('git', ['worktree', 'add', '--detach', temporaryWorktree, `origin/${options.base.trim()}`], cwd)
+    if (add.status !== 0) return { ok: false, output: add.stdout.trim(), error: (add.stderr || add.stdout).trim() || 'Could not create the isolated PR worktree' }
+    const createBranchResult = await runCommand('git', ['switch', '-c', selectedBranch], temporaryWorktree)
+    if (createBranchResult.status !== 0) return { ok: false, output: createBranchResult.stdout.trim(), error: (createBranchResult.stderr || createBranchResult.stdout).trim() || `Could not create ${selectedBranch}` }
+    branchCreated = true
+    const cherryPick = await runCommand('git', ['cherry-pick', ...ordered], temporaryWorktree)
+    if (cherryPick.status !== 0) {
+      await runCommand('git', ['cherry-pick', '--abort'], temporaryWorktree)
+      return { ok: false, output: (cherryPick.stdout + cherryPick.stderr).trim(), error: 'The selected commits conflict with the latest base. No branch was pushed.' }
+    }
+    const push = await runCommand('git', ['push', '--set-upstream', 'origin', selectedBranch], temporaryWorktree)
+    if (push.status !== 0) return { ok: false, output: (push.stdout + push.stderr).trim(), error: (push.stderr || push.stdout).trim() || `Could not push ${selectedBranch}` }
+    pushed = true
+    return runGh(cwd, pullRequestCreateArgs({ ...options, selectedBranch }), runCommand)
+  } finally {
+    await runCommand('git', ['worktree', 'remove', '--force', temporaryWorktree], cwd)
+    await fsp.rm(temporaryRoot, { recursive: true, force: true })
+    if (branchCreated && !pushed) await runCommand('git', ['branch', '-D', selectedBranch], cwd)
+  }
 }
 
 export function pullRequestMergeArgs(number: number, method: GitHubMergeMethod, headCommitId?: string): string[] {
@@ -372,7 +427,7 @@ const CHECKS_CONTEXT_QUERY = `query CrewCodePullRequestChecks($owner:String!,$re
       statusCheckRollup { contexts(first:100) { nodes {
         __typename
         ... on CheckRun {
-          id databaseId name status conclusion isRequired detailsUrl permalink startedAt completedAt title summary text
+          id databaseId name status conclusion isRequired(pullRequestNumber:$number) detailsUrl permalink startedAt completedAt title summary text
           steps(first:100) { nodes { name number status conclusion startedAt completedAt } pageInfo { hasNextPage } }
           annotations(first:50) { nodes {
             annotationLevel path message title rawDetails blobUrl
@@ -380,7 +435,7 @@ const CHECKS_CONTEXT_QUERY = `query CrewCodePullRequestChecks($owner:String!,$re
           } pageInfo { hasNextPage } }
           checkSuite { app { name } workflowRun { databaseId runAttempt url workflow { name } } }
         }
-        ... on StatusContext { id context state description isRequired targetUrl createdAt updatedAt }
+        ... on StatusContext { id context state description isRequired(pullRequestNumber:$number) targetUrl createdAt updatedAt }
       } } }
     }
   }
@@ -798,11 +853,12 @@ export async function getPullRequestCreateContext(
   if (/^ssh:\/\//i.test(cwd)) return { error: 'Pull-request comparison is not available for SSH workspaces yet' }
   const base = baseInput.trim()
   if (!validGitRef(base)) return { error: 'Invalid base branch' }
-  const [headResult, countsResult, filesResult, mergeBaseResult] = await Promise.all([
+  const [headResult, countsResult, filesResult, mergeBaseResult, commitsResult] = await Promise.all([
     runCommand('git', ['branch', '--show-current'], cwd),
     runCommand('git', ['rev-list', '--left-right', '--count', `${base}...HEAD`], cwd),
     runCommand('git', ['diff', '--name-only', `${base}...HEAD`], cwd),
     runCommand('git', ['merge-base', base, 'HEAD'], cwd),
+    runCommand('git', ['log', '--reverse', '--max-count=100', '--format=%H%x1f%s%x1f%an%x1f%cI', `${base}..HEAD`], cwd),
   ])
   if (countsResult.status !== 0) return { error: (countsResult.stderr || countsResult.stdout).trim() || `Could not compare HEAD with ${base}` }
   const [behindRaw = '0', aheadRaw = '0'] = countsResult.stdout.trim().split(/\s+/)
@@ -820,6 +876,10 @@ export async function getPullRequestCreateContext(
     behind: Number.parseInt(behindRaw, 10) || 0,
     changedFiles: filesResult.status === 0 ? filesResult.stdout.split(/\r?\n/).filter(Boolean).length : 0,
     mergeStatus,
+    commits: commitsResult.status === 0 ? commitsResult.stdout.split(/\r?\n/).filter(Boolean).map(line => {
+      const [oid = '', title = '', author = '', committedAt = ''] = line.split('\x1f')
+      return { oid, title, author, committedAt }
+    }).filter(commit => /^[0-9a-f]{40}$/i.test(commit.oid)) : [],
   }
 }
 

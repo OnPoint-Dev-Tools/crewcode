@@ -447,6 +447,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('git:discard', cwd, path),
   gitDiff:     (cwd: string, path: string, staged: boolean) =>
     ipcRenderer.invoke('git:diff', cwd, path, staged),
+  gitConflictDiff: (cwd: string, path: string) =>
+    ipcRenderer.invoke('git:conflictDiff', cwd, path),
   gitChangesVsRef: (cwd: string, ref: string) =>
     ipcRenderer.invoke('git:changesVsRef', cwd, ref),
   gitDiffVsRef: (cwd: string, ref: string, path: string) =>

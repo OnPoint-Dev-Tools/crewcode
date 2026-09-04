@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import { getGhStatus, getGitHubAvatar, getGitHubStatus, getPullRequestCatalogue, getPullRequestCheckLog, getPullRequestChecksContext, getPullRequestCreateContext, getPullRequestDetail, getPullRequestDiff, getPullRequestManagementContext, getPullRequestReviewContext, preparePullRequestConflictResolution, pullRequestActionArgs, pullRequestCommentArgs, pullRequestCreateArgs, pullRequestEditArgs, pullRequestMergeArgs, pullRequestMetadataArgs, pullRequestReviewArgs, pullRequestReviewThreadArgs, pullRequestViewedFileArgs, rerunPullRequestCheck, submitPullRequestReview, updatePullRequestMergeAutomation, updatePullRequestReviewThread, updatePullRequestViewedFile, type GitHubCommandRunner, type GitHubInputCommandRunner } from './github-service'
+import { createPullRequest, getGhStatus, getGitHubAvatar, getGitHubStatus, getPullRequestCatalogue, getPullRequestCheckLog, getPullRequestChecksContext, getPullRequestCreateContext, getPullRequestDetail, getPullRequestDiff, getPullRequestManagementContext, getPullRequestReviewContext, preparePullRequestConflictResolution, pullRequestActionArgs, pullRequestCommentArgs, pullRequestCreateArgs, pullRequestEditArgs, pullRequestMergeArgs, pullRequestMetadataArgs, pullRequestReviewArgs, pullRequestReviewThreadArgs, pullRequestViewedFileArgs, rerunPullRequestCheck, submitPullRequestReview, updatePullRequestMergeAutomation, updatePullRequestReviewThread, updatePullRequestViewedFile, type GitHubCommandRunner, type GitHubInputCommandRunner } from './github-service'
 
 function result(stdout = '', status = 0, stderr = '') {
   return { status, stdout, stderr }
@@ -70,6 +70,7 @@ describe('non-blocking GitHub status', () => {
     expect(pullRequestCreateArgs({ title: ' Fix CI ', body: ' Verified ', base: 'dev', draft: true })).toEqual([
       'pr', 'create', '--title', 'Fix CI', '--base', 'dev', '--body', 'Verified', '--draft',
     ])
+    expect(pullRequestCreateArgs({ title: 'Selected fix', base: 'main', draft: false, selectedBranch: 'pr/selected-fix' })).toContain('pr/selected-fix')
     expect(pullRequestMergeArgs(7, 'merge')).toEqual(['pr', 'merge', '7', '--merge'])
     expect(pullRequestMergeArgs(7, 'squash')).toEqual(['pr', 'merge', '7', '--squash'])
     expect(pullRequestMergeArgs(7, 'rebase')).toEqual(['pr', 'merge', '7', '--rebase'])
@@ -160,6 +161,9 @@ describe('non-blocking GitHub status', () => {
       checks: [{ id: 'CR_1', name: 'test', suiteName: 'CI', isRequired: true, runId: 11, runAttempt: 2, jobId: 22,
         steps: [{ name: 'npm test', conclusion: 'FAILURE' }], annotations: [{ path: 'src/a.ts', startLine: 17, endLine: 18, message: 'Expected true' }] }],
     })
+    expect(run).toHaveBeenCalledWith('gh', expect.arrayContaining([
+      expect.stringContaining('isRequired(pullRequestNumber:$number)'),
+    ]), '/repo')
 
     const logRun: GitHubCommandRunner = vi.fn(async (_command, args) => {
       if (args[0] === 'repo') return result('o/r\n')
@@ -248,13 +252,37 @@ describe('non-blocking GitHub status', () => {
       if (args[0] === 'diff') return result('src/a.ts\nsrc/b.ts\n')
       if (args[0] === 'merge-base') return result('abc123\n')
       if (args[0] === 'merge-tree') return result('merged cleanly\n')
+      if (args[0] === 'log') return result('0123456789012345678901234567890123456789\x1fFix one\x1fCJ\x1f2026-09-03T12:00:00Z\n')
       return result('', 1)
     })
 
     await expect(getPullRequestCreateContext('/repo', 'main', run)).resolves.toEqual({
       head: 'feature', base: 'main', ahead: 4, behind: 2, changedFiles: 2, mergeStatus: 'clean',
+      commits: [{ oid: '0123456789012345678901234567890123456789', title: 'Fix one', author: 'CJ', committedAt: '2026-09-03T12:00:00Z' }],
     })
     expect(run).toHaveBeenCalledWith('git', ['merge-tree', 'abc123', 'main', 'HEAD'], '/repo')
+  })
+
+  it('creates a selected-commit PR from an isolated latest-base worktree', async () => {
+    const oid = '0123456789012345678901234567890123456789'
+    const run: GitHubCommandRunner = vi.fn(async (command, args) => {
+      if (command === 'gh') return result('https://github.com/crewcode/app/pull/8\n')
+      if (args[0] === 'fetch') return result('fetched\n')
+      if (args[0] === 'rev-list') return result(`${oid}\n`)
+      if (args[0] === 'show-ref') return result('', 1)
+      if (args[0] === 'ls-remote') return result('', 2)
+      return result('ok\n')
+    })
+
+    await expect(createPullRequest('/repo', {
+      title: 'Selected fix', base: 'main', draft: false,
+      selectedCommits: [oid], selectedBranch: 'pr/selected-fix',
+    }, run)).resolves.toEqual({ ok: true, output: 'https://github.com/crewcode/app/pull/8' })
+    expect(run).toHaveBeenCalledWith('git', ['fetch', 'origin', 'main'], '/repo')
+    expect(run).toHaveBeenCalledWith('git', ['rev-list', '--reverse', 'origin/main..HEAD'], '/repo')
+    expect(run).toHaveBeenCalledWith('git', ['cherry-pick', oid], expect.stringContaining('crewcode-pr-'))
+    expect(run).toHaveBeenCalledWith('git', ['push', '--set-upstream', 'origin', 'pr/selected-fix'], expect.stringContaining('crewcode-pr-'))
+    expect(run).toHaveBeenCalledWith('gh', expect.arrayContaining(['pr', 'create', '--head', 'pr/selected-fix']), '/repo')
   })
 
   it('starts PR conflict resolution only from the clean expected head worktree', async () => {

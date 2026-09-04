@@ -25,9 +25,11 @@ import { Icon } from '../ui/Icon'
 import { parsePullRequestBodySections } from './pull-request-body'
 import { splitPullRequestPatch } from './pull-request-diff'
 import type { GitActionOutcome } from './git-state'
+import type { GitStatus } from '../../types'
+import type { GitConflictDiffResult } from '../../../../shared/git-conflict-types'
 
 type PullRequestFilter = 'all' | 'open' | 'closed' | 'assigned'
-type PullRequestBrowserTab = 'overview' | 'timeline' | 'changes' | 'checks'
+type PullRequestBrowserTab = 'overview' | 'timeline' | 'changes' | 'checks' | 'conflicts'
 type PullRequestReviewFilter = 'any' | 'requested' | 'requested-to-you' | 'approved' | 'changes-requested' | 'review-required'
 
 interface PullRequestBrowserMemory {
@@ -146,6 +148,13 @@ export function PullRequestBrowser({
   const [mergeMethod, setMergeMethod] = useState<GitHubMergeMethod>('squash')
   const [confirmAction, setConfirmAction] = useState<'merge' | 'auto' | 'disable-auto' | 'queue' | 'close' | 'reopen' | 'draft' | 'resolve' | null>(null)
   const [conflictPreparation, setConflictPreparation] = useState<GitHubPullRequestConflictPreparationResult | null>(null)
+  const [localConflictStatus, setLocalConflictStatus] = useState<GitStatus | null>(null)
+  const [localConflictError, setLocalConflictError] = useState('')
+  const [selectedConflictPath, setSelectedConflictPath] = useState('')
+  const [conflictFileText, setConflictFileText] = useState('')
+  const [conflictFileLoading, setConflictFileLoading] = useState(false)
+  const [conflictDiff, setConflictDiff] = useState<GitConflictDiffResult | null>(null)
+  const [conflictOperation, setConflictOperation] = useState('')
   const [editingDetails, setEditingDetails] = useState(false)
   const [editTitle, setEditTitle] = useState('')
   const [editBody, setEditBody] = useState('')
@@ -190,6 +199,11 @@ export function PullRequestBrowser({
     setNotice(null)
     setConfirmAction(null)
     setConflictPreparation(null)
+    setLocalConflictStatus(null)
+    setLocalConflictError('')
+    setSelectedConflictPath('')
+    setConflictFileText('')
+    setConflictDiff(null)
     void loadCatalogue()
   }, [open, repoPath, loadCatalogue])
 
@@ -236,6 +250,11 @@ export function PullRequestBrowser({
     setReviewBody('')
     setConfirmAction(null)
     setConflictPreparation(null)
+    setLocalConflictStatus(null)
+    setLocalConflictError('')
+    setSelectedConflictPath('')
+    setConflictFileText('')
+    setConflictDiff(null)
     setEditingDetails(false)
     setManagementOpen(false)
     setManagementError('')
@@ -382,9 +401,51 @@ export function PullRequestBrowser({
     if (!visibleItems.some(item => item.number === selectedNumber)) setSelectedNumber(visibleItems[0].number)
   }, [mutation, selectedNumber, visibleItems])
 
-  if (!open) return null
   const selected = catalogue?.items.find(item => item.number === selectedNumber) ?? null
   const detail = selectedNumber == null ? null : detailByNumber[selectedNumber] ?? null
+
+  const loadLocalConflictStatus = useCallback(async () => {
+    if (!detail) return null
+    setLocalConflictError('')
+    try {
+      const status = await getCrewCodeClient().gitStatus(repoPath)
+      if (status.error) throw new Error(status.error)
+      if (status.branch !== detail.head) throw new Error(`Conflict resolution for #${detail.number} is bound to ${detail.head}, but this worktree is on ${status.branch}.`)
+      setLocalConflictStatus(status)
+      const paths = [...new Set([...status.staged, ...status.unstaged].filter(file => file.status === 'U').map(file => file.path))]
+      setSelectedConflictPath(current => current && paths.includes(current) ? current : paths[0] ?? '')
+      return status
+    } catch (statusError) {
+      setLocalConflictError(statusError instanceof Error ? statusError.message : String(statusError))
+      return null
+    }
+  }, [detail, repoPath])
+
+  useEffect(() => {
+    if (!open || tab !== 'conflicts' || !detail) return
+    void loadLocalConflictStatus()
+  }, [detail, loadLocalConflictStatus, open, tab])
+
+  useEffect(() => {
+    if (!selectedConflictPath || tab !== 'conflicts') { setConflictFileText(''); setConflictDiff(null); return }
+    let cancelled = false
+    setConflictFileLoading(true)
+    void Promise.all([
+      getCrewCodeClient().fsReadFile(repoPath, selectedConflictPath),
+      getCrewCodeClient().gitConflictDiff(repoPath, selectedConflictPath),
+    ]).then(([result, diff]) => {
+      if (cancelled) return
+      if (result.error || typeof result.text !== 'string') throw new Error(result.error || `Could not read ${selectedConflictPath}`)
+      setConflictFileText(result.text)
+      setConflictDiff(diff)
+      if (!diff.ok) setLocalConflictError(diff.error || `Could not load conflict evidence for ${selectedConflictPath}`)
+    }).catch(readError => {
+      if (!cancelled) setLocalConflictError(readError instanceof Error ? readError.message : String(readError))
+    }).finally(() => { if (!cancelled) setConflictFileLoading(false) })
+    return () => { cancelled = true }
+  }, [repoPath, selectedConflictPath, tab])
+
+  if (!open) return null
   const author = detail?.author || selected?.author || 'unknown'
   const authorAvatar = avatarByLogin[author]
   const createdAt = detail?.createdAt || selected?.createdAt || ''
@@ -419,6 +480,10 @@ export function PullRequestBrowser({
   const showConflictFlow = detail?.mergeStateStatus === 'DIRTY'
     || /not mergeable|conflict|cleanly created/i.test(notice?.text ?? '')
     || conflictPreparation !== null
+  const localConflictPaths = [...new Set([
+    ...(localConflictStatus?.staged ?? []),
+    ...(localConflictStatus?.unstaged ?? []),
+  ].filter(file => file.status === 'U').map(file => file.path))]
   const filterChoices = {
     authors: [...new Set((catalogue?.items ?? []).map(item => item.author).filter(Boolean))].sort(),
     labels: [...new Set((catalogue?.items ?? []).flatMap(item => item.labels))].sort(),
@@ -705,7 +770,10 @@ export function PullRequestBrowser({
     setMutation({ kind: 'Load merge requirements', number: targetNumber })
     try {
       const evidence = await loadChecksContext(targetNumber, true)
-      if (!evidence) return
+      if (!evidence) {
+        setNotice({ kind: 'error', text: `Could not load current merge requirements for #${targetNumber}. Open Checks for the GitHub error, then retry.` })
+        return
+      }
       if (evidence.headCommitId !== targetHead) {
         await refreshSelectedEvidence(targetNumber)
         setNotice({ kind: 'error', text: `The head commit for #${targetNumber} changed while merge requirements loaded. Review the refreshed evidence before continuing.` })
@@ -714,6 +782,63 @@ export function PullRequestBrowser({
       setConfirmAction(action === 'merge' && evidence.isMergeQueueEnabled ? 'queue' : action)
     } finally {
       setMutation(null)
+    }
+  }
+
+  const runConflictOperation = async (label: string, action: () => Promise<{ ok?: boolean; error?: string }>) => {
+    if (!detail || conflictOperation || actionLocked) return false
+    setConflictOperation(label)
+    setLocalConflictError('')
+    try {
+      const before = await getCrewCodeClient().gitStatus(repoPath)
+      if (before.error) throw new Error(before.error)
+      if (before.branch !== detail.head) throw new Error(`This operation is locked to ${detail.head}; the worktree is on ${before.branch}.`)
+      const result = await action()
+      if (!result.ok) throw new Error(result.error || `${label} did not complete`)
+      await loadLocalConflictStatus()
+      setNotice({ kind: 'ok', text: `${label} completed for #${detail.number}.` })
+      return true
+    } catch (operationError) {
+      setLocalConflictError(operationError instanceof Error ? operationError.message : String(operationError))
+      return false
+    } finally {
+      setConflictOperation('')
+    }
+  }
+
+  const saveResolvedConflict = async () => {
+    if (!selectedConflictPath) return
+    if (/^(?:<<<<<<<|=======|>>>>>>>)(?: |$)/m.test(conflictFileText)) {
+      setLocalConflictError('Remove every Git conflict marker before marking this file resolved.')
+      return
+    }
+    await runConflictOperation('Save and mark resolved', async () => {
+      const write = await getCrewCodeClient().fsWriteFile(repoPath, selectedConflictPath, conflictFileText)
+      if (write.error) return { ok: false, error: write.error }
+      return getCrewCodeClient().gitStage(repoPath, [selectedConflictPath])
+    })
+  }
+
+  const pushResolvedHead = async () => {
+    if (!detail) return
+    const pushed = await runConflictOperation('Push resolved head', () => getCrewCodeClient().gitPush(repoPath))
+    if (pushed) {
+      try {
+        await refreshSelectedEvidence(detail.number)
+        await loadChecksContext(detail.number, true)
+        setConflictPreparation(null)
+        setTab('checks')
+      } catch (refreshError) {
+        setNotice({ kind: 'error', text: `Push completed, but GitHub evidence could not be refreshed: ${refreshError instanceof Error ? refreshError.message : String(refreshError)}` })
+      }
+    }
+  }
+
+  const abortLocalMerge = async () => {
+    const aborted = await runConflictOperation('Abort merge', () => getCrewCodeClient().gitMergeAbort(repoPath))
+    if (aborted) {
+      setConflictPreparation(null)
+      setTab('overview')
     }
   }
 
@@ -728,8 +853,10 @@ export function PullRequestBrowser({
       const result = await onPrepareConflicts(targetHead, targetBase)
       setConflictPreparation(result)
       if (!result.ok) throw new Error(result.error || 'Could not start local conflict resolution')
-      if (result.status === 'conflicts') setNotice({ kind: 'ok', text: `Local merge for #${targetNumber} started with ${result.conflicts.length} conflict${result.conflicts.length === 1 ? '' : 's'}. Return to Git Workspace to resolve them.` })
-      else if (result.status === 'ready-to-continue') setNotice({ kind: 'ok', text: `All conflicts for #${targetNumber} are resolved. Return to Git Workspace and continue the merge.` })
+      await loadLocalConflictStatus()
+      setTab('conflicts')
+      if (result.status === 'conflicts') setNotice({ kind: 'ok', text: `Local merge for #${targetNumber} started with ${result.conflicts.length} conflict${result.conflicts.length === 1 ? '' : 's'}. Resolve them here, then continue and push.` })
+      else if (result.status === 'ready-to-continue') setNotice({ kind: 'ok', text: `All conflicts for #${targetNumber} are resolved. Continue the merge here, then push.` })
       else setNotice({ kind: 'ok', text: `Merged ${targetBase} into ${targetHead} locally. Push ${targetHead} to update #${targetNumber}.` })
     } catch (mutationError) {
       setNotice({ kind: 'error', text: mutationError instanceof Error ? mutationError.message : String(mutationError) })
@@ -790,9 +917,9 @@ export function PullRequestBrowser({
               <p>Merge <code>{detail?.head ?? selected.head}</code> into <code>{detail?.base ?? selected.base}</code></p>
             </header>
             <nav className="pr-browser-tabs" aria-label="Selected pull request sections">
-              {(['overview', 'timeline', 'changes', 'checks'] as const).map(value => <button key={value} className={tab === value ? 'active' : ''} disabled={actionLocked} onClick={() => setTab(value)}>
-                <Icon name={value === 'overview' ? 'eye' : value === 'timeline' ? 'history' : value === 'changes' ? 'changes' : 'check'} size={11} />
-                {value === 'overview' ? 'Overview' : value === 'timeline' ? `Timeline ${timeline.length || ''}` : value === 'changes' ? `Code changes ${detail?.files.length ?? ''}` : `Checks ${detail?.checks.length ?? ''}`}
+              {(['overview', 'timeline', 'changes', 'checks', ...(showConflictFlow ? ['conflicts' as const] : [])] as PullRequestBrowserTab[]).map(value => <button key={value} className={tab === value ? 'active' : ''} disabled={actionLocked} onClick={() => setTab(value)}>
+                <Icon name={value === 'overview' ? 'eye' : value === 'timeline' ? 'history' : value === 'changes' ? 'changes' : value === 'conflicts' ? 'alert' : 'check'} size={11} />
+                {value === 'overview' ? 'Overview' : value === 'timeline' ? `Timeline ${timeline.length || ''}` : value === 'changes' ? `Code changes ${detail?.files.length ?? ''}` : value === 'conflicts' ? `Conflicts ${localConflictPaths.length || ''}` : `Checks ${detail?.checks.length ?? ''}`}
               </button>)}
             </nav>
 
@@ -903,6 +1030,32 @@ export function PullRequestBrowser({
                 </div>
               </>}
             </main>}
+
+            {tab === 'conflicts' && detail && <div className="pr-browser-conflicts">
+              <aside>
+                <header><span>Conflicted files</span><strong>{localConflictPaths.length}</strong></header>
+                {localConflictPaths.map(path => <button key={path} className={selectedConflictPath === path ? 'active' : ''} disabled={!!conflictOperation || actionLocked} onClick={() => setSelectedConflictPath(path)}><Icon name="alert" size={11} /><code>{path}</code></button>)}
+                {localConflictStatus?.mergeInProgress && localConflictPaths.length === 0 && <p>Every conflict is staged. Continue to create the local merge commit.</p>}
+                {!localConflictStatus?.mergeInProgress && conflictPreparation?.ok && <p>The local merge commit is ready to push to <code>{detail.head}</code>.</p>}
+              </aside>
+              <main>
+                <header><div><span>Conflict workspace</span><h3>{selectedConflictPath || (localConflictStatus?.mergeInProgress ? 'Ready to continue' : 'Ready to push')}</h3></div><code>{detail.head} ← origin/{detail.base}</code></header>
+                {localConflictError && <div className="pr-review-error"><Icon name="alert" size={12} />{localConflictError}</div>}
+                {!localConflictStatus ? <div className="pr-browser-loading">Loading local merge state…</div> : selectedConflictPath ? <>
+                  <div className="pr-conflict-diff">
+                    <header>
+                      <div><span>Ours</span><strong>{detail.head}</strong><button className="gs-btn ghost" disabled={!!conflictOperation || actionLocked || !conflictDiff?.oursAvailable} onClick={() => void runConflictOperation('Use ours', () => getCrewCodeClient().gitResolveConflict(repoPath, selectedConflictPath, 'ours'))}>Use ours</button></div>
+                      <div><span>Theirs</span><strong>{detail.base}</strong><button className="gs-btn ghost" disabled={!!conflictOperation || actionLocked || !conflictDiff?.theirsAvailable} onClick={() => void runConflictOperation('Use theirs', () => getCrewCodeClient().gitResolveConflict(repoPath, selectedConflictPath, 'theirs'))}>Use theirs</button></div>
+                    </header>
+                    {conflictFileLoading ? <div className="pr-browser-loading">Loading ours and theirs…</div> : conflictDiff?.ok ? <PierreDiff patch={conflictDiff.patch} className="pr-conflict-pierre" /> : <div className="pr-browser-empty">The conflict comparison is unavailable. You can still edit the resolution result below.</div>}
+                  </div>
+                  <section className="pr-conflict-result"><header><div><span>Resolution result</span><strong>Remove every conflict marker, then save this file.</strong></div><button className="gs-btn primary" disabled={!!conflictOperation || actionLocked || conflictFileLoading} onClick={() => void saveResolvedConflict()}>{conflictOperation || 'Save and mark resolved'}</button></header>{conflictFileLoading ? <div className="pr-browser-loading">Loading editable result…</div> : <textarea className="pr-conflict-editor" value={conflictFileText} disabled={!!conflictOperation || actionLocked} spellCheck={false} onChange={event => setConflictFileText(event.target.value)} aria-label={`Resolve conflicts in ${selectedConflictPath}`} />}</section>
+                </> : <div className="pr-conflict-completion">
+                  {localConflictStatus?.mergeInProgress ? <><Icon name="check" size={18} /><strong>All conflict files are resolved</strong><p>Create the local merge commit. CrewCode keeps the default Git merge message and remains on <code>{detail.head}</code>.</p><button className="gs-btn primary" disabled={!!conflictOperation || actionLocked} onClick={() => void runConflictOperation('Continue merge', () => getCrewCodeClient().gitMergeContinue(repoPath))}>{conflictOperation || 'Continue merge'}</button></> : <><Icon name="gitBranch" size={18} /><strong>Push the resolved head branch</strong><p>This updates PR #{detail.number}. GitHub will recalculate checks and mergeability from the new head.</p><button className="gs-btn primary" disabled={!!conflictOperation || actionLocked} onClick={() => void pushResolvedHead()}>{conflictOperation || `Push ${detail.head}`}</button></>}
+                </div>}
+                <div className="pr-conflict-abort"><span>Abort restores the branch to its state before this local merge.</span><button className="gs-btn danger" disabled={!!conflictOperation || actionLocked || !localConflictStatus?.mergeInProgress} onClick={() => void abortLocalMerge()}>Abort merge</button></div>
+              </main>
+            </div>}
           </>}
         </main>
 
@@ -950,7 +1103,7 @@ export function PullRequestBrowser({
             {showConflictFlow && isOpen && <div className="pr-review-conflict-flow">
               <strong>Resolve merge conflicts locally</strong>
               <span>CrewCode will fetch <code>origin/{detail?.base}</code> and merge it into the current <code>{detail?.head}</code> worktree. It refuses a different branch or any uncommitted changes.</span>
-              {conflictPreparation?.ok ? <button className="gs-btn primary" disabled={actionLocked} onClick={onClose}>Return to Git Workspace</button> : confirmAction === 'resolve' ? <div className="pr-review-confirm"><span>Start conflict resolution for #{selected?.number} by merging <code>origin/{detail?.base}</code> into <code>{detail?.head}</code>?</span><button className="gs-btn ghost" disabled={actionLocked} onClick={() => setConfirmAction(null)}>Cancel</button><button className="gs-btn primary" disabled={actionLocked || !onPrepareConflicts} onClick={() => void prepareConflicts()}>{actionLocked ? 'Preparing…' : 'Start resolution'}</button></div> : <button className="gs-btn ghost" disabled={actionLocked || !onPrepareConflicts} onClick={() => setConfirmAction('resolve')}>Resolve conflicts in CrewCode</button>}
+              {conflictPreparation?.ok ? <button className="gs-btn primary" disabled={actionLocked} onClick={() => setTab('conflicts')}>Open conflict workspace</button> : confirmAction === 'resolve' ? <div className="pr-review-confirm"><span>Start conflict resolution for #{selected?.number} by merging <code>origin/{detail?.base}</code> into <code>{detail?.head}</code>?</span><button className="gs-btn ghost" disabled={actionLocked} onClick={() => setConfirmAction(null)}>Cancel</button><button className="gs-btn primary" disabled={actionLocked || !onPrepareConflicts} onClick={() => void prepareConflicts()}>{actionLocked ? 'Preparing…' : 'Start resolution'}</button></div> : <button className="gs-btn ghost" disabled={actionLocked || !onPrepareConflicts} onClick={() => setConfirmAction('resolve')}>Resolve conflicts in CrewCode</button>}
             </div>}
           </section>
 

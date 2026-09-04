@@ -7,6 +7,7 @@ import os from 'os'
 import { formatRemoteRoot, isRemoteRoot, parseRemoteTarget } from './remote/ssh-target'
 import { execRemote } from './remote/ssh-pool'
 import { parseStatus, parseLog, isSigningFailure, isMergeConflictOutput, type GitStatusFile } from './git-porcelain-parse'
+import { getGitConflictDiff } from './git-conflict-diff'
 import { mergeDelegatedBranch } from './delegated-merge'
 import { unstagePaths } from './git-unstage'
 import {
@@ -378,6 +379,9 @@ export function registerGitIpc(): void {
       return { error: (err as Error).message }
     }
   })
+
+  ipcMain.handle('git:conflictDiff', (_e, cwd: string, path: string) =>
+    getGitConflictDiff(path, args => runGit(cwd, args)))
 
   // Files changed on this checkout relative to a base ref — committed work
   // included. `git diff --name-status <ref>` compares the ref to the working

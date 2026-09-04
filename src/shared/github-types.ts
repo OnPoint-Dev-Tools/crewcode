@@ -5,6 +5,8 @@ export interface GitHubPullRequestCreateOptions {
   body?: string
   base: string
   draft: boolean
+  selectedCommits?: string[]
+  selectedBranch?: string
 }
 
 export interface GitHubCommandResponse {
@@ -28,6 +30,7 @@ export interface GitHubPullRequestCreateContext {
   behind: number
   changedFiles: number
   mergeStatus: 'clean' | 'conflicts' | 'unknown'
+  commits: Array<{ oid: string; title: string; author: string; committedAt: string }>
 }
 
 export interface GitHubPullRequestFile {

@@ -900,6 +900,7 @@ declare global {
       gitUnstage:  (cwd: string, paths: string[]) => Promise<{ ok?: boolean; error?: string }>
       gitDiscard:  (cwd: string, path: string) => Promise<{ ok?: boolean; error?: string }>
       gitDiff:     (cwd: string, path: string, staged: boolean) => Promise<{ ok?: boolean; diff?: string; error?: string }>
+      gitConflictDiff: (cwd: string, path: string) => Promise<import('../../../shared/git-conflict-types').GitConflictDiffResult>
       gitChangesVsRef: (cwd: string, ref: string) => Promise<{ ok?: boolean; files?: GitStatusFile[]; error?: string }>
       gitDiffVsRef: (cwd: string, ref: string, path: string) => Promise<{ ok?: boolean; diff?: string; error?: string }>
       gitCommit:   (cwd: string, message: string, amend?: boolean, noSign?: boolean) => Promise<{ ok?: boolean; output?: string; error?: string; signingFailure?: boolean }>
