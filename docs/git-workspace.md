@@ -49,6 +49,9 @@ available only for real working-tree changes.
 - **Sidebar sections** — history, branches, and the remaining Git Sidebar
   sections render on the right (with the commit/changes sections hidden, since
   the page has its own).
+- **Pull requests** — shows the latest observed repository PRs. Select a row to
+  open that exact PR in CrewCode's PR Browser; newly created PRs appear after
+  their successful post-create GitHub refresh.
 
 ## Switching tabs without losing work
 

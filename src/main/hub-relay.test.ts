@@ -65,7 +65,17 @@ async function fixture(scopes: Array<'workspace:read' | 'workspace:write' | 'ter
   }
   const brain = await startBrainRelay({ credential, dataDir: brainData, allowedWorkspaceRoots: [workspaceRoot], allowedScopes: scopes })
   cleanups.push(() => brain.close())
-  return { hub, brain, machineId: enrolled.machine.id, machineToken: enrolled.token, cookie: `crewcode_hub_session=${encodeURIComponent(session.token)}`, csrf: session.csrf, publicKey, workspaceRoot }
+  const cookie = `crewcode_hub_session=${encodeURIComponent(session.token)}`
+  const deadline = Date.now() + 5_000
+  while (true) {
+    const response = await fetch(`${hub.url}/api/v1/hub/machines`, { headers: { cookie } })
+    const body = await response.json() as { machines?: Array<{ id?: string; status?: string }>; error?: string }
+    if (!response.ok) throw new Error(`machine readiness check failed (${response.status}): ${body.error ?? 'unknown error'}`)
+    if (body.machines?.some(machine => machine.id === enrolled.machine.id && machine.status === 'online')) break
+    if (Date.now() >= deadline) throw new Error('Brain relay did not become online before the fixture timeout')
+    await new Promise(resolve => setTimeout(resolve, 10))
+  }
+  return { hub, brain, machineId: enrolled.machine.id, machineToken: enrolled.token, cookie, csrf: session.csrf, publicKey, workspaceRoot }
 }
 
 function onceFrame(socket: WebSocket, predicate: (frame: HubRelayControlFrame) => boolean): Promise<HubRelayControlFrame> {

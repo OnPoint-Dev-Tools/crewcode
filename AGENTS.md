@@ -86,6 +86,12 @@ successful submission. Never retain credentials, mutation locks, destructive
 confirmations, or infer repository outcomes from UI memory. See
 `docs/git-workspace.md` and `docs/github-pull-requests.md`.
 
+Git Sidebar Pull Requests lists bounded observed repository PRs and prioritizes
+the current branch PR. After successful creation, refresh authoritative GitHub
+status so the new PR appears immediately. Clicking a PR row must open the
+canonical in-app PR Browser with that exact PR number selected, never default to
+an external GitHub page.
+
 Inactive standalone terminal tabs stay mounted to preserve their PTYs, but must
 pass `active={false}` through `TermColumn` to `XTermPane`. Buffer their output
 without `term.write()`, then refit and replay it with bounded frame work and

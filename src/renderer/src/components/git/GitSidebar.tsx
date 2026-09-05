@@ -631,36 +631,38 @@ interface PullRequestsBodyProps {
   branch:      string
   hasUnpushed: boolean
   onCreate?:   () => void
-  onBrowse?:   () => void
+  onBrowse?:   (number?: number) => void
 }
 
 function PullRequestsBody({ prs, branch, hasUnpushed, onCreate, onBrowse }: PullRequestsBodyProps) {
   const branchPr = prs.find(p => p.head === branch)
   const statusName = (status: GitPrRef['status']): React.ComponentProps<typeof Icon>['name'] =>
     status === 'open' ? 'circleDot' : status === 'merged' ? 'merged' : status === 'draft' ? 'gitPullRequest' : 'x'
-  const passed = branchPr?.checks?.filter(check => check === 'ok').length ?? 0
-  const failed = branchPr?.checks?.filter(check => check === 'f').length ?? 0
+  const orderedPrs = branchPr ? [branchPr, ...prs.filter(pr => pr.num !== branchPr.num)] : prs
 
-  if (!branchPr) {
+  if (prs.length === 0) {
     return (
       <div className="pr-single-empty">
         <span><Icon name="gitPullRequest" size={18} /></span>
-        <strong>No pull request for {branch}</strong>
-        <p>{prs.length ? `${prs.length} other repository pull request${prs.length === 1 ? '' : 's'} available.` : 'Create a pull request when this branch is ready.'}</p>
-        <div className="pr-single-actions compact"><button className="gs-btn ghost" onClick={onBrowse}><Icon name="inspection" size={11} />Browse pull requests</button><button className="gs-btn primary" onClick={onCreate}><Icon name="plus" size={11} />Create pull request</button></div>
+        <strong>No pull requests yet</strong>
+        <p>Create a pull request when {branch} is ready.</p>
+        <div className="pr-single-actions compact"><button className="gs-btn ghost" onClick={() => onBrowse?.()}><Icon name="inspection" size={11} />Browse pull requests</button><button className="gs-btn primary" onClick={onCreate}><Icon name="plus" size={11} />Create pull request</button></div>
       </div>
     )
   }
 
   return (
     <div className="pr-single compact">
-      <div className="pr-single-identity">
-        <div className="pr-single-state"><Icon name={statusName(branchPr.status)} size={11} />{branchPr.status}<code>#{branchPr.num}</code></div>
-        <h3>{branchPr.title}</h3>
-        <div className="pr-single-route"><code>{branchPr.head}</code><Icon name="chevRight" size={10} /><code>{branchPr.base}</code></div>
-        <div className="pr-single-summary"><span className={failed ? 'bad' : ''}>{failed ? `${failed} checks failing` : branchPr.checks?.length ? `${passed}/${branchPr.checks.length} checks passed` : 'No checks reported'}</span><span>{(branchPr.mergeStateStatus ?? 'merge state unknown').toLowerCase().replaceAll('_', ' ')}</span></div>
+      <div className="pr-sidebar-list" aria-label="Repository pull requests">
+        {orderedPrs.slice(0, 6).map(pr => (
+          <button key={pr.num} type="button" className={pr.num === branchPr?.num ? 'current' : ''} onClick={() => onBrowse?.(pr.num)}>
+            <span className="pr-sidebar-row-state"><Icon name={statusName(pr.status)} size={11} />{pr.status}<code>#{pr.num}</code></span>
+            <strong>{pr.title}</strong>
+            <span className="pr-sidebar-row-route"><code>{pr.head}</code><Icon name="chevRight" size={9} /><code>{pr.base}</code></span>
+          </button>
+        ))}
       </div>
-      <div className="pr-single-actions compact"><button className="gs-btn primary" onClick={onBrowse}><Icon name="inspection" size={11} />Open PR workspace</button><button className="gs-btn ghost" onClick={onCreate}><Icon name="plus" size={10} />New PR</button></div>
+      <div className="pr-single-actions compact"><button className="gs-btn primary" onClick={() => onBrowse?.(branchPr?.num)}><Icon name="inspection" size={11} />Browse all PRs</button><button className="gs-btn ghost" onClick={onCreate}><Icon name="plus" size={10} />New PR</button></div>
       <div className="pr-single-new"><span>{hasUnpushed ? `${branch} has unpushed commits` : `Working on ${branch}`}</span><span>{prs.length} repository PR{prs.length === 1 ? '' : 's'}</span></div>
     </div>
   )
@@ -741,6 +743,7 @@ export function GitSidebar({
   const [publishOpen, setPublishOpen] = useState(false)
   const [prCreateOpen, setPrCreateOpenState] = useState(rememberedSidebar?.createPullRequestOpen ?? false)
   const [prBrowserOpen, setPrBrowserOpenState] = useState(rememberedSidebar?.pullRequestBrowserOpen ?? false)
+  const [prBrowserTarget, setPrBrowserTarget] = useState<number | null>(null)
   const setPrCreateOpen = (value: boolean) => {
     setPrCreateOpenState(value)
     writeGitTabMemory<GitPageMemory>(sidebarMemoryKey, { createPullRequestOpen: value, pullRequestBrowserOpen: prBrowserOpen })
@@ -748,6 +751,10 @@ export function GitSidebar({
   const setPrBrowserOpen = (value: boolean) => {
     setPrBrowserOpenState(value)
     writeGitTabMemory<GitPageMemory>(sidebarMemoryKey, { createPullRequestOpen: prCreateOpen, pullRequestBrowserOpen: value })
+  }
+  const openPrBrowser = (number?: number) => {
+    setPrBrowserTarget(number ?? null)
+    setPrBrowserOpen(true)
   }
 
   // Open which cards by default — conflicts always; changes when dirty; others closed.
@@ -961,7 +968,7 @@ export function GitSidebar({
             branch={workspace.branch}
             hasUnpushed={state.ahead > 0}
             onCreate={() => setPrCreateOpen(true)}
-            onBrowse={() => setPrBrowserOpen(true)}
+            onBrowse={openPrBrowser}
           />
         </GsCard>
 
@@ -1004,6 +1011,7 @@ export function GitSidebar({
         open={prBrowserOpen}
         repoPath={workspace.path}
         currentBranch={workspace.branch}
+        initialSelectedNumber={prBrowserTarget}
         onMerge={onMergePR}
         onUpdateBranch={onUpdatePRBranch}
          onReady={onReadyPR}
