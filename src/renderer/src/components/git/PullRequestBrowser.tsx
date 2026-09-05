@@ -55,6 +55,7 @@ interface PullRequestBrowserProps {
   open: boolean
   repoPath: string
   currentBranch: string
+  initialSelectedNumber?: number | null
   onMerge?: (num: number, method: GitHubMergeMethod, headCommitId?: string) => Promise<GitActionOutcome>
   onUpdateBranch?: (num: number) => Promise<GitActionOutcome>
   onReady?: (num: number) => Promise<GitActionOutcome>
@@ -103,6 +104,7 @@ export function PullRequestBrowser({
   open,
   repoPath,
   currentBranch,
+  initialSelectedNumber,
   onMerge,
   onUpdateBranch,
   onReady,
@@ -190,6 +192,7 @@ export function PullRequestBrowser({
       if ('error' in result) throw new Error(result.error)
       setCatalogue(result)
       setSelectedNumber(current => {
+        if (initialSelectedNumber && result.items.some(item => item.number === initialSelectedNumber)) return initialSelectedNumber
         if (current && result.items.some(item => item.number === current)) return current
         return result.items.find(item => item.head === currentBranch)?.number ?? result.items[0]?.number ?? null
       })
@@ -198,7 +201,7 @@ export function PullRequestBrowser({
     } finally {
       if (!background) setLoading(false)
     }
-  }, [currentBranch, open, repoPath])
+  }, [currentBranch, initialSelectedNumber, open, repoPath])
 
   useEffect(() => {
     if (!open) return

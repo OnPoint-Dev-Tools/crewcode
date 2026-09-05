@@ -860,6 +860,16 @@ body.dark .gs-pr-detail .check-row .ico.f { color: #f87171; }
 .pr-single-empty > span { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid var(--border); color: var(--primary); }
 .pr-single-empty strong { color: var(--foreground); font-size: 13px; }
 .pr-single-empty p { margin: 0 0 4px; color: var(--muted-foreground); font-size: 10.5px; line-height: 1.5; }
+.pr-sidebar-list { display: grid; max-height: 300px; overflow: auto; }
+.pr-sidebar-list > button { display: grid; gap: 6px; width: 100%; padding: 11px 12px; border: 0; border-bottom: 1px solid var(--border); background: transparent; color: var(--foreground); text-align: left; cursor: pointer; }
+.pr-sidebar-list > button:hover,
+.pr-sidebar-list > button.current { background: color-mix(in srgb, var(--primary) 8%, transparent); }
+.pr-sidebar-list > button.current { box-shadow: inset 2px 0 var(--primary); }
+.pr-sidebar-list > button > strong { overflow: hidden; color: var(--foreground); font-size: 12.5px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.pr-sidebar-row-state,
+.pr-sidebar-row-route { min-width: 0; display: flex; align-items: center; gap: 5px; color: var(--muted-foreground); font-family: var(--font-family-mono); font-size: 9px; text-transform: uppercase; }
+.pr-sidebar-row-state code { margin-left: auto; color: var(--muted-foreground); }
+.pr-sidebar-row-route code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-transform: none; }
 
 /* Full pull-request review workspace ----------------------------------- */
 .pr-review-shell { position: fixed; inset: 0; z-index: 2100; display: grid; grid-template-rows: auto auto minmax(0, 1fr); background: #0f120f; color: var(--foreground); animation: pr-fade-in 150ms ease-out both; }
