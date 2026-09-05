@@ -14,7 +14,13 @@ const capture = args =>
 const git = args => execFileSync('git', args, { stdio: 'inherit' })
 const npm = args =>
   execFileSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', args, {
-    stdio: 'inherit',
+    // Release verification and `npm version` are deliberately non-interactive.
+    // Inheriting a shell PTY's stdin lets nested test/git processes participate
+    // in fish job control and can suspend the entire release with SIGTTIN.
+    // Git fetch/push keep their separate interactive path above for credential
+    // helpers that legitimately need the terminal.
+    stdio: ['ignore', 'inherit', 'inherit'],
+    env: { ...process.env, CI: '1' },
   })
 
 const bump = process.argv[2] ?? 'patch'
