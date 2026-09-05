@@ -117,6 +117,12 @@ npm run ship -- "feat: msg"  # Stage + commit + push current branch to origin
 npm run release    # Verify, bump patch version, tag, push -> triggers CI release build
 ```
 
+Release npm verification/version subprocesses must remain non-interactive with stdin
+disconnected and CI mode enabled so nested commands cannot suspend a release through
+shell job control. Keep Git fetch/push on the separate interactive path for credential
+helpers, and never infer release success until the version commit, tag, and push are
+all observed. See `docs/releasing.md`.
+
 > `npm run dev` uses `env -u ELECTRON_RUN_AS_NODE` to prevent Electron's Node.js mode from interfering.
 
 ## Architecture

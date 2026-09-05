@@ -33,6 +33,14 @@ The script refuses to proceed unless:
 Then it runs `typecheck` + `test`, bumps the version, tags `vX.Y.Z`, and pushes
 with `--follow-tags`.
 
+The npm verification and version subprocesses run in explicit CI mode with stdin
+disconnected. This keeps nested test and commit processes out of interactive shell
+job control, preventing fish or another POSIX shell from suspending the release when
+a child attempts to read from the terminal. Git fetch/push retain terminal access so
+configured credential helpers can still authenticate. A verification command that
+needs input must fail explicitly rather than leaving a stopped release job that could
+later resume and mutate version/tag state.
+
 ## What CI does
 
 Pushing a `v*` tag triggers `.github/workflows/release.yml`, which builds on
