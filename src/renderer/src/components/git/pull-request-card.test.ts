@@ -37,7 +37,9 @@ describe('in-app pull request card', () => {
   })
 
   it('keeps common review actions in the canonical browser workspace', () => {
-    expect(sidebar).toContain('Open PR workspace')
+    expect(sidebar).toContain('className="pr-sidebar-list"')
+    expect(sidebar).toContain('onClick={() => onBrowse?.(pr.num)}')
+    expect(sidebar).toContain('initialSelectedNumber={prBrowserTarget}')
     expect(sidebar).toContain('<PullRequestBrowser')
     expect(sidebar).not.toContain('<PullRequestReview')
     expect(browser).toContain('Submit review')

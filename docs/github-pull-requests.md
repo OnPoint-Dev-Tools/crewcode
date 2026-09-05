@@ -58,6 +58,13 @@ creation flow also restores its current step, branch/commit selection, title,
 structured body fields, and draft choice. Explicit cancel or successful submit
 clears the creation draft; mutation locks and confirmation dialogs never carry
 across an unmount.
+
+The Git Sidebar Pull Requests card shows up to six observed repository PRs,
+placing the current branch's PR first when one exists. A successful PR creation
+refreshes authoritative GitHub status before the card reports the result, so the
+new PR appears without reopening the sidebar. Selecting any row opens the
+canonical PR Browser inside CrewCode with that exact PR number preselected;
+sidebar rows never use GitHub as the primary navigation path.
 browser. CrewCode loads up to 100 open, closed, and merged pull requests in one
 catalogue request, then filters that observed result locally by **All**,
 **Open**, **Closed**, or **Assigned to you**. Closed includes merged pull

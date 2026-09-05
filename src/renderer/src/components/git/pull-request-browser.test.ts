@@ -21,6 +21,7 @@ describe('repository pull request browser', () => {
     expect(page).toContain('<PullRequestBrowser')
     expect(browser).toContain('item.head === currentBranch')
     expect(browser).toContain('githubPrCatalogue(repoPath)')
+    expect(browser).toContain('initialSelectedNumber && result.items.some')
     expect(browser).toContain('loadCatalogue(true)')
     expect(browser).toContain('setTimeout(pollCatalogue, 60_000)')
   })

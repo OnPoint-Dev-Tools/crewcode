@@ -163,4 +163,30 @@ describe('useGitSidebar isolated branch switching', () => {
     hook.unmount()
     vi.useRealTimers()
   })
+
+  it('refreshes a newly created pull request into sidebar state', async () => {
+    const api = apiStub()
+    api.ghPrCreate = vi.fn(async () => ({ ok: true, output: 'https://github.com/crew/code/pull/14' }))
+    api.githubStatus.mockResolvedValue({
+      owner: 'crew', repo: 'code', runs: [],
+      prs: [{
+        number: 14, title: 'Fresh pull request', state: 'OPEN', branch: 'dev', base: 'main',
+        url: 'https://github.com/crew/code/pull/14', isDraft: false, author: 'viewer',
+        updatedAt: '2026-09-04T12:00:00Z', body: '', mergeStateStatus: 'CLEAN', reviewDecision: null,
+      }],
+    })
+    vi.stubGlobal('window', { electronAPI: api })
+    const hook = renderHook(useGitSidebar, {
+      repoPath: '/repo', workspacePath: '/repo', mainBranch: 'main', currentWorktreeId: null,
+      enabled: false, onSwitchWorktree: vi.fn(),
+    })
+
+    await act(async () => {
+      await hook.result.current.handlers.onCreatePR?.({ title: 'Fresh pull request', base: 'main', draft: false })
+    })
+
+    expect(api.ghPrCreate).toHaveBeenCalled()
+    expect(hook.result.current.state.prs).toEqual([expect.objectContaining({ num: 14, title: 'Fresh pull request' })])
+    hook.unmount()
+  })
 })
