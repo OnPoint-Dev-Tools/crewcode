@@ -39,7 +39,7 @@ export interface UpdaterEvent {
 }
 
 export interface AppBuildInfo {
-  /** app.getVersion() — the packaged version, not package.json at dev time. */
+  /** Version of the running desktop app or serving CrewCode build. */
   version: string
   /** Short git SHA injected at build time, or 'dev' outside a build. */
   buildHash: string

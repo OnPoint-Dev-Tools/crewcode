@@ -1,7 +1,12 @@
-// Shared between the local (fs.ts) and remote (remote/remote-fs.ts) file
-// surfaces so both hide the same noise and enforce the same read ceiling.
+// Shared between local and SSH filesystem surfaces. The editor tree is lazy, so
+// dependency/build directories remain browsable on demand. Broad fallback scans
+// still prune them to avoid walking enormous generated trees.
 
-export const IGNORE = new Set([
+export const TREE_HIDDEN_ENTRIES = new Set([
+  '.git', '.DS_Store',
+])
+
+export const SCAN_IGNORED_ENTRIES = new Set([
   '.git', 'node_modules', '.next', 'out', 'dist', '.DS_Store', '.cache', '.turbo',
 ])
 

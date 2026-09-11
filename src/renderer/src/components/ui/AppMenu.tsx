@@ -10,6 +10,7 @@ import darkLogo from '../../assets/icon-logo-dark.png'
 import lightLogo from '../../assets/icon-logo-light.png'
 import { useIsDark } from '../../hooks/useIsDark'
 import { getCrewCodeRuntime } from '../../runtime/crewcode-client'
+import { useAppBuildInfo } from '../../hooks/useAppBuildInfo'
 
 /** Pull this out of the AppMenu so call sites can react to picks without
     knowing the menu's internal layout. */
@@ -23,6 +24,7 @@ export type AppMenuAction =
   | { kind: 'start-canvas' }
   | { kind: 'docs' }
   | { kind: 'updates' }
+  | { kind: 'about' }
   | { kind: 'toggle-menulet' }
   | { kind: 'toggle-system-monitor' }
   | { kind: 'quit-stop-brain' }
@@ -43,21 +45,19 @@ interface AppMenuGroup {
 
 const MENU: AppMenuGroup[] = [
   {
-    label: 'WORKSPACE',
+    label: 'APP',
     items: [
-      { id: 'canvas',     icon: 'workbench',      label: 'Workbench Mode',                 action: { kind: 'start-canvas' } },
-      { id: 'git',        icon: 'gitBranch', label: 'Git Workspace',                 action: { kind: 'open-tab', tab: 'git' } },
-      { id: 'palette',    icon: 'palette',      label: 'Command palette',  hint: '⌘K',  action: { kind: 'palette' } },
+       { id: 'settings', icon: 'settings', label: 'Settings',           hint: '⌘,', action: { kind: 'open-tab', tab: 'settings' } },
+      { id: 'plugins',  icon: 'plug',     label: 'Plugins',                         action: { kind: 'open-tab', tab: 'plugins' } },
+      { id: 'archive',  icon: 'archive',  label: 'Archive',                         action: { kind: 'open-tab', tab: 'archive' } },
     ],
   },
   {
-    label: 'APP',
+    label: 'SYSTEM',
     items: [
-      { id: 'settings', icon: 'settings', label: 'Settings',           hint: '⌘,', action: { kind: 'open-tab', tab: 'settings' } },
-      { id: 'plugins',  icon: 'plug',     label: 'Plugins',                         action: { kind: 'open-tab', tab: 'plugins' } },
-      { id: 'archive',  icon: 'archive',  label: 'Archive',                         action: { kind: 'open-tab', tab: 'archive' } },
       { id: 'updates',  icon: 'refresh',  label: 'Check for updates',               action: { kind: 'updates' } },
       { id: 'docs',     icon: 'globe',    label: 'Docs',             action: { kind: 'docs' } },
+      { id: 'about',    icon: 'app',      label: 'About CrewCode',   action: { kind: 'about' } },
       { id: 'quit-stop-brain', icon: 'square', label: 'Quit and stop Brain', action: { kind: 'quit-stop-brain' } },
     ],
   },
@@ -76,6 +76,7 @@ export function AppMenu({ activeKind, footStatus, onPick }: AppMenuProps) {
   const isDark = useIsDark()
   const isWeb = getCrewCodeRuntime().kind === 'web'
   const isBrain = getCrewCodeRuntime().kind === 'brain'
+  const build = useAppBuildInfo()
 
   useEffect(() => {
     if (!open) return
@@ -120,7 +121,7 @@ export function AppMenu({ activeKind, footStatus, onPick }: AppMenuProps) {
           <div className="appmenu-h">
             <span className="appmenu-h-t">
               <span className="appmenu-h-name">CrewCode</span>
-              <span className="appmenu-h-v">v0.1.0 · {navigator.platform.toLowerCase().includes('mac') ? 'mac' : navigator.platform.toLowerCase().includes('win') ? 'win' : 'linux'}</span>
+              <span className="appmenu-h-v">v{build?.version ?? '—'} · {navigator.platform.toLowerCase().includes('mac') ? 'mac' : navigator.platform.toLowerCase().includes('win') ? 'win' : 'linux'}</span>
             </span>
             <span className="appmenu-h-status">
               <span className="dot" />connected

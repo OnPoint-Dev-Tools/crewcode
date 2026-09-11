@@ -106,9 +106,10 @@ interface HourlyUsageProps {
   usedPercent?: number
   /** Human-readable reset time, e.g. "2:30 PM" or "Thu". */
   resetDescription?: string | null
+  status?: 'idle' | 'fetching' | 'ok' | 'error' | 'unavailable'
 }
 
-function HourlyUsagePill({ usedPercent = 0, resetDescription }: HourlyUsageProps) {
+function HourlyUsagePill({ usedPercent = 0, resetDescription, status = 'ok' }: HourlyUsageProps) {
   const [open, setOpen] = useState(false)
   const pct = Math.min(100, Math.max(0, usedPercent))
   const remainingPct = Math.max(0, 100 - pct)
@@ -118,21 +119,23 @@ function HourlyUsagePill({ usedPercent = 0, resetDescription }: HourlyUsageProps
     <div className="ws-dock-item-wrap" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
       <span className="ws-dock-item ws-dock-usage">
         <span className="usage-dial" style={{ background: `conic-gradient(${color} ${pct}%, var(--border) 0)` } as React.CSSProperties} />
-        <span className="usage-label">{pct.toFixed(0)}% 5h</span>
+        <span className="usage-label">{status === 'ok' ? `${pct.toFixed(0)}% 5h` : '— 5h'}</span>
       </span>
       <DockPopover title="5-hour usage" open={open} onClose={() => setOpen(false)}>
         <div className="dock-pop-headline">
+          {status !== 'ok' ? <><span className="dock-pop-used">Unavailable</span> · Codex usage could not be read</> : <>
           <span className="dock-pop-used">{pct.toFixed(1)}%</span> used
           <span className="dock-pop-total"> · 100% limit</span>
+          </>}
         </div>
         <div className="dock-pop-bar">
           <div className="dock-pop-bar-fill" style={{ width: `${pct}%`, background: color } as React.CSSProperties} />
         </div>
         <dl className="dock-pop-rows">
-          <div className="dock-pop-row">
+          {status === 'ok' && <div className="dock-pop-row">
             <dt>Remaining</dt>
             <dd style={{ color }}>{remainingPct.toFixed(1)}%</dd>
-          </div>
+          </div>}
           <div className="dock-pop-row">
             <dt>Window</dt>
             <dd>5 hours</dd>
@@ -160,9 +163,10 @@ interface WeeklyUsageProps {
   usedPercent?: number
   /** Human-readable reset date, e.g. "Thu" or "May 15". */
   resetDescription?: string | null
+  status?: 'idle' | 'fetching' | 'ok' | 'error' | 'unavailable'
 }
 
-function WeeklyUsagePill({ usedPercent = 0, resetDescription }: WeeklyUsageProps) {
+function WeeklyUsagePill({ usedPercent = 0, resetDescription, status = 'ok' }: WeeklyUsageProps) {
   const [open, setOpen] = useState(false)
   const pct = Math.min(100, Math.max(0, usedPercent))
   const remainingPct = Math.max(0, 100 - pct)
@@ -172,21 +176,23 @@ function WeeklyUsagePill({ usedPercent = 0, resetDescription }: WeeklyUsageProps
     <div className="ws-dock-item-wrap" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
       <span className="ws-dock-item ws-dock-usage">
         <Icon name="calendar" size={11} />
-        <span className="usage-label">{pct.toFixed(0)}% wk</span>
+        <span className="usage-label">{status === 'ok' ? `${pct.toFixed(0)}% wk` : '— wk'}</span>
       </span>
       <DockPopover title="Weekly usage" open={open} onClose={() => setOpen(false)}>
         <div className="dock-pop-headline">
+          {status !== 'ok' ? <><span className="dock-pop-used">Unavailable</span> · Codex usage could not be read</> : <>
           <span className="dock-pop-used">{pct.toFixed(1)}%</span> used
           <span className="dock-pop-total"> · 100% limit</span>
+          </>}
         </div>
         <div className="dock-pop-bar">
           <div className="dock-pop-bar-fill" style={{ width: `${pct}%`, background: color } as React.CSSProperties} />
         </div>
         <dl className="dock-pop-rows">
-          <div className="dock-pop-row">
+          {status === 'ok' && <div className="dock-pop-row">
             <dt>Remaining</dt>
             <dd style={{ color }}>{remainingPct.toFixed(1)}%</dd>
-          </div>
+          </div>}
           <div className="dock-pop-row">
             <dt>Window</dt>
             <dd>7 days</dd>
@@ -338,6 +344,7 @@ interface WorkspaceDockProps {
   providerLimit?:  number
   /** Provider-specific reset description. */
   providerResetDescription?: string | null
+  rateLimitStatus?: 'idle' | 'fetching' | 'ok' | 'error' | 'unavailable'
   externalDirectoryCount?: number
   onManageExternalDirectories?: () => void
 }
@@ -351,6 +358,7 @@ export function WorkspaceDock({
   activeAgentId = 'claude', activeAgentStatus = 'idle',
   providerUsed = 0, providerLimit = 0,
   providerResetDescription,
+  rateLimitStatus = 'ok',
   externalDirectoryCount = 0,
   onManageExternalDirectories,
 }: WorkspaceDockProps) {
@@ -426,8 +434,8 @@ export function WorkspaceDock({
             ssh: {SSH_LABEL[sshStatus]}
           </span>
         )}
-        <HourlyUsagePill usedPercent={hourlyUsedPercent} resetDescription={hourlyResetDescription} />
-        <WeeklyUsagePill usedPercent={weeklyUsedPercent} resetDescription={weeklyResetDescription} />
+        <HourlyUsagePill usedPercent={hourlyUsedPercent} resetDescription={hourlyResetDescription} status={rateLimitStatus} />
+        <WeeklyUsagePill usedPercent={weeklyUsedPercent} resetDescription={weeklyResetDescription} status={rateLimitStatus} />
         <AgentInfoPill
           agentId={activeAgentId}
           status={activeAgentStatus}

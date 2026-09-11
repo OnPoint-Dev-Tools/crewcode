@@ -66,6 +66,11 @@ reconciliation, startup, or session switching. Preserve global delivery for
 newly appended live errors and active-scope delivery for live agent-exit
 warnings. See `docs/notifications.md`.
 
+Thinking-log headers use the shared outlined thought-bubble icon; keep the
+streaming shimmer and separate disclosure chevron behavior intact.
+Turn Work Log headers use the shared outlined work-log icon alongside the
+disclosure chevron; individual rows retain their tool-specific icons.
+
 Git and GitHub notification-bar events are live and user-triggered only. Publish
 observed successful commit, push, pull, fetch, sync, merge, repository-publish,
 and PR mutation results; never notify from polling, catalogue refresh, startup,
@@ -77,6 +82,20 @@ Active Git surfaces silently refresh the bounded GitHub pull-request catalogue
 once per minute so PRs created or changed by other users update the Browser and
 open-count badge. Keep that poll single-flight, preserve selection when possible,
 and never turn polled transitions into notification-bar events.
+
+Custom chat backgrounds and their derived palettes remain device-local appearance
+data. Accept only bounded PNG, JPG, WebP, or GIF uploads; never put the image or
+palette in transcripts, workspace files, Brain continuity state, or an SSH host.
+Fresh chats may always render the image; regular solo chats require an explicit
+preference and content-sized translucent agent bubbles; the sticky loader remains
+transparent over the wallpaper while its compact loading visual uses a mode-aware
+frosted capsule without the decorative text glow. Fresh-chat welcome content,
+thinking blocks, and work logs require mode-aware frosted surfaces with bounded
+responsive widths; thinking and work-log blocks remain content-sized.
+Image-matched colors must be locally derived, contrast-safe, opt-out, and must not
+overwrite the selected named theme.
+Honor reduced motion and keep removal reversible. See
+`docs/fresh-chat-backgrounds.md`.
 
 Git tabs retain meaningful unfinished UI state across inactive-tab unmounts in
 bounded process-session memory keyed by exact outer tab/worktree identity. Keep
@@ -102,6 +121,13 @@ use asynchronous filesystem/child-process APIs; never put sync I/O or
 `spawnSync` in an automatic refresh path. See
 `docs/terminal-stream-performance.md`.
 
+The composer input context menu provides Cut, Copy, and Paste through the typed
+CrewCode clipboard client on desktop and web. Preserve the captured selection,
+remove selected text only after a successful clipboard write, refuse stale
+asynchronous edits when the draft has changed, surface clipboard denial in the
+menu, and keep the theme-token menu inside the viewport. See
+`docs/getting-started.md`.
+
 ## What is CrewCode?
 
 CrewCode is a desktop ACE (Agent Coding Environment) GUI built with Electron + React + TypeScript. It lets developers run a *crew* of AI coding agents (Claude Code, Codex, OpenCode, etc.) in parallel across local git worktrees, each in its own workspace with a chat thread, embedded terminal panes, and a code/markdown editor — all in one frameless native-feeling window.
@@ -123,7 +149,17 @@ shell job control. Keep Git fetch/push on the separate interactive path for cred
 helpers, and never infer release success until the version commit, tag, and push are
 all observed. See `docs/releasing.md`.
 
+Automatic provider-usage probes must treat an observed CLI crash differently from an
+ordinary unavailable response. Cool down the crashing interactive fallback so window
+focus refreshes cannot repeatedly relaunch it and generate a core-dump storm; retain
+the non-interactive probe and report usage as unavailable until a later safe retry.
+
 > `npm run dev` uses `env -u ELECTRON_RUN_AS_NODE` to prevent Electron's Node.js mode from interfering.
+
+Displayed CrewCode versions must come from the shared runtime build-info
+contract. Keep the app-menu header, About card, and Settings Updates aligned with
+Electron's `app.getVersion()` or the connected Brain/server build version; never
+hardcode a renderer version label. See `docs/about-crewcode.md`.
 
 ## Architecture
 
@@ -229,6 +265,11 @@ Orca targets macOS, Linux, and Windows. Keep all platform-dependent behavior beh
 
 All changes must consider the SSH use case. Don't assume local-only execution. See `docs/remote-ssh-workspaces.md` for the user-facing behavior contract (ssh:// roots, agent-first auth, TOFU host pinning, remote LSP/polling constraints).
 
+CrewCoder is spawned on the workspace host for both local and SSH roots. Keep ACP
+text-file capabilities available, but do not label an SSH CrewCoder session as a
+virtual filesystem: its process, provider-native tools, and workspace are co-located
+on the VPS. A virtual-custody flag disables native transports such as Codex app-server.
+
 ## GitHub CLI Usage
 
 Be mindful of the user's `gh` CLI API rate limit — batch requests where possible and avoid unnecessary calls. All code, commands, and scripts must be compatible with macOS, Linux, and Windows.
@@ -304,6 +345,13 @@ while Electron Background Brain owns it.
 
 Remote-access credentials are authority boundaries. Pairing tokens must remain short-lived, memory-only, and single-use. Persist only device-session digests in owner-only atomic stores; enforce expiry and revocation. Browser HTTP/WebSocket origins must match exactly or be explicitly configured—never reflect arbitrary `Origin`/forwarded headers. Keep authentication limiters bounded, and do not hardcode CJ's `crewcode.logixhub.icu` deployment as a default Hub URL.
 
+Hub phone/browser sign-in persists for 30 days through a secure HttpOnly SameSite
+cookie whose secret is stored only as a revocable Hub-side digest. Keep this browser
+session independent from short-lived machine tickets and from Brain process lifetime.
+Electron Background Brain and foreground/headless `crewcode brain` must reuse the same
+default owner-only machine credential; switching modes never creates a second machine
+or requires phone approval. A custom Brain data directory remains a separate identity.
+
 Hub-connected web Settings lists every machine enrolled to the authenticated owner and
 keeps reversible disablement distinct from permanent revocation. Disable must persist
 the authority suspension, reject heartbeats/tickets/new Brain relays, close existing
@@ -343,6 +391,20 @@ The Prompt/Skills Studio desktop rail keeps its header, filters, and footer fixe
 The composer PromptPicker has separate Prompts and Skills tabs backed by the shared prompt library. Prompt selection inserts into the visible composer (using variable fill when required); Skill selection toggles only the resolved session's `enabledSkillIds`, remains open for multi-select, and never inserts the skill body or mutates a global enable flag. Keep enabled state visible and phone tabs/rows at least 44px/48px respectively.
 
 On phones, Code Editor keeps the code canvas primary and opens its file tree as a dismissible right overlay. Git Sidebar must remain the same stateful surface on desktop and mobile, becoming an off-canvas panel with backdrop/close controls instead of being hidden or squeezing chat/editor content. Changes by turn is a full-screen mobile review: its catalogue stacks above the diff when open, while a targeted changed-file route keeps the catalogue closed. Keep all JS/CSS decisions aligned at `≤768px`; see `docs/mobile-responsive-pages.md`.
+
+The Code Editor file tree is lazy and must expose dependency, build-output, cache,
+and workspace-local Python environment folders on demand for local and SSH roots.
+Keep `.git` and `.DS_Store` hidden from direct browsing. Do not widen bounded
+workspace search or fallback scans to recursively index generated/dependency trees.
+Open saved editor files must reconcile on Code Editor mount so writes made while
+the surface was unmounted are observed. Keep filesystem events as the local fast
+path and only one asynchronous active-file check in flight for missed events/SSH.
+Never overwrite a dirty buffer: compare disk with its original baseline and mark
+a conflict only when both diverged. File-tree context menus must remain anchored
+to their row while flipping/clamping fully inside the viewport. Keep their
+surface, text, interaction, separator, and destructive colors on shared theme
+tokens; do not introduce fixed palette colors.
+See `docs/code-editor.md`.
 
 Git Workspace phone layout keeps the shared `useGitSidebar` state/actions, a compact two-column overview, changed files stacked above a bounded diff, and the remaining Git tools in a bounded scroll panel. Use the canonical `≤768px` breakpoint, ≥36px actionable controls, and 16px text inputs; do not restore fixed desktop-width columns or unbounded stacked panels.
 
@@ -432,3 +494,12 @@ Plugin validation commands:
 npx vitest run src/main/plugin-contract.test.ts
 npm run typecheck
 ```
+
+Codex usage reporting must resolve managed npm installations, prefer the
+explicit `rateLimitsByLimitId.codex` app-server bucket when available, and
+represent unavailable/fetching data explicitly in the Workspace Dock rather
+than displaying a misleading `0%`. A dev process launched from within a managed
+CrewCoder Codex turn must not pass that parent turn's private `CODEX_HOME`,
+thread identity, or managed-launch metadata into the standalone usage probe.
+Legacy CrewCoder sessions with an unprefixed `gpt-*` model use the Codex usage
+bucket; current namespaced `provider:model` selections remain authoritative.

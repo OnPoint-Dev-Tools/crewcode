@@ -129,7 +129,6 @@ export interface SoloChatViewProps {
 
   /** Optional copy for specialized chat surfaces such as Writer Workspace. */
   freshChat?: { kicker?: string; title: string; body: string; suggestions: string[] }
-
   /** Files attached to the composer — the parent reads these on send. */
   attachments?: ChatAttachment[]
   /** Mirror of `attachments` back to the parent so it can read the latest list at send time. */

@@ -8,10 +8,7 @@ import {
   type UpdaterConfig,
   type UpdaterEvent,
 } from '../shared/updater-types'
-
-// Injected by electron-vite `define` at build time (see electron.vite.config.ts).
-declare const __BUILD_HASH__: string
-const BUILD_HASH = typeof __BUILD_HASH__ === 'string' ? __BUILD_HASH__ : 'dev'
+import { createAppBuildInfo } from './build-info'
 
 function broadcast(event: UpdaterEvent): void {
   for (const win of BrowserWindow.getAllWindows()) {
@@ -59,11 +56,7 @@ export function registerUpdaterIpc(): void {
   }))
   autoUpdater.on('update-downloaded', info => broadcast({ type: 'downloaded', version: info?.version }))
 
-  ipcMain.handle('app:buildInfo', (): AppBuildInfo => ({
-    version: app.getVersion(),
-    buildHash: BUILD_HASH,
-    packaged: app.isPackaged,
-  }))
+  ipcMain.handle('app:buildInfo', (): AppBuildInfo => createAppBuildInfo(app.getVersion(), app.isPackaged))
   ipcMain.handle('app:homePath', (): string => homedir())
 
   ipcMain.handle('updater:configure', (_e, raw: unknown) => {

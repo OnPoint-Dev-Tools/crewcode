@@ -12,6 +12,11 @@ import {
 } from '../../../shared/voice-types'
 import { DEFAULT_MODE_PROMPTS, type ModePromptConfig } from './chat-session-send'
 import { getCrewCodeClient } from '../runtime/crewcode-client'
+import {
+  normalizeChatBackgroundPalette,
+  normalizeFreshChatBackground,
+  type ChatBackgroundPalette,
+} from '../components/chat/fresh-chat-background'
 
 export type { McpServerConfig } from '../../../shared/mcp-types'
 
@@ -62,6 +67,12 @@ export interface SettingsState {
   username: string
   profileIconKind: ProfileIconKind
   profileIconValue: string
+  // Device-local data URL used behind fresh chats and, when opted in, regular solo chats.
+  // It is intentionally not projected into Brain continuity or transcripts.
+  freshChatBackground: string
+  showChatBackgroundInRegularChats: boolean
+  matchThemeToChatBackground: boolean
+  chatBackgroundPalette: ChatBackgroundPalette | null
   appTheme: AppTheme
   theme: ColorTheme
   fontFamily: string
@@ -180,6 +191,10 @@ export const DEFAULT_SETTINGS: SettingsState = {
   username: 'CrewCode User',
   profileIconKind: 'initial',
   profileIconValue: '',
+  freshChatBackground: '',
+  showChatBackgroundInRegularChats: false,
+  matchThemeToChatBackground: false,
+  chatBackgroundPalette: null,
   appTheme: 'dark',
   theme: 'carbon',
   fontFamily: 'JetBrains Mono',
@@ -290,6 +305,8 @@ function loadInitial(): SettingsState {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return DEFAULT_SETTINGS
     const parsed = JSON.parse(raw) as Partial<SettingsState>
+    const freshChatBackground = normalizeFreshChatBackground(parsed.freshChatBackground)
+    const chatBackgroundPalette = normalizeChatBackgroundPalette(parsed.chatBackgroundPalette)
     // Shallow merge so newly-added fields fall back to defaults.
     return {
       ...DEFAULT_SETTINGS,
@@ -303,6 +320,10 @@ function loadInitial(): SettingsState {
       sshConns: parsed.sshConns ?? [],
       agentPathOverrides: parsed.agentPathOverrides ?? {},
       pluginWorkspaceEnabled: parsed.pluginWorkspaceEnabled ?? {},
+      freshChatBackground,
+      showChatBackgroundInRegularChats: parsed.showChatBackgroundInRegularChats === true,
+      matchThemeToChatBackground: parsed.matchThemeToChatBackground === true && !!freshChatBackground && !!chatBackgroundPalette,
+      chatBackgroundPalette,
       defaultBranchByWorkspace: parsed.defaultBranchByWorkspace ?? {},
       mcpServers: parsed.mcpServers ?? [],
       channel: migrateChannel(parsed.channel),

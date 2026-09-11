@@ -22,5 +22,14 @@ export function dockUsageProviderId(agentId: string, model: string): string {
     if (resolved) return resolved
   }
 
+  // CrewCoder now exposes provider:model ids, but sessions persisted before
+  // that contract (and a configured default supplied by the parent process)
+  // can still contain an unprefixed Codex model. Treat the known GPT model
+  // family as Codex only for CrewCoder; other wrapper agents may route the
+  // same model name through OpenRouter or another account.
+  if (agentId.toLowerCase() === 'crewcoder' && /^gpt-/i.test(value)) {
+    return 'codex'
+  }
+
   return RATE_LIMIT_PROVIDER_ALIASES[agentId.toLowerCase()] ?? agentId
 }

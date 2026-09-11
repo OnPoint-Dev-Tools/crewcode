@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react'
+import React, { useEffect, useLayoutEffect, useRef, useState, useCallback } from 'react'
 import {
   FilePlusIcon, FolderPlusIcon, ScissorsIcon, CopyIcon, ClipboardIcon, ClipboardTextIcon, PencilIcon, TrashIcon
 } from '@phosphor-icons/react'
@@ -7,6 +7,7 @@ import { BeardedFileIcon } from './bearded-file-icons'
 import type { EditorOutlineSymbol } from './editor-outline'
 import type { FsNode } from '../../types'
 import { canPasteInto, parentRel, pasteTargetDirRel, type TreeClipboard } from './file-tree-clipboard'
+import { fitContextMenuPosition } from '../ui/context-menu-position'
 
 interface SearchResult {
   rel: string
@@ -281,6 +282,15 @@ export function FileTree({ root, activeRel, onSelect, onSelectLine, onDiff, widt
     }
     document.addEventListener('mousedown', close)
     return () => document.removeEventListener('mousedown', close)
+  }, [ctx])
+
+  useLayoutEffect(() => {
+    const menu = ctxRef.current
+    if (!ctx || !menu) return
+    const rect = menu.getBoundingClientRect()
+    const fitted = fitContextMenuPosition(ctx, rect, { width: window.innerWidth, height: window.innerHeight })
+    if (fitted.x === ctx.x && fitted.y === ctx.y) return
+    setCtx(current => current ? { ...current, ...fitted } : current)
   }, [ctx])
 
   const toggle = (rel: string, isDir: boolean) => {

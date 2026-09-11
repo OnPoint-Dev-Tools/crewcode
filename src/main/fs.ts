@@ -2,7 +2,7 @@ import electron from 'electron'
 import { join, basename, relative, isAbsolute, normalize, sep, dirname, extname } from 'path'
 import { existsSync, readdirSync, readFileSync, statSync, writeFileSync, mkdirSync, rmSync, renameSync } from 'fs'
 import { execFile, spawnSync } from 'child_process'
-import { IGNORE, MAX_ATTACHMENT_FILE_BYTES, MAX_ATTACHMENT_FILE_MB, MAX_FILE_BYTES } from './fs-constants'
+import { MAX_ATTACHMENT_FILE_BYTES, MAX_ATTACHMENT_FILE_MB, MAX_FILE_BYTES } from './fs-constants'
 import { isRemoteRoot } from './remote/ssh-target'
 import {
   remoteMkdir, remoteMove, remoteDelete, remoteRename, remoteCopyFile,

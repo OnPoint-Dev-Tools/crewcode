@@ -1,6 +1,6 @@
 import type { ProviderRateLimits, RateLimitWindow } from '../../shared/rate-limit-types'
 import { spawn } from 'node:child_process'
-import { buildAgentCommandEnv, resolveCodexCommand } from './resolve-agent'
+import { buildCodexCommandEnv, resolveCodexCommand } from './resolve-agent'
 import { getCmdExePath, getSpawnArgsForWindows } from '../win32-utils'
 
 const RPC_TIMEOUT_MS = 10_000
@@ -27,8 +27,13 @@ type RpcRateLimitsResult = {
   secondary?: RpcRateWindow
 }
 
-type RpcRateLimitsResponse = {
+export type RpcRateLimitsResponse = {
   rateLimits?: RpcRateLimitsResult
+  rateLimitsByLimitId?: Record<string, RpcRateLimitsResult | undefined> | null
+}
+
+export function selectCodexRateLimits(response: RpcRateLimitsResponse): RpcRateLimitsResult | undefined {
+  return response.rateLimitsByLimitId?.codex ?? response.rateLimits
 }
 
 function buildRpcMessage(id: number, method: string, params?: unknown): string {
@@ -83,7 +88,7 @@ async function fetchViaRpc(commandOverride?: string | null): Promise<ProviderRat
     const child = spawn(spawnCmd, spawnArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
-      env: buildAgentCommandEnv(codexCommand),
+      env: buildCodexCommandEnv(codexCommand),
     })
 
     const timeout = setTimeout(() => {
@@ -154,7 +159,7 @@ async function fetchViaRpc(commandOverride?: string | null): Promise<ProviderRat
             }
 
             const wrapper = msg.result as RpcRateLimitsResponse | undefined
-            const result = wrapper?.rateLimits
+            const result = wrapper ? selectCodexRateLimits(wrapper) : undefined
             const session = mapRpcWindow(result?.primary)
             const weekly = mapRpcWindow(result?.secondary)
 
@@ -261,7 +266,7 @@ async function fetchViaPty(commandOverride?: string | null): Promise<ProviderRat
       name: 'xterm-256color',
       cols: 120,
       rows: 40,
-      env: buildAgentCommandEnv(codexCommand, { TERM: 'xterm-256color' }) as Record<string, string>,
+      env: buildCodexCommandEnv(codexCommand, { TERM: 'xterm-256color' }) as Record<string, string>,
     })
 
     const disposables: { dispose: () => void }[] = []

@@ -32,17 +32,17 @@ describe('CrewCoder compact capability', () => {
 })
 
 describe('CrewCoder filesystem custody handshake', () => {
-  it('keeps local ACP file capabilities separate from virtual custody', () => {
-    expect(crewCoderInitializeParams(false)).toEqual(expect.objectContaining({
+  it('keeps ACP file capabilities separate from virtual custody', () => {
+    expect(crewCoderInitializeParams()).toEqual(expect.objectContaining({
       clientCapabilities: { fs: { readTextFile: true, writeTextFile: true }, terminal: false },
       _meta: { 'crewcode/virtualFilesystem': false },
     }))
   })
 
-  it('marks the filesystem virtual only for a remote process', () => {
-    expect(crewCoderInitializeParams(true)).toEqual(expect.objectContaining({
+  it('does not disable provider-native tools for SSH because CrewCoder runs on the workspace host', () => {
+    expect(crewCoderInitializeParams()).not.toMatchObject({
       _meta: { 'crewcode/virtualFilesystem': true },
-    }))
+    })
   })
 })
 

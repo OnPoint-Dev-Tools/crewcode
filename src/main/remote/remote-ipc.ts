@@ -3,7 +3,7 @@ import { posix } from 'path'
 import type { SFTPWrapper, FileEntry } from 'ssh2'
 import { getSftp, execRemote, connectRemote, disconnectRemote, disconnectAllRemotes } from './ssh-pool'
 import { parseRemoteTarget, formatRemoteRoot, attrIsDir, type RemoteTarget } from './ssh-target'
-import { IGNORE } from '../fs-constants'
+import { SCAN_IGNORED_ENTRIES } from '../fs-constants'
 
 const { ipcMain } = electron
 
@@ -45,7 +45,7 @@ export function registerRemoteIpc(): void {
 
     const entries: RemoteDirEntry[] = []
     for (const e of list) {
-      if (e.filename.startsWith('.') || IGNORE.has(e.filename)) continue
+      if (e.filename.startsWith('.') || SCAN_IGNORED_ENTRIES.has(e.filename)) continue
       entries.push({ name: e.filename, kind: attrIsDir(e.attrs.mode) ? 'dir' : 'file' })
     }
     entries.sort((a, b) => (a.kind !== b.kind ? (a.kind === 'dir' ? -1 : 1) : a.name.localeCompare(b.name)))

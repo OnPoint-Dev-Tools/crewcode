@@ -7,6 +7,23 @@ import { getSpawnArgsForWindows } from '../win32-utils'
 const DIRECT_TIMEOUT_MS = 12_000
 const PTY_TIMEOUT_MS = 25_000
 const MAX_OUTPUT_LENGTH = 100_000
+export const CLAUDE_CRASH_COOLDOWN_MS = 10 * 60 * 1000
+
+type ClaudeProbeResult = ProviderRateLimits & { processCrash?: string }
+
+let interactiveProbeBlockedUntil = 0
+
+export function noteClaudeProbeCrash(now = Date.now()): void {
+  interactiveProbeBlockedUntil = Math.max(interactiveProbeBlockedUntil, now + CLAUDE_CRASH_COOLDOWN_MS)
+}
+
+export function claudeInteractiveProbeIsCoolingDown(now = Date.now()): boolean {
+  return now < interactiveProbeBlockedUntil
+}
+
+export function resetClaudeProbeCrashCooldownForTest(): void {
+  interactiveProbeBlockedUntil = 0
+}
 
 const SESSION_RE = /current\s*session/i
 const WEEKLY_RE = /current\s*week/i
@@ -102,11 +119,11 @@ function buildClaudeResult(output: string, errorFallback: string): ProviderRateL
   }
 }
 
-async function fetchViaCommand(commandOverride?: string | null): Promise<ProviderRateLimits> {
+async function fetchViaCommand(commandOverride?: string | null): Promise<ClaudeProbeResult> {
   const claudeCommand = resolveClaudeCommand(commandOverride)
   const { spawnCmd, spawnArgs } = getSpawnArgsForWindows(claudeCommand, ['/usage'])
 
-  return new Promise<ProviderRateLimits>((resolve) => {
+  return new Promise<ClaudeProbeResult>((resolve) => {
     let output = ''
     let resolved = false
     let child: ReturnType<typeof spawn>
@@ -163,16 +180,28 @@ async function fetchViaCommand(commandOverride?: string | null): Promise<Provide
       })
     })
 
-    child.on('close', () => {
+    child.on('close', (_exitCode, signal) => {
       if (resolved) return
       resolved = true
       clearTimeout(timeout)
+      if (signal) {
+        resolve({
+          provider: 'claude',
+          session: null,
+          weekly: null,
+          updatedAt: Date.now(),
+          error: `Claude usage probe crashed (${signal})`,
+          status: 'error',
+          processCrash: signal,
+        })
+        return
+      }
       resolve(buildClaudeResult(output, describeFailure(stripTerminalSequences(output))))
     })
   })
 }
 
-async function fetchViaPty(commandOverride?: string | null): Promise<ProviderRateLimits> {
+async function fetchViaPty(commandOverride?: string | null): Promise<ClaudeProbeResult> {
   const pty = await import('node-pty')
   const claudeCommand = resolveClaudeCommand(commandOverride)
 
@@ -180,7 +209,7 @@ async function fetchViaPty(commandOverride?: string | null): Promise<ProviderRat
   const spawnFile = isWin32 ? 'cmd.exe' : claudeCommand
   const spawnArgs = isWin32 ? ['/c', `"${claudeCommand}"`] : []
 
-  return new Promise<ProviderRateLimits>((resolve) => {
+  return new Promise<ClaudeProbeResult>((resolve) => {
     let output = ''
     let resolved = false
     let sentUsage = false
@@ -290,7 +319,7 @@ async function fetchViaPty(commandOverride?: string | null): Promise<ProviderRat
     })
     if (onData) disposables.push(onData)
 
-    const onExit = term.onExit(() => {
+    const onExit = term.onExit(({ signal }) => {
       dispose()
       if (enterInterval) clearInterval(enterInterval)
       if (!resolved) {
@@ -298,13 +327,15 @@ async function fetchViaPty(commandOverride?: string | null): Promise<ProviderRat
         clearTimeout(timeout)
         const clean = stripTerminalSequences(output)
         const { session, weekly } = parsePtyUsage(clean)
+        const crashed = typeof signal === 'number' && signal > 0
         resolve({
           provider: 'claude',
           session,
           weekly,
           updatedAt: Date.now(),
-          error: session || weekly ? null : 'Claude exited before /usage rendered',
+          error: session || weekly ? null : crashed ? `Claude usage probe crashed (signal ${signal})` : 'Claude exited before /usage rendered',
           status: session || weekly ? 'ok' : 'error',
+          ...(crashed ? { processCrash: `signal ${signal}` } : {}),
         })
       }
     })
@@ -315,9 +346,18 @@ async function fetchViaPty(commandOverride?: string | null): Promise<ProviderRat
 export async function fetchClaudeRateLimits(commandOverride?: string | null): Promise<ProviderRateLimits> {
   const direct = await fetchViaCommand(commandOverride)
   if (direct.status === 'ok' || direct.status === 'unavailable') return direct
+  if (direct.processCrash) {
+    noteClaudeProbeCrash()
+    return direct
+  }
+
+  // The fallback is a real interactive CLI process. After an observed crash,
+  // do not let focus-driven refreshes relaunch it into a core-dump loop.
+  if (claudeInteractiveProbeIsCoolingDown()) return direct
 
   try {
     const pty = await fetchViaPty(commandOverride)
+    if (pty.processCrash) noteClaudeProbeCrash()
     return pty.status === 'ok' ? pty : direct
   } catch {
     return direct
