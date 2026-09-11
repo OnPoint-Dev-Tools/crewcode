@@ -404,17 +404,18 @@ function splitModel(model: string | undefined): { provider?: string; model?: str
   return { provider: value.slice(0, separator), model: value.slice(separator + 1) }
 }
 
-export function crewCoderInitializeParams(remote: boolean): Record<string, unknown> {
+export function crewCoderInitializeParams(): Record<string, unknown> {
   return {
     protocolVersion: 1,
     clientCapabilities: {
       fs: { readTextFile: true, writeTextFile: true },
       terminal: false,
     },
-    // File capabilities are advertised for local chats too. Keep virtual
-    // custody as a separate, explicit signal so providers are restricted only
-    // when those methods proxy a filesystem outside the agent process host.
-    _meta: { 'crewcode/virtualFilesystem': remote },
+    // spawnAgentProcess co-locates CrewCoder with the workspace for both local
+    // and SSH roots. ACP file methods remain available for host-mediated text
+    // I/O, but this is not a virtual filesystem boundary: provider-native file
+    // tools and transports operate on the same host and workspace.
+    _meta: { 'crewcode/virtualFilesystem': false },
   }
 }
 
@@ -817,7 +818,7 @@ export async function createCrewCoderBridge(
   })
 
   try {
-    const initializeResult = await request('initialize', crewCoderInitializeParams(remote))
+    const initializeResult = await request('initialize', crewCoderInitializeParams())
     compactMethod = crewCoderCompactMethod(initializeResult)
 
     let resumed = false

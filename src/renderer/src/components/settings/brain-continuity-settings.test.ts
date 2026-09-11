@@ -13,6 +13,7 @@ describe('Desktop & Web continuity settings placement', () => {
     expect(settings).toContain('brainDesktopStatus(true)')
     expect(settings).toContain('Hub browser · {status.hubBrowserOrigin}')
     expect(settings).toContain('The Hub web server is separate from the Brain')
+    expect(settings).toContain('reuse the same saved machine enrollment')
     expect(settings).toContain('Open Hub')
     expect(settings).toContain('openExternal(status.hubBrowserOrigin)')
     expect(settings).toContain("id: 'hub-machines', label: 'Hub Machines'")

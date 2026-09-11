@@ -39,6 +39,7 @@ import { isSessionViewTab, type SessionDragPayload } from './components/thread/s
 import type { Prompt as PromptDef, Skill as SkillDef } from './types/prompts'
 import { Icon }             from './components/ui/Icon'
 import { LoadingScreen }    from './components/ui/LoadingScreen'
+import { AboutDialog }      from './components/ui/AboutDialog'
 import { MobileShell, useMobileShell } from './components/ui/MobileShell'
 import type { AgentActivityState } from './components/ui/AgentActivityIndicator'
 import { Onboarding }       from './components/onboarding/Onboarding'
@@ -264,6 +265,7 @@ export default function App() {
   const { state: settings, set: setSetting } = useSettings()
   const { show } = useNotifications()
   const selectionSpeech = useSelectionSpeechState()
+  const [aboutOpen, setAboutOpen] = useState(false)
   useSettingsEffects()
 
   // MCP servers come from two places: the app-managed registry (Settings UI) and
@@ -928,6 +930,7 @@ export default function App() {
   const providerUsed = activeAgentRateLimits?.session?.usedPercent ?? 0
   const providerLimit = 100
   const providerResetDescription = activeAgentRateLimits?.session?.resetDescription ?? null
+  const rateLimitStatus = activeAgentRateLimits?.status ?? 'idle'
   const hourlyUsedPercent = activeAgentRateLimits?.session?.usedPercent ?? 0
   const hourlyResetDescription = activeAgentRateLimits?.session?.resetDescription ?? null
   const weeklyUsedPercent = activeAgentRateLimits?.weekly?.usedPercent ?? 0
@@ -3061,6 +3064,7 @@ export default function App() {
       case 'start-crew':       startCrewFromAnywhere(); return
       case 'start-canvas':     startCanvasFromAnywhere(); return
       case 'updates':          window.electronAPI?.updaterCheck?.(); return
+      case 'about':            setAboutOpen(true); return
       case 'quit-stop-brain':  void window.electronAPI?.brainDesktopStopAndQuit(); return
       case 'docs':             window.electronAPI?.openExternal?.('https://crewcode-docs.logixhub.icu'); return
       case 'toggle-menulet':
@@ -3614,6 +3618,7 @@ export default function App() {
           onSubmit={resolveSigningPassphrase}
           onCancel={() => resolveSigningPassphrase(null)}
         />
+        <AboutDialog open={aboutOpen} onClose={() => setAboutOpen(false)} />
         <ChatNotifications
           sessActive={sessActive}
           show={show}
@@ -3718,6 +3723,7 @@ export default function App() {
         providerUsed={providerUsed}
         providerLimit={providerLimit}
         providerResetDescription={providerResetDescription}
+        rateLimitStatus={rateLimitStatus}
         externalDirectoryCount={activeSession?.externalDirectories?.length ?? 0}
         onManageExternalDirectories={activeTab?.kind === 'chat' ? () => window.dispatchEvent(new CustomEvent('crewcode:manage-external-directories')) : undefined}
         hourlyUsedPercent={hourlyUsedPercent}

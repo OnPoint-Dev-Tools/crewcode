@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react'
 import { chronologicalStreamSegments } from '../../streaming/stream-chunks'
+import { Icon } from '../ui/Icon'
 
 interface ThinkingBlockProps {
   text:      string
@@ -19,16 +20,14 @@ export function ThinkingBlock({ text, streaming, chunks }: ThinkingBlockProps) {
         onClick={() => setOpen(current => !current)}
         className="-mx-1.5 flex max-w-full cursor-pointer appearance-none items-center gap-2 rounded-md border-0 bg-transparent px-1.5 py-1 text-left font-[inherit] text-cc-muted transition-colors duration-150 hover:bg-cc-hover hover:text-cc-ink focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-cc-accent"
       >
-        <svg
-          width="16"
-          height="16"
-          viewBox="0 0 24 24"
+        <Icon
+          name="thought"
+          size={16}
+          stroke={1.9}
           aria-hidden="true"
+          data-thinking-icon
           className={`shrink-0 ${streaming ? 'text-cc-ink' : 'text-cc-muted'}`}
-          fill="currentColor"
-        >
-          <path d="M12 2l2.4 7.2L22 12l-7.6 2.8L12 22l-2.4-7.2L2 12l7.6-2.8z" />
-        </svg>
+        />
         <span role="status" className="min-w-0 text-[13px] font-medium">
           {streaming ? (
             <span

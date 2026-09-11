@@ -136,6 +136,7 @@ describe('Messages transcript ordering', () => {
 
     expect(renderOrder(renderer.toJSON())).toEqual(['thinking', 'thinking', 'agent'])
     expect(collectText(renderer.toJSON()).filter(text => text === 'Thinking')).toHaveLength(2)
+    expect(renderer.root.findAll(node => node.type === 'svg' && node.props['data-thinking-icon'] === true)).toHaveLength(2)
 
     TestRenderer.act(() => renderer.unmount())
   })
@@ -170,6 +171,7 @@ describe('Messages transcript ordering', () => {
     ])
     const text = collectText(renderer.toJSON()).join(' ').replace(/\s+/g, ' ')
     expect(text).toContain('2 tool calls')
+    expect(renderer.root.findAll(node => node.type === 'svg' && node.props['data-worklog-icon'] === true)).toHaveLength(1)
     expect(text).toContain('renderer.ts')
     expect(text).toContain('npm test')
 

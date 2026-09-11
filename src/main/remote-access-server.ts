@@ -43,6 +43,7 @@ import { getAgentKey, setAgentKey } from './agents/agent-keys'
 import { getSessionHints } from './agents/sessionStore'
 import { WebSocketServer, WebSocket } from 'ws'
 import { ContinuityStateService, continuityStatePath } from './continuity-state-service'
+import { createAppBuildInfo } from './build-info'
 
 const MAX_REQUEST_BYTES = 2 * 1024 * 1024
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024
@@ -266,6 +267,7 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
     return true
   }
   const handlers = new Map<string, RpcHandler>([
+    ['app.buildInfo', () => createAppBuildInfo()],
     ['auth.sessions', () => auth.list()],
     ['auth.revoke', params => ({ revoked: auth.revoke(String(params.sessionId ?? '')) })],
     ['workspaces.list', () => workspaceService.list().filter(workspace => {

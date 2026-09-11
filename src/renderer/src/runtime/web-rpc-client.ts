@@ -206,7 +206,7 @@ export function createWebCrewCodeClient(sessionOrTransport: string | WebClientTr
     updaterCheck: async () => ({ ok: false, error: 'updates are desktop-only' }),
     updaterDownload: async () => ({ ok: false, error: 'updates are desktop-only' }),
     updaterQuitAndInstall: async () => ({ ok: false, error: 'updates are desktop-only' }),
-    appBuildInfo: async () => ({ version: 'web', buildHash: 'web', packaged: false }),
+    appBuildInfo: () => rpc('app.buildInfo', {}),
     // Keep optional desktop-only capability probes genuinely absent. A throwing
     // fallback function makes `typeof api.trayConfigure === 'function'` true and
     // incorrectly mounts the tray preference in a browser.

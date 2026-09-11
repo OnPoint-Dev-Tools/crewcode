@@ -11,6 +11,12 @@ CrewCode's renderer supports Tailwind CSS v4 utilities through `@tailwindcss/vit
 
 ## Usage rules
 
+Thinking-log headers use the shared outlined thought-bubble icon rather than the
+generic sparkle glyph. The separate disclosure chevron continues to communicate
+expand/collapse state. Turn Work Log headers pair their disclosure chevron with
+the shared outlined activity-ledger icon; individual rows retain their
+tool-specific icons.
+
 Use Tailwind utilities for new or converted renderer component layout and responsive behavior. Do not hardcode a second palette or bypass the tokens in `colors_and_type.css`. Technical values and tool output remain in the configured mono font.
 
 Legacy root class names may remain when tests or integrations use them as stable row identities. In that case, keep compatibility selectors narrow and implement the component's internal layout with utilities.

@@ -13,7 +13,12 @@ import { HubStore, type HubUser } from './hub-store'
 
 const CHALLENGE_TTL_MS = 5 * 60_000
 export const HUB_BOOTSTRAP_TTL_MS = 10 * 60_000
-export const HUB_SESSION_TTL_MS = 12 * 60 * 60_000
+// A Hub session represents a revocable trusted browser (commonly the owner's
+// phone), not a Brain connection ticket. Keep it across browser restarts so
+// changing between foreground and desktop-background Brain processes does not
+// force the owner through passkey sign-in again. Per-machine tickets remain
+// short-lived and single-use.
+export const HUB_SESSION_TTL_MS = 30 * 24 * 60 * 60_000
 
 interface PendingChallenge {
   challenge: string

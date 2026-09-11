@@ -263,6 +263,11 @@ protocol and must never be required for self-hosted operation.
 - Subsequent browser sessions authenticate to the Hub with WebAuthn/passkeys. An
   optional external OIDC provider may be configured by the Hub owner, but is not
   required.
+- Successful Hub sign-in creates a revocable 30-day trusted-browser session. Its
+  HttpOnly cookie persists across phone/browser restarts, while only its digest is
+  stored in Hub SQLite. Clearing site data, signing out, expiry, or server-side
+  revocation requires passkey sign-in again; none of those events enrolls or
+  re-enrolls a machine.
 - The browser uses secure, HttpOnly, SameSite cookies for the Hub session; Hub bearer
   tokens must not be stored in `localStorage`.
 - State-changing Hub routes require CSRF protection and exact checks against the
@@ -572,6 +577,14 @@ closes active relay sessions and permanently rejects later heartbeats. Enrollmen
 tokens are never written
 to the Hub database and are invalidated by Hub restart, expiry, first successful use,
 or a failed guess against their id.
+
+That credential belongs to the machine, not to a particular Brain process. Electron
+Background Brain and the foreground/headless `crewcode brain` command both reuse the
+same default `~/.crewcode/brain/hub-machine.json`; stop one before starting the other,
+but do not enroll again when switching modes. A custom `--data-dir` is a deliberately
+separate Brain identity and therefore does not reuse the default credential. The
+phone's persisted Hub browser session is likewise Hub-owned rather than Brain-owned,
+so restarting or changing Brain mode does not forget the phone.
 
 Remote authority is disabled by default. Enable only explicit Brain-local roots and
 scopes, for example:

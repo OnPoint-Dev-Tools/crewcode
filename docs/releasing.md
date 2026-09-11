@@ -41,6 +41,13 @@ configured credential helpers can still authenticate. A verification command tha
 needs input must fail explicitly rather than leaving a stopped release job that could
 later resume and mutate version/tag state.
 
+CrewCode's desktop usage indicators probe installed provider CLIs independently of
+the release command. If Claude's interactive usage process exits from a crash signal,
+CrewCode pauses that fallback for ten minutes. This prevents focus-driven refreshes
+from creating a repeated core-dump loop while leaving the direct usage probe available.
+It is not evidence that an interrupted release succeeded; release state must still be
+verified from the version commit and remote tag.
+
 ## What CI does
 
 Pushing a `v*` tag triggers `.github/workflows/release.yml`, which builds on
@@ -155,7 +162,7 @@ update as never-installing. Upgraders holding the old `autoUpdate`/`installOnQui
 booleans are migrated onto the policy by `migrateUpdatePolicy`. Dev builds short
 circuit to an `unconfigured` event.
 
-The version and build hash in Settings come from `app:buildInfo`
+The version and build hash in the app-menu header, About card, and Settings come from `app:buildInfo`
 (`app.getVersion()` plus a `__BUILD_HASH__` short SHA injected by
 `electron.vite.config.ts`). Never hardcode them in the UI — a stale literal
 misreports the version at exactly the moment a user checks it, right after an

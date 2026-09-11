@@ -1,7 +1,7 @@
 import { execFile } from 'child_process'
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, sep } from 'path'
 import { cpSync, existsSync, mkdirSync, promises as fsp, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
-import { IGNORE, MAX_FILE_BYTES } from './fs-constants'
+import { MAX_FILE_BYTES, SCAN_IGNORED_ENTRIES, TREE_HIDDEN_ENTRIES } from './fs-constants'
 import { uniqueCopyName } from './fs-copy-name'
 import { isRemoteRoot } from './remote/ssh-target'
 import { remoteListFiles, remoteReadDir, remoteReadFile, remoteWriteFile } from './remote/remote-fs'
@@ -32,7 +32,7 @@ export class FilesystemService {
       return { error: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'path missing' : (error as Error).message }
     }
     const nodes = (await Promise.all(entries.map(async (name): Promise<FilesystemNode | null> => {
-      if (IGNORE.has(name)) return null
+      if (TREE_HIDDEN_ENTRIES.has(name)) return null
       const absolute = join(target, name)
       let stat
       try { stat = await fsp.stat(absolute) } catch { return null }
@@ -245,7 +245,7 @@ export class FilesystemService {
       let entries: string[]
       try { entries = readdirSync(absoluteDir) } catch { return }
       for (const name of entries) {
-        if (IGNORE.has(name)) continue
+        if (SCAN_IGNORED_ENTRIES.has(name)) continue
         const absolute = join(absoluteDir, name)
         let stat
         try { stat = statSync(absolute) } catch { continue }

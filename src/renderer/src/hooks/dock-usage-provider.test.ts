@@ -14,6 +14,11 @@ describe('dockUsageProviderId', () => {
     expect(dockUsageProviderId('crewcoder', 'opencode:anthropic/claude-sonnet-4-6')).toBe('opencode')
   })
 
+  it('recognizes legacy unprefixed CrewCoder Codex models', () => {
+    expect(dockUsageProviderId('crewcoder', 'gpt-5.6-sol')).toBe('codex')
+    expect(dockUsageProviderId('crewcoder', 'gpt-5.4')).toBe('codex')
+  })
+
   it('normalizes upstream aliases used by detected models', () => {
     expect(dockUsageProviderId('crewcoder', 'anthropic:claude-opus-4-8')).toBe('claude')
     expect(dockUsageProviderId('crewcoder', 'openai-codex:gpt-5.4')).toBe('codex')
@@ -27,7 +32,7 @@ describe('dockUsageProviderId', () => {
 
   it('falls back to the agent when the model has no supported provider prefix', () => {
     expect(dockUsageProviderId('crewcoder', '')).toBe('crewcoder')
-    expect(dockUsageProviderId('crewcoder', 'gpt-5.4')).toBe('crewcoder')
+    expect(dockUsageProviderId('crewcoder', 'custom-model')).toBe('crewcoder')
     expect(dockUsageProviderId('custom-agent', 'google/gemini-2.5-pro')).toBe('custom-agent')
     expect(dockUsageProviderId('pi', 'openai/gpt-5.4')).toBe('pi')
   })

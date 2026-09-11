@@ -39,6 +39,7 @@ import { getCrewCodeClient } from '../../runtime/crewcode-client'
 import { isCrewLaneSessionKey } from '../../../../shared/custody-types'
 import { isSessionDrag, readSessionDrag, type SessionDragPayload } from '../thread/session-drag'
 import { crewCoderApprovalForProfile, crewCoderProfileLocksExecutionMode, type CrewCoderApprovalMode, type CrewCoderMode } from '../../../../shared/crewcoder-types'
+import { shouldShowChatBackground } from './fresh-chat-background'
 
 type CrewBranchWithMessagesProps = Omit<React.ComponentProps<typeof CrewBranch>, 'messagesByTab'>
 
@@ -790,6 +791,13 @@ export function ChatPane({
     return true
   }, [onSessionDrop])
 
+  const chatBackgroundVisible = shouldShowChatBackground({
+    threadView,
+    hasBackground: !!appSettings.freshChatBackground,
+    messageCount: messages.length,
+    showInRegularChats: appSettings.showChatBackgroundInRegularChats,
+  })
+
   return (
     <div
       className={`chat-pane-row${sessionDropActive ? ' session-drop-target' : ''}`}
@@ -817,7 +825,14 @@ export function ChatPane({
         className={`main ${terminalVisible ? '' : 'no-term'}`}
         style={{ ['--term-width' as any]: `${termWidth}px` }}
       >
-        <div className="chat-col">
+        <div className={`chat-col${chatBackgroundVisible ? ' has-chat-background' : ''}`}>
+          {chatBackgroundVisible ? (
+            <div
+              className="chat-background-wallpaper"
+              style={{ backgroundImage: `url("${appSettings.freshChatBackground}")` }}
+              aria-hidden="true"
+            />
+          ) : null}
           <SoloChatView
             workspace={workspace}
             effectivePath={effectivePath}

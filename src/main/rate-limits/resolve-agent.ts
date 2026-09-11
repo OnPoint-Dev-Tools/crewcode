@@ -40,6 +40,32 @@ function findFirstExecutable(directories: string[], executableNames: string[]): 
   return null
 }
 
+function managedCodexExecutable(): string | null {
+  const packageRoot = process.env.CODEX_MANAGED_PACKAGE_ROOT
+  const platform = process.platform === 'win32' ? 'win32' : process.platform
+  const packageNames = [`codex-${platform}-${process.arch}`, `codex-${process.platform}-${process.arch}`]
+  const vendorTargets = process.platform === 'linux'
+    ? [`${process.arch}-unknown-linux-musl`, `${process.arch}-unknown-linux-gnu`]
+    : []
+  const candidates = [
+    ...(packageRoot ? [
+      join(packageRoot, 'bin', ...getExecutableNames(process.platform, 'codex')),
+      ...packageNames.flatMap(name => [
+        ...vendorTargets.map(target => join(dirname(packageRoot), name, 'vendor', target, 'bin', 'codex')),
+        join(dirname(packageRoot), name, 'bin', ...getExecutableNames(process.platform, 'codex')),
+      ]),
+    ] : []),
+    // npm's managed launcher can leave the native package's `codex-path`
+    // directory on PATH even when the alias itself is stale. The real binary
+    // is beside it in the sibling `bin` directory.
+    ...splitPath(process.env.PATH ?? process.env.Path).flatMap(entry =>
+      entry.endsWith('codex-path')
+        ? [join(dirname(entry), 'bin', ...getExecutableNames(process.platform, 'codex'))]
+        : []),
+  ]
+  return findFirstExecutable([ ...candidates.map(dirname) ], getExecutableNames(process.platform, 'codex'))
+}
+
 function getVersionManagerDirectories(platform: NodeJS.Platform, homePath: string, executableNames: string[]): string[] {
   const directories = [
     join(homePath, '.volta', 'bin'),
@@ -127,6 +153,19 @@ function resolveCommand(commandName: string, overridePath?: string | null, platf
   const shellCandidate = resolveFromLoginShell(commandName)
   if (shellCandidate) return shellCandidate
 
+  if (commandName === 'codex') {
+    // A standalone npm install is the user's normal CLI and may be absent
+    // from Electron's PATH when CrewCode is launched from a desktop entry.
+    const standalone = findFirstExecutable(
+      [join(homePath, '.codex-cli-npm', 'bin')],
+      executableNames,
+    )
+    if (standalone) return standalone
+
+    const managedCandidate = managedCodexExecutable()
+    if (managedCandidate) return managedCandidate
+  }
+
   const versionManagerCandidate = findFirstExecutable(
     getVersionManagerDirectories(platform, homePath, executableNames),
     executableNames
@@ -151,6 +190,39 @@ export function buildAgentCommandEnv(commandPath?: string | null, extra?: Record
   delete env.ELECTRON_RUN_AS_NODE
   delete env.NODE_OPTIONS
   return env
+}
+
+/**
+ * A development build can be launched from inside a CrewCoder-backed Codex
+ * turn. In that case the Electron process inherits the parent app-server's
+ * private CODEX_HOME and runtime identity. Those values belong to the parent
+ * process; passing them to the user's standalone CLI makes the usage probe
+ * open the wrong state database (and commonly fail before initialization).
+ *
+ * Preserve an explicitly configured CODEX_HOME in ordinary shells. The full
+ * managed-runtime signature is deliberately required before removing it.
+ */
+export function sanitizeCodexCommandEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const sanitized = { ...env }
+  const inheritedManagedRuntime = sanitized.CODEX_MANAGED_BY_NPM === '1'
+    && Boolean(sanitized.CODEX_MANAGED_PACKAGE_ROOT)
+    && Boolean(sanitized.CODEX_THREAD_ID)
+
+  if (inheritedManagedRuntime) {
+    delete sanitized.CODEX_HOME
+    delete sanitized.CODEX_THREAD_ID
+    delete sanitized.CODEX_MANAGED_PACKAGE_ROOT
+    delete sanitized.CODEX_MANAGED_BY_NPM
+    delete sanitized.CODEX_CI
+    delete sanitized.CREWCODER_PROVIDER
+    delete sanitized.CREWCODER_MODEL
+  }
+
+  return sanitized
+}
+
+export function buildCodexCommandEnv(commandPath?: string | null, extra?: Record<string, string>): NodeJS.ProcessEnv {
+  return sanitizeCodexCommandEnv(buildAgentCommandEnv(commandPath, extra))
 }
 
 export function resolveCodexCommand(overridePath?: string | null): string {
