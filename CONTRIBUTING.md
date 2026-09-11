@@ -1,14 +1,14 @@
 # Contributing to CrewCode
 
-Thanks for your interest in CrewCode. Contributions are welcome, but please read this first — CrewCode is maintained by a solo developer, and these guidelines exist to keep that sustainable.
+Thanks for your interest in CrewCode. Contributions are welcome, but please read this first, CrewCode is maintained by a solo developer, and these guidelines exist to keep that sustainable.
 
 ## Before you write code: open an issue first
 
 **Do not open a large pull request without discussing it first.**
 
-For anything beyond a small fix, open an issue describing what you want to change and why, and wait for a maintainer thumbs-up before building it. This protects your time — it's far better to hear "not a direction I want to take" before you've written 1,000 lines than after.
+For anything beyond a small fix, open an issue describing what you want to change and why, and wait for a maintainer thumbs-up before building it. This protects your time, it's far better to hear "not a direction I want to take" before you've written 1,000 lines than after.
 
-PRs that don't follow this may be closed without a full review, simply because the change wasn't agreed on up front. That's not personal — it's how a one-person project stays maintainable.
+PRs that don't follow this may be closed without a full review, simply because the change wasn't agreed on up front. That's not personal , it's how a one-person project stays maintainable.
 
 ## What gets merged
 
@@ -36,7 +36,7 @@ Be conservative about adding new dependencies. Every new package is a maintenanc
 
 ## Security
 
-CrewCode has filesystem, shell, git, and SSH access — it is security-sensitive. Every PR is reviewed line by line, and changes touching process execution, file access, or dependencies get extra scrutiny.
+CrewCode has filesystem, shell, git, and SSH access, it is security-sensitive. Every PR is reviewed line by line, and changes touching process execution, file access, or dependencies get extra scrutiny.
 
 Do **not** report security vulnerabilities in public issues or pull requests. See [SECURITY.md](./SECURITY.md) for how to report them privately.
 

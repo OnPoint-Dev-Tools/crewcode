@@ -15,7 +15,7 @@ import {
   type BrainAccessScope,
   type HubRelayControlFrame,
 } from '../shared/hub-relay-types'
-import { HubAuth } from './hub-auth'
+import { HUB_SESSION_TTL_MS, HubAuth } from './hub-auth'
 import { HubDeviceEnrollmentIssuer, HubEnrollmentIssuer, HUB_MACHINE_ONLINE_WINDOW_MS } from './hub-machine-enrollment'
 import { HubStore, type HubSession } from './hub-store'
 import QRCode from 'qrcode'
@@ -154,9 +154,13 @@ function cookieName(publicOrigin: string): string {
   return new URL(publicOrigin).protocol === 'https:' ? SESSION_COOKIE_HTTPS : SESSION_COOKIE_HTTP
 }
 
-function setSessionCookie(response: ServerResponse, publicOrigin: string, token: string): void {
+export function hubSessionCookie(publicOrigin: string, token: string): string {
   const secure = new URL(publicOrigin).protocol === 'https:' ? '; Secure' : ''
-  response.setHeader('set-cookie', `${cookieName(publicOrigin)}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict${secure}`)
+  return `${cookieName(publicOrigin)}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${Math.floor(HUB_SESSION_TTL_MS / 1_000)}${secure}`
+}
+
+function setSessionCookie(response: ServerResponse, publicOrigin: string, token: string): void {
+  response.setHeader('set-cookie', hubSessionCookie(publicOrigin, token))
 }
 
 function clearSessionCookie(response: ServerResponse, publicOrigin: string): void {

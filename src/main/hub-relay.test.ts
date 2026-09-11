@@ -235,6 +235,7 @@ async function encryptedRpc(input: {
 
 describe('Brain-local RPC authorization', () => {
   it('classifies workspace, terminal, and agent methods without a permissive fallback', () => {
+    expect(brainScopeForMethod('app.buildInfo')).toBe('workspace:read')
     expect(brainScopeForMethod('workspaces.list')).toBe('workspace:read')
     expect(brainScopeForMethod('git.conflictDiff')).toBe('workspace:read')
     expect(brainScopeForMethod('fs.writeFile')).toBe('workspace:write')

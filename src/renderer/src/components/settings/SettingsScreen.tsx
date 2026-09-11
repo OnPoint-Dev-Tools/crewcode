@@ -32,7 +32,12 @@ import {
 } from '../profile/UserProfileAvatar'
 import { PROVIDER_IMAGES, providerImageClass } from '../composer/provider-meta'
 import { SETTINGS_SECTION_EVENT, takePendingSettingsSection } from './settings-section-focus'
-import type { AppBuildInfo, UpdaterEvent, GhStatus, AgentInfo, Workspace } from '../../types'
+import {
+  FRESH_CHAT_BACKGROUND_ACCEPT,
+  extractChatBackgroundPalette,
+  freshChatBackgroundError,
+} from '../chat/fresh-chat-background'
+import type { UpdaterEvent, GhStatus, AgentInfo, Workspace } from '../../types'
 import type { CompletionProviderId } from '../../../../shared/agent-completion-types'
 import {
   LOCAL_VOICE_SPEED_MAX,
@@ -41,6 +46,7 @@ import {
 } from '../../../../shared/voice-types'
 import { getCrewCodeClient, getCrewCodeRuntime } from '../../runtime/crewcode-client'
 import { BrainAuthorizationSection } from './BrainAuthorizationSection'
+import { useAppBuildInfo } from '../../hooks/useAppBuildInfo'
 import type { EditorThemeId } from '../../../../shared/editor-theme-types'
 import type { HubMachineSummary } from '../../../../shared/hub-machine-types'
 import type {
@@ -95,11 +101,12 @@ function Seg<T extends string>({ value, options, onChange }: {
   )
 }
 
-function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) => void }) {
+function Toggle({ value, onChange, disabled = false }: { value: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
   return (
     <button
       className={'ss-toggle' + (value ? ' on' : '')}
       onClick={() => onChange(!value)}
+      disabled={disabled}
       role="switch"
       aria-checked={value}
     />
@@ -544,7 +551,7 @@ function BrainContinuitySection() {
         <div className="ss-row" data-q="brain background web continuity remote conversations workspaces">
           <div>
             <div className="label">Background Brain</div>
-            <div className="help">Make this machine's Brain authoritative for workspaces, conversations, terminals, and agents. Closing the desktop window leaves enrolled web access available; <b>Stop Brain</b> removes that availability.</div>
+            <div className="help">Make this machine's Brain authoritative for workspaces, conversations, terminals, and agents. Desktop Background Brain and <code>crewcode brain</code> reuse the same saved machine enrollment; switching modes does not require enrolling your phone or machine again. Closing the desktop window leaves web access available; <b>Stop Brain</b> removes that availability.</div>
             <div className="help mono">{status?.running ? 'running · desktop attached' : status?.enabled ? 'enabled · not reachable' : status?.enrolled ? 'ready to enable' : 'Hub enrollment required'}</div>
             {status?.hubBrowserOrigin ? (
               <>
@@ -720,15 +727,7 @@ function UpdatesSection({ state, set }: { state: SettingsState; set: SetSetting 
   // null until a check actually completes — seeding a fake timestamp made the UI
   // claim "last checked 4 min ago" before anything had ever run.
   const [lastChecked, setLastChecked] = useState<number | null>(null)
-  const [build, setBuild] = useState<AppBuildInfo | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-    window.electronAPI?.appBuildInfo?.()
-      .then(info => { if (!cancelled && info) setBuild(info) })
-      .catch(() => { /* falls back to the unknown-build label */ })
-    return () => { cancelled = true }
-  }, [])
+  const build = useAppBuildInfo()
 
   // Settings live in renderer localStorage, so main only learns the user's
   // channel/auto-download preference by being told. Re-push on every change.
@@ -853,6 +852,71 @@ const THEMES: ThemeDef[] = [
 ]
 
 function AppearanceSection({ state, set }: { state: SettingsState; set: SetSetting }) {
+  const backgroundFileRef = useRef<HTMLInputElement>(null)
+  const [backgroundError, setBackgroundError] = useState<string | null>(null)
+  const [paletteBusy, setPaletteBusy] = useState(false)
+
+  const chooseFreshChatBackground = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    const validationError = freshChatBackgroundError(file)
+    if (validationError) {
+      setBackgroundError(validationError)
+      return
+    }
+    setPaletteBusy(true)
+    const reader = new FileReader()
+    reader.onload = async () => {
+      const data = typeof reader.result === 'string' ? reader.result : ''
+      if (!data) {
+        setBackgroundError('Could not read that image.')
+        return
+      }
+      try {
+        const palette = await extractChatBackgroundPalette(data)
+        setBackgroundError(null)
+        set('freshChatBackground', data)
+        set('chatBackgroundPalette', palette)
+        set('matchThemeToChatBackground', true)
+      } catch {
+        set('freshChatBackground', data)
+        set('chatBackgroundPalette', null)
+        set('matchThemeToChatBackground', false)
+        setBackgroundError('Background saved, but CrewCode could not derive its colors.')
+      } finally {
+        setPaletteBusy(false)
+      }
+    }
+    reader.onerror = () => {
+      setPaletteBusy(false)
+      setBackgroundError('Could not read that image.')
+    }
+    reader.readAsDataURL(file)
+  }
+
+  const setAdaptiveTheme = async (enabled: boolean) => {
+    if (!enabled) {
+      set('matchThemeToChatBackground', false)
+      return
+    }
+    if (!state.freshChatBackground) return
+    if (state.chatBackgroundPalette) {
+      set('matchThemeToChatBackground', true)
+      return
+    }
+    setPaletteBusy(true)
+    try {
+      set('chatBackgroundPalette', await extractChatBackgroundPalette(state.freshChatBackground))
+      set('matchThemeToChatBackground', true)
+      setBackgroundError(null)
+    } catch {
+      setBackgroundError('CrewCode could not derive colors from this image.')
+    } finally {
+      setPaletteBusy(false)
+    }
+  }
+
   return (
     <section id="appearance" className="ss-section">
       <div className="ss-section-h">
@@ -898,6 +962,60 @@ function AppearanceSection({ state, set }: { state: SettingsState; set: SetSetti
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+        <div className="ss-row vertical" data-q="fresh chat custom background wallpaper image upload">
+          <div>
+            <div className="label">Chat background</div>
+            <div className="help">Shown behind fresh chats, with optional coverage and adaptive colors for regular solo chats. Stored only in this device's local settings.</div>
+          </div>
+          <div className="ss-chat-background-editor">
+            <button
+              type="button"
+              className={`ss-chat-background-preview${state.freshChatBackground ? ' has-image' : ''}`}
+              style={state.freshChatBackground ? { backgroundImage: `url("${state.freshChatBackground}")` } : undefined}
+              onClick={() => backgroundFileRef.current?.click()}
+              disabled={paletteBusy}
+              aria-label={state.freshChatBackground ? 'Change fresh chat background' : 'Choose fresh chat background'}
+            >
+              <span>{state.freshChatBackground ? 'change image' : 'choose image'}</span>
+            </button>
+            <div className="ss-chat-background-actions">
+              <button className="ss-btn" type="button" disabled={paletteBusy} onClick={() => backgroundFileRef.current?.click()}>
+                <Icon name="download" size={12} />{paletteBusy ? 'analyzing…' : state.freshChatBackground ? 'replace' : 'choose image'}
+              </button>
+              {state.freshChatBackground ? (
+                <button className="ss-btn" type="button" disabled={paletteBusy} onClick={() => {
+                  setBackgroundError(null)
+                  set('freshChatBackground', '')
+                  set('chatBackgroundPalette', null)
+                  set('matchThemeToChatBackground', false)
+                }}>remove</button>
+              ) : null}
+            </div>
+            <input ref={backgroundFileRef} type="file" accept={FRESH_CHAT_BACKGROUND_ACCEPT} onChange={chooseFreshChatBackground} hidden />
+            <div className="help">PNG, JPG, WebP, or GIF · up to 2 MB · centered and cropped to fill.</div>
+            {state.freshChatBackground ? (
+              <div className="ss-chat-background-options">
+                <div>
+                  <span>Show in regular solo chats</span>
+                  <Toggle value={state.showChatBackgroundInRegularChats} onChange={value => set('showChatBackgroundInRegularChats', value)} />
+                </div>
+                <div>
+                  <span>Match CrewCode colors</span>
+                  <Toggle value={state.matchThemeToChatBackground} disabled={paletteBusy} onChange={value => { void setAdaptiveTheme(value) }} />
+                </div>
+              </div>
+            ) : null}
+            {state.matchThemeToChatBackground && state.chatBackgroundPalette ? (
+              <div className="ss-chat-palette" aria-label="Image-derived color palette">
+                {[state.chatBackgroundPalette.background, state.chatBackgroundPalette.card, state.chatBackgroundPalette.primary, state.chatBackgroundPalette.primaryBright].map(color => (
+                  <span key={color} style={{ background: color }} />
+                ))}
+                <small>{state.chatBackgroundPalette.mode} palette · {state.chatBackgroundPalette.hue}° hue</small>
+              </div>
+            ) : null}
+            {backgroundError ? <div className="ss-profile-error">{backgroundError}</div> : null}
           </div>
         </div>
       </div>
@@ -2543,7 +2661,6 @@ export function SettingsScreen({ activeWorkspace }: { activeWorkspace?: Workspac
       <aside className="ss-nav">
         <div className="ss-nav-h">
           <span className="t">Settings</span>
-          <span className="ver">0.2.1</span>
         </div>
         <div className="ss-search">
           <Icon name="search" size={12} />

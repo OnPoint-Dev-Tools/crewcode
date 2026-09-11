@@ -3,10 +3,11 @@ import { mkdtempSync, readFileSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { hubRelayExpiryReason, startHubServer, type RunningHubServer } from './hub-server'
+import { hubRelayExpiryReason, hubSessionCookie, startHubServer, type RunningHubServer } from './hub-server'
 import { HUB_RELAY_ABSOLUTE_TIMEOUT_MS, HUB_RELAY_IDLE_TIMEOUT_MS } from '../shared/hub-relay-types'
 import { HubEnrollmentIssuer, HUB_ENROLLMENT_TTL_MS } from './hub-machine-enrollment'
 import { HubStore } from './hub-store'
+import { HUB_SESSION_TTL_MS } from './hub-auth'
 
 const cleanups: Array<() => void | Promise<void>> = []
 afterEach(async () => {
@@ -44,6 +45,15 @@ async function authenticatedServer(now: () => number, publicOrigin?: string): Pr
 }
 
 describe('Hub enrollment credentials', () => {
+  it('keeps an authenticated phone session across browser restarts without weakening cookie boundaries', () => {
+    expect(hubSessionCookie('https://crewcode.example', 'session.secret')).toBe(
+      `__Host-crewcode_hub_session=session.secret; Path=/; HttpOnly; SameSite=Strict; Max-Age=${HUB_SESSION_TTL_MS / 1_000}; Secure`,
+    )
+    expect(hubSessionCookie('http://localhost:3774', 'session.secret')).toBe(
+      `crewcode_hub_session=session.secret; Path=/; HttpOnly; SameSite=Strict; Max-Age=${HUB_SESSION_TTL_MS / 1_000}`,
+    )
+  })
+
   it('keeps enrollment tokens memory-only, expiring, and single-use', () => {
     let time = 1_000
     const issuer = new HubEnrollmentIssuer(() => time)
@@ -100,6 +110,7 @@ describe('Hub store', () => {
     expect(store.authenticateMachine(enrolled.token)?.id).toBe(enrolled.machine.id)
     expect(store.authenticateMachine(`${enrolled.machine.id}.wrong`)).toBeNull()
     expect(readFileSync(path).includes(Buffer.from(enrolled.token.split('.')[1]))).toBe(false)
+    const persisted = store.createSession(owner.id, 3_500, 10_000)
     expect(store.revokeSession(created.session.id, 4_000)).toBe(true)
     expect(store.authenticateSession(created.token, 5_000)).toBeNull()
     store.close()
@@ -107,6 +118,8 @@ describe('Hub store', () => {
     const reopened = new HubStore(path)
     expect(reopened.owner()?.username).toBe('Owner')
     expect(reopened.credentialsForUser(owner.id)[0]?.publicKey).toEqual(new Uint8Array([1, 2, 3]))
+    expect(reopened.authenticateSession(created.token, 5_000)).toBeNull()
+    expect(reopened.authenticateSession(persisted.token, 5_000)?.userId).toBe(owner.id)
     reopened.close()
   })
 })

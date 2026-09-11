@@ -15,6 +15,7 @@ import type { RegisteredPluginEditorAction } from '../../../../shared/plugin-typ
 import type { CompletionProviderId } from '../../../../shared/agent-completion-types'
 import type { EditorThemeId } from '../../../../shared/editor-theme-types'
 import { useMobileLayout } from '../../hooks/useMobileLayout'
+import { diskSyncDecision } from './editor-disk-sync'
 
 export type { CodeFile }
 
@@ -324,6 +325,7 @@ export function CodeEditor({
   tabsRef.current = tabs
   const onReloadFromDiskRef = useRef(onReloadFromDisk)
   onReloadFromDiskRef.current = onReloadFromDisk
+  const diskReadSequenceRef = useRef(new Map<string, number>())
 
   const clearConflict = useCallback((rel: string) => {
     setDiskConflicts(prev => {
@@ -333,6 +335,31 @@ export function CodeEditor({
       return next
     })
   }, [])
+
+  const reconcileDiskFile = useCallback(async (rel: string) => {
+    const api = window.electronAPI
+    if (!api || !root) return
+    const before = tabsRef.current.find(tab => tab.rel === rel)
+    if (!before || before.needsLoad) return
+    const sequence = (diskReadSequenceRef.current.get(rel) ?? 0) + 1
+    diskReadSequenceRef.current.set(rel, sequence)
+    let result: Awaited<ReturnType<typeof api.fsReadFile>>
+    try { result = await api.fsReadFile(root, rel) } catch { return }
+    if (diskReadSequenceRef.current.get(rel) !== sequence || result.error || !result.ok) return
+    const tab = tabsRef.current.find(candidate => candidate.rel === rel)
+    if (!tab || tab.needsLoad) return
+    const nextText = result.text ?? ''
+    const decision = diskSyncDecision(tab, nextText)
+    if (decision === 'in-sync') {
+      clearConflict(rel)
+      return
+    }
+    if (decision === 'conflict') {
+      setDiskConflicts(previous => previous.has(rel) ? previous : new Set(previous).add(rel))
+      return
+    }
+    onReloadFromDiskRef.current?.(rel, nextText, result.size ?? new Blob([nextText]).size)
+  }, [root, clearConflict])
 
   const open = async (rel: string) => {
     if (tabs.some(t => t.rel === rel)) {
@@ -391,26 +418,38 @@ export function CodeEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [root, watchKey])
 
+  // The editor surface unmounts while another outer tab is active. Reconcile
+  // every restored open tab on mount so agent writes made during that gap are
+  // observed before the watcher treats the new mtime as its baseline.
+  useEffect(() => {
+    if (!watchKey) return
+    for (const rel of watchKey.split('\n')) void reconcileDiskFile(rel)
+  }, [watchKey, reconcileDiskFile])
+
   // Re-read open files when they change on disk (e.g. an agent rewrites them).
   // Clean buffers reload silently; dirty buffers get a conflict prompt.
   useEffect(() => {
     const api = window.electronAPI
     if (!api?.onEditorFileChanged || !root) return
-    return api.onEditorFileChanged(async ({ root: changedRoot, rel }) => {
+    return api.onEditorFileChanged(({ root: changedRoot, rel }) => {
       if (changedRoot !== root) return
-      const tab = tabsRef.current.find(t => t.rel === rel)
-      if (!tab || tab.needsLoad) return
-      const res = await api.fsReadFile(root, rel)
-      if (res.error || !res.ok) return
-      const nextText = res.text ?? ''
-      if (nextText === tab.text) { clearConflict(rel); return }   // already in sync (e.g. our own save)
-      if (tab.text !== tab.originalText) {
-        setDiskConflicts(prev => { const next = new Set(prev); next.add(rel); return next })
-        return
-      }
-      onReloadFromDiskRef.current?.(rel, nextText, res.size ?? new Blob([nextText]).size)
+      void reconcileDiskFile(rel)
     })
-  }, [root, clearConflict])
+  }, [root, reconcileDiskFile])
+
+  // fs.watch is advisory and SSH has no native local event. Poll only the
+  // active saved file, with one read in flight, while this editor is mounted.
+  useEffect(() => {
+    if (!activeRel || activeRel === 'untitled' || activeRel.startsWith('untitled-')) return
+    let inFlight = false
+    const check = async () => {
+      if (inFlight) return
+      inFlight = true
+      try { await reconcileDiskFile(activeRel) } finally { inFlight = false }
+    }
+    const timer = window.setInterval(() => { void check() }, 1_500)
+    return () => window.clearInterval(timer)
+  }, [activeRel, reconcileDiskFile])
 
   // Completion requests are disposable and never share chat history. Cancelling
   // on every edit prevents a slow model response from landing at a stale cursor.

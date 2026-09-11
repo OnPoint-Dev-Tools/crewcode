@@ -66,12 +66,33 @@ describe('FilesystemService', () => {
     expect(service.copyFile(root, 'readme.md', '../')).toEqual({ error: 'destination escapes root' })
   })
 
-  it('lists directories while hiding ignored dependency trees', async () => {
+  it('keeps dependency, build, and Python environment folders browsable on demand', async () => {
     const { root, service } = fixture()
     mkdirSync(join(root, 'node_modules'))
+    mkdirSync(join(root, 'dist'))
+    mkdirSync(join(root, '.venv'))
     writeFileSync(join(root, 'visible.ts'), 'ok')
     writeFileSync(join(root, 'node_modules', 'hidden.js'), 'no')
     const result = await service.readDir(root)
-    expect(result.nodes?.map(node => node.name) ?? []).toEqual(['visible.ts'])
+    expect(result.nodes?.map(node => node.name) ?? []).toEqual(['.venv', 'dist', 'node_modules', 'visible.ts'])
+    expect((await service.readDir(root, 'node_modules')).nodes?.map(node => node.name)).toEqual(['hidden.js'])
+  })
+
+  it('still hides repository metadata from the editor tree', async () => {
+    const { root, service } = fixture()
+    mkdirSync(join(root, '.git'))
+    writeFileSync(join(root, '.DS_Store'), 'noise')
+    writeFileSync(join(root, 'visible.ts'), 'ok')
+    expect((await service.readDir(root)).nodes?.map(node => node.name)).toEqual(['visible.ts'])
+  })
+
+  it('does not pull dependency and generated trees into fallback workspace scans', async () => {
+    const { root, service } = fixture()
+    mkdirSync(join(root, 'node_modules'))
+    mkdirSync(join(root, 'dist'))
+    writeFileSync(join(root, 'visible.ts'), 'ok')
+    writeFileSync(join(root, 'node_modules', 'dependency.js'), 'large tree')
+    writeFileSync(join(root, 'dist', 'bundle.js'), 'generated')
+    expect((await service.listFiles(root)).files).toEqual(['visible.ts'])
   })
 })

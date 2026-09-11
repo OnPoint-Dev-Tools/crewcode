@@ -360,6 +360,14 @@ export function TurnWorkLog({ rows, live, total, changedFiles = [], onOpenFile, 
         >
           <path d="M6 9l6 6 6-6" />
         </svg>
+        <Icon
+          name="worklog"
+          size={13}
+          stroke={1.9}
+          aria-hidden="true"
+          data-worklog-icon
+          className="shrink-0 text-cc-muted"
+        />
         <span className="truncate tabular-nums">
           {count} tool {count === 1 ? 'call' : 'calls'}
         </span>

@@ -20,6 +20,7 @@ import { createBrainRelayCipher, type BrainRelayCipher } from './hub-relay-crypt
 import { startRemoteAccessServer } from './remote-access-server'
 
 const READ_METHODS = new Set([
+  'app.buildInfo',
   'workspaces.list', 'workspaces.inspectPath', 'fs.readDir', 'fs.readFile', 'fs.readDataUrl', 'fs.listFiles',
   'git.status', 'git.diff', 'git.conflictDiff', 'git.log', 'git.branches', 'git.remotes', 'worktrees.list',
   'github.status', 'github.prCreateContext', 'github.prCatalogue', 'github.prDetail', 'github.prDiff', 'github.prReviewContext', 'github.prManagementContext', 'github.prChecksContext', 'github.prCheckLog', 'github.avatar', 'gh.status',

@@ -11,7 +11,7 @@
 [![X](https://img.shields.io/badge/X-@OnPointTools-000000.svg)](https://x.com/OnPointTools)
 [![YouTube](https://img.shields.io/badge/YouTube-@CjWisdom-FF0000.svg)](https://www.youtube.com/@CjWisdom)
 
-**[Want to continue where you left off — from any browser? Jump to the setup →](#continue-your-work-from-anywhere)**
+**[Want to continue where you left off, from any browser? Jump to the setup →](#continue-your-work-from-anywhere)**
 
 </div>
 
@@ -86,7 +86,7 @@ updated" produces threads you can open, read, and continue yourself.
 
 This is distinct from Crew Surface. Crew lanes are ephemeral, live in one tab, and
 exist for the duration of a crew run. Delegated threads are ordinary `Session`s with
-transcripts, archiving, and drawer rows — they outlive the turn that made them.
+transcripts, archiving, and drawer rows, they outlive the turn that made them.
 
 ### Control Center for supervision
 
@@ -131,7 +131,7 @@ with the coding agent in the active chat.
 - Run local speech with NVIDIA Parakeet TDT 0.6B v2 for transcription and Kokoro-82M with the `am_michael` voice for speech
 - Choose Automatic, GPU, or CPU local inference; idle models unload while the lightweight voice sidecar stays available
 - Keep hosted provider keys in Electron's main process; permanent keys never enter renderer state
-- Use the separate composer microphone for speech-to-text only—it inserts text at the caret for review.
+- Use the separate composer microphone for speech-to-text only, it inserts text at the caret for review.
 
 Realtime voice is off by default. Hosted providers require their own API keys
 and billing; local voice requires a Python 3.11 environment and the documented
@@ -153,7 +153,7 @@ for setup, architecture, provider availability, and security details.
 
 ### Workbench/Canvas mode
 
-— Run multiple chats and terminals at once on the same worktree.
+- Run multiple chats and terminals at once on the same worktree.
 
 ### Code Editor
 
@@ -186,12 +186,12 @@ Plugin agent providers support `mock`, `exec`, and `http` runtimes, so you can c
 
 ## Continue your work from anywhere
 
-Leave your PC running at home and pick up exactly where you left off from a browser —
+Leave your PC running at home and pick up exactly where you left off from a browser,
 or run CrewCode headless on a VPS, NAS, or always-on server so your agents are always
 reachable.
 
-- **Desktop & web continuity (Background Brain):** enable **Settings → Desktop & Web** on an enrolled machine and CrewCode keeps a detached Brain running even after the Electron window closes. Desktop and browser share the same machine-authoritative workspaces, chat sessions, transcripts, terminals, and agents — provider resume state carries over, so you continue the same conversation instead of starting from scratch.
-- **Self-hosted Hub:** one always-on `crewcode hub` gives you a single passkey-secured dashboard of all your enrolled machines. Brains connect outbound-only, so your dev machines need no open inbound ports. The relay is end-to-end encrypted — the Hub never sees your code, prompts, transcripts, or terminal output, and files never leave the machine they live on.
+- **Desktop & web continuity (Background Brain):** enable **Settings → Desktop & Web** on an enrolled machine and CrewCode keeps a detached Brain running even after the Electron window closes. Desktop and browser share the same machine-authoritative workspaces, chat sessions, transcripts, terminals, and agents, provider resume state carries over, so you continue the same conversation instead of starting from scratch.
+- **Self-hosted Hub:** one always-on `crewcode hub` gives you a single passkey-secured dashboard of all your enrolled machines. Brains connect outbound-only, so your dev machines need no open inbound ports. The relay is end-to-end encrypted, the Hub never sees your code, prompts, transcripts, or terminal output, and files never leave the machine they live on.
 - **Always available:** run `crewcode brain` on a VPS or home server with explicit workspace roots and your workspaces are reachable from any device, anytime.
 - **Phone access:** the Hub's mobile dashboard lists your online machines and recent threads, with a QR-assisted setup over Tailscale HTTPS.
 - **Secure by default:** remote authority is off until you grant explicit workspace roots and scopes; pairing codes and connection tickets are short-lived and single-use; sign-in is passkey-based; provider API keys never leave the Brain's machine.
@@ -298,7 +298,7 @@ npm run typecheck
 
 ## Contributing
 
-CrewCode is open to contributions — issues, bug reports, and pull requests are all welcome. If you're planning a larger change, open an issue first so we can talk through the approach before you build it.
+CrewCode is open to contributions, issues, bug reports, and pull requests are all welcome. If you're planning a larger change, open an issue first so we can talk through the approach before you build it.
 
 ## License
 
@@ -310,6 +310,6 @@ In short: you are free to use, modify, and redistribute CrewCode, including in c
 
 Some bundled components are under different licenses and are **not** covered by Apache-2.0. See [NOTICE](./NOTICE) for the full list.
 
-Most notably, the file-tree icon set in `src/renderer/src/assets/bearded-icons/` is [Bearded Icons](https://github.com/BeardedBear/bearded-icons) by BeardedBear, licensed under **GPL-3.0**. These assets are used unmodified and are aggregated with — not incorporated into — CrewCode's Apache-licensed source. If you fork CrewCode and need a fully permissive stack, replace that directory with a permissively licensed icon set.
+Most notably, the file-tree icon set in `src/renderer/src/assets/bearded-icons/` is [Bearded Icons](https://github.com/BeardedBear/bearded-icons) by BeardedBear, licensed under **GPL-3.0**. These assets are used unmodified and are aggregated with, not incorporated into, CrewCode's Apache-licensed source. If you fork CrewCode and need a fully permissive stack, replace that directory with a permissively licensed icon set.
 
 Copyright © 2026 OnPoint Tools.

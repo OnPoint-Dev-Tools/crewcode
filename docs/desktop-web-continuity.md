@@ -39,6 +39,15 @@ and `npm run hub:mobile` (Tailscale HTTPS). The foreground `npm run brain` comma
 for headless/manual operation only; stop or disable Electron Background Brain before
 using the same default Brain data directory.
 
+Enrollment is shared across those two Brain modes. Both read the machine credential
+from the default `~/.crewcode/brain/hub-machine.json`, so changing between Electron
+Background Brain and foreground/headless `npm run brain` must not launch another phone
+approval or create another machine. The Hub separately remembers a successful phone
+sign-in with a revocable 30-day HttpOnly browser cookie backed by a persisted digest;
+Brain restarts and Brain-mode changes do not clear it. Passkey sign-in is required
+again only after explicit sign-out, cookie/site-data removal, session expiry, or Hub
+revocation. A custom `--data-dir` intentionally represents a different Brain identity.
+
 Enabling starts a detached `crewcode brain --desktop-background` process. Electron
 probes an owner-only loopback rendezvous and reloads onto the same typed RPC/event
 adapter used by the browser while retaining desktop-only window, picker, updater,

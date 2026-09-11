@@ -2,7 +2,7 @@ import { posix } from 'path'
 import type { SFTPWrapper, Stats, FileEntry } from 'ssh2'
 import { getSftp, execRemote } from './ssh-pool'
 import { parseRemoteTarget, resolveRemote, attrIsDir, attrIsFile, type RemoteTarget } from './ssh-target'
-import { IGNORE, MAX_FILE_BYTES } from '../fs-constants'
+import { MAX_FILE_BYTES, SCAN_IGNORED_ENTRIES, TREE_HIDDEN_ENTRIES } from '../fs-constants'
 import type { FsNode } from '../fs'
 
 // Wrap a path for safe interpolation into a remote shell command (recursive
@@ -35,7 +35,7 @@ export async function remoteReadDir(root: string, sub = ''): Promise<{ nodes?: F
   const nodes: FsNode[] = []
   for (const entry of list) {
     const name = entry.filename
-    if (IGNORE.has(name)) continue
+    if (TREE_HIDDEN_ENTRIES.has(name)) continue
     const abs = posix.join(r.abs, name)
     const isDir = attrIsDir(entry.attrs.mode)
     nodes.push({
@@ -239,7 +239,7 @@ export async function remoteListFiles(root: string): Promise<{ files?: string[];
     return { files: git.stdout.split('\n').map(l => l.trim()).filter(Boolean) }
   }
 
-  const prunes = [...IGNORE].map(d => `-name ${sh(d)}`).join(' -o ')
+  const prunes = [...SCAN_IGNORED_ENTRIES].map(d => `-name ${sh(d)}`).join(' -o ')
   const find = await execRemote(
     t,
     `cd ${sh(t.path)} && find . \\( ${prunes} \\) -prune -o -type f -print | sed 's|^\\./||' | head -n 20000`,

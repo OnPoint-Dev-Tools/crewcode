@@ -15,6 +15,7 @@ internal references).
 | [keybindings.md](./keybindings.md) | Every shortcut, defaults per group, and the editable `~/.crewcode/keys.json` override file |
 | [tweaks-panel.md](./tweaks-panel.md) | The floating Layout panel: density and workspace dock presentation controls |
 | [system-monitor.md](./system-monitor.md) | CPU/memory pill and panel: per-workspace process usage, jump-to and kill controls |
+| [about-crewcode.md](./about-crewcode.md) | About card and automatically sourced app/build version |
 
 ### Chat and agents
 
@@ -23,6 +24,7 @@ internal references).
 | [using-crews.md](./using-crews.md) | Crews: parallel lanes, supervisors, and the select → verify → reconcile → apply Merge lanes workflow |
 | [reasoning-effort.md](./reasoning-effort.md) | Provider-native reasoning effort levels in the composer and crew lanes |
 | [realtime-voice.md](./realtime-voice.md) | Voice orb providers, coding-agent routing, natural spoken replies, credentials, and local roadmap |
+| [fresh-chat-backgrounds.md](./fresh-chat-backgrounds.md) | Device-local chat wallpapers, regular-chat coverage, and image-derived app colors |
 | [prompt-skill-studio.md](./prompt-skill-studio.md) | Prompt Builder Studio and local `.crewcode` prompt/skill folders _(needs a user-guide rewrite — currently changelog-style)_ |
 
 ### Workspaces

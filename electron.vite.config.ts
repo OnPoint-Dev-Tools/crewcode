@@ -3,9 +3,10 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import { resolve } from 'path'
 import { execSync } from 'child_process'
+import { readFileSync } from 'fs'
 
-// Settings shows the build hash next to the version so a bug report identifies
-// an exact commit. Resolved at build time because the packaged app has no .git.
+// Version surfaces show the build hash so a bug report identifies an exact
+// commit. Resolve it at build time because the packaged app has no .git.
 function buildHash(): string {
   try {
     return execSync('git rev-parse --short HEAD', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || 'dev'
@@ -14,10 +15,15 @@ function buildHash(): string {
   }
 }
 
+const appVersion = JSON.parse(readFileSync(resolve('package.json'), 'utf8')).version as string
+
 export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin()],
-    define: { __BUILD_HASH__: JSON.stringify(buildHash()) },
+    define: {
+      __APP_VERSION__: JSON.stringify(appVersion),
+      __BUILD_HASH__: JSON.stringify(buildHash()),
+    },
     build: {
       rollupOptions: {
         external: ['fsevents'],

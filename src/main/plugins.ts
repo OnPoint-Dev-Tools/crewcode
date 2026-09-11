@@ -35,7 +35,7 @@ import {
   type RegisteredPluginTerminalWatcher,
   type PluginTabContribution,
 } from '../shared/plugin-types'
-import { IGNORE, MAX_FILE_BYTES } from './fs-constants'
+import { MAX_FILE_BYTES, SCAN_IGNORED_ENTRIES } from './fs-constants'
 import { isRemoteRoot } from './remote/ssh-target'
 import { invokePluginCapabilityWithPlugins, pluginPermissionFingerprint, requiredPermissionForPluginContribution, resolvePluginAssetTarget, validatePluginManifest } from './plugin-contract'
 import { commitPluginGitInstall, inspectPluginGitRepository, readPluginGitSources } from './plugin-git-install'
@@ -525,7 +525,7 @@ function listWorkspaceFiles(root: string): PluginInvokeResult {
   const files: string[] = []
   const walk = (dir: string) => {
     for (const name of readdirSync(dir)) {
-      if (IGNORE.has(name)) continue
+      if (SCAN_IGNORED_ENTRIES.has(name)) continue
       const abs = join(dir, name)
       const st = statSync(abs)
       if (st.isDirectory()) walk(abs)

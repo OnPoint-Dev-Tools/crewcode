@@ -34,6 +34,10 @@ describe('remote access server', () => {
       body: JSON.stringify({ protocolVersion: CREWCODE_REMOTE_PROTOCOL_VERSION, id, method, params }),
     })
 
+    expect(await (await rpc('build', 'app.buildInfo', {})).json()).toMatchObject({
+      ok: true,
+      result: { version: expect.any(String), buildHash: expect.any(String), packaged: false },
+    })
     expect(await (await rpc('empty', 'continuity.get', {})).json()).toMatchObject({ ok: true, result: { version: 1, revision: 0, values: {} } })
     const updated = await (await rpc('patch', 'continuity.update', { values: { 'crewcode:activeWorkspaceId': 'workspace-one' } })).json()
     expect(updated).toMatchObject({ ok: true, result: { revision: 1, values: { 'crewcode:activeWorkspaceId': 'workspace-one' } } })

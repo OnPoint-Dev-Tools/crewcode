@@ -63,6 +63,7 @@ import { localVoiceService } from './local-voice-service'
 import { packagedHeadlessArgs } from './packaged-cli-dispatch'
 import { BrainDesktopService } from './brain-desktop-service'
 import { revealBrowserWindow, SystemTrayService } from './system-tray'
+import { resolveCodexCommand } from './rate-limits/resolve-agent'
 
 const { app, BrowserWindow, clipboard, ipcMain, Menu, nativeImage, protocol, session, shell, Tray } = electron
 import { spawn } from 'child_process'
@@ -370,6 +371,15 @@ function probeShell(shell: string, flags: string, cmd: string): string | null {
 }
 
 function detectAgentPath(cmd: string): string | null {
+  // Codex distributed through the managed npm package may expose a temporary
+  // PATH alias that is removed or stale by the time Electron starts. Reuse the
+  // resolver used by the rate-limit probe so registry availability and actual
+  // launches agree.
+  if (cmd === 'codex') {
+    const managed = resolveCodexCommand()
+    if (managed !== cmd && existsSync(managed)) return managed
+  }
+
   // 1) Try Electron's own PATH first (covers /usr/bin, /usr/local/bin, etc.)
   const which = spawnSync('which', [cmd], { encoding: 'utf8', timeout: SHELL_PROBE_TIMEOUT_MS })
   const fromPath = which.stdout?.trim()

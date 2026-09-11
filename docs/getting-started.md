@@ -86,7 +86,10 @@ A provider that isn't detected shows as unavailable in the model picker.
    from Threads.
 2. **Start a chat** — pick an agent and model in the composer, choose a mode
    (**ask / plan / build / full**), and send. Plan mode is read-only; you
-   switch to build when you're ready for edits.
+   switch to build when you're ready for edits. Right-click the composer input
+   for theme-aware **Cut**, **Copy**, and **Paste** actions. Cut and Copy require
+   selected text; denied clipboard access is reported in the menu and never
+   removes or replaces the draft.
 3. **Watch the work** — tool calls, todos, and diffs stream into the thread.
    The terminal column (`Cmd J`) and code editor live in the same tab.
 4. **Review and commit** — the Git Sidebar or the full

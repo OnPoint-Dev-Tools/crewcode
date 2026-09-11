@@ -54,7 +54,7 @@ the connection** (possible MITM or server rekey).
 
 | Area | Behavior |
 | --- | --- |
-| File tree / editor | SFTP-backed reads and writes |
+| File tree / editor | SFTP-backed reads and writes; the active saved file uses a bounded single-flight check for agent edits because remote filesystem events are unavailable |
 | Git | git runs on the remote host (remote credentials/agent apply) |
 | Terminals | remote shell sessions |
 | Agents | agent CLIs run on the remote host |
@@ -62,9 +62,11 @@ the connection** (possible MITM or server rekey).
 | Writer file watching | bounded polling (remote filesystem events are unavailable) |
 
 CrewCode advertises ACP text-file methods for both local and remote CrewCoder
-sessions. Remote custody is negotiated separately through explicit initialize
-metadata; the presence of file methods alone does not disable provider-native
-tools or reject providers in an ordinary local chat.
+sessions. Those methods do not make an SSH workspace virtual to CrewCoder: the
+agent process is launched on the remote workspace host, so provider-native tools
+and transports retain direct access to that same filesystem. ACP reads and writes
+can still traverse CrewCode's bounded SFTP helpers without disabling native Codex
+app-server operation.
 
 ## Limitations
 

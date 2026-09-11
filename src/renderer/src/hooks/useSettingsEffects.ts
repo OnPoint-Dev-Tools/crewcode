@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { monoFontStack, useSettings, type ColorTheme, type AppTheme } from './useSettings'
+import type { ChatBackgroundPalette } from '../components/chat/fresh-chat-background'
 // Color-theme token overrides. Carbon mostly uses the defaults from
 // colors_and_type.css; non-carbon themes also remap the crew semantic tokens so
 // orchestration surfaces don't stay evergreen inside blue/gray/purple themes.
@@ -122,9 +123,44 @@ const THEME_VARS: Record<ColorTheme, Record<string, string>> = {
   },
 }
 
-const ALL_VAR_NAMES = Array.from(
-  new Set(Object.values(THEME_VARS).flatMap(m => Object.keys(m))),
-)
+function adaptiveThemeVars(palette: ChatBackgroundPalette): Record<string, string> {
+  return {
+    '--background': palette.background,
+    '--card': palette.card,
+    '--popover': palette.popover,
+    '--muted': palette.muted,
+    '--accent': palette.accent,
+    '--border': palette.border,
+    '--foreground': palette.foreground,
+    '--muted-foreground': palette.mutedForeground,
+    '--primary': palette.primary,
+    '--primary-foreground': palette.primaryForeground,
+    '--ring': palette.primaryBright,
+    '--bubble-user-bg': palette.bubbleBackground,
+    '--bubble-user-border': palette.primary,
+    '--bubble-user-fg': palette.bubbleForeground,
+    '--sidebar': palette.popover,
+    '--sidebar-border': palette.border,
+    '--crew-term': palette.background,
+    '--crew-green': palette.primary,
+    '--crew-green-bright': palette.primaryBright,
+    '--crew-green-soft': palette.accent,
+    '--crew-mint': palette.primaryBright,
+    '--crew-header': palette.popover,
+  }
+}
+
+const ADAPTIVE_VAR_NAMES = [
+  '--background', '--card', '--popover', '--muted', '--accent', '--border', '--foreground',
+  '--muted-foreground', '--primary', '--primary-foreground', '--ring', '--bubble-user-bg',
+  '--bubble-user-border', '--bubble-user-fg', '--sidebar', '--sidebar-border', '--crew-term',
+  '--crew-green', '--crew-green-bright', '--crew-green-soft', '--crew-mint', '--crew-header',
+]
+
+const ALL_VAR_NAMES = Array.from(new Set([
+  ...Object.values(THEME_VARS).flatMap(m => Object.keys(m)),
+  ...ADAPTIVE_VAR_NAMES,
+]))
 
 function applyAppTheme(appTheme: AppTheme) {
   const resolved =
@@ -153,13 +189,14 @@ export function useSettingsEffects() {
   // App theme (dark / light / system). System needs a media-query listener so
   // we re-resolve when the OS preference changes.
   useEffect(() => {
-    applyAppTheme(state.appTheme)
-    if (state.appTheme !== 'system') return
+    const adaptiveMode = state.matchThemeToChatBackground ? state.chatBackgroundPalette?.mode : undefined
+    applyAppTheme(adaptiveMode ?? state.appTheme)
+    if (adaptiveMode || state.appTheme !== 'system') return
     const mq = window.matchMedia('(prefers-color-scheme: dark)')
     const onChange = () => applyAppTheme('system')
     mq.addEventListener('change', onChange)
     return () => mq.removeEventListener('change', onChange)
-  }, [state.appTheme])
+  }, [state.appTheme, state.matchThemeToChatBackground, state.chatBackgroundPalette?.mode])
 
   // Color theme — clear any previously-applied theme vars, then set the new
   // ones. Carbon resets to defaults (vars cleared, CSS defaults take over).
@@ -168,9 +205,11 @@ export function useSettingsEffects() {
   useEffect(() => {
     const target = document.body
     for (const name of ALL_VAR_NAMES) target.style.removeProperty(name)
-    const vars = THEME_VARS[state.theme] ?? {}
+    const vars = state.matchThemeToChatBackground && state.chatBackgroundPalette
+      ? adaptiveThemeVars(state.chatBackgroundPalette)
+      : THEME_VARS[state.theme] ?? {}
     for (const [name, value] of Object.entries(vars)) target.style.setProperty(name, value)
-  }, [state.theme, state.appTheme])
+  }, [state.theme, state.appTheme, state.matchThemeToChatBackground, state.chatBackgroundPalette])
 
   // Typography vars consumed by editors, code chips, and terminals.
   // --font-family-mono drives every mono surface in the app (chat chips, git

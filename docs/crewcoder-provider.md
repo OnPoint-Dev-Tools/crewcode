@@ -236,7 +236,12 @@ local path as remote access.
 
 For SSH roots, `spawnAgentProcess` starts CrewCoder on the remote host. Its bash
 tool is therefore local to the spawned CrewCoder process, which means remote for
-an SSH workspace.
+an SSH workspace. The initialize handshake consequently keeps
+`crewcode/virtualFilesystem` false for SSH just as it does locally: ACP text-file
+methods may still proxy through CrewCode's SFTP layer, but the CrewCoder process,
+Codex app-server, and workspace share the same VPS filesystem. Marking that setup
+virtual would incorrectly disable provider-native file tools and force Codex onto
+its direct Responses fallback.
 
 Current limitation: the local ACP filesystem host reads saved disk bytes. It does
 not yet query dirty CodeMirror or Writer buffers in the renderer, so an unsaved

@@ -20,6 +20,9 @@ import { crewCoderProfileLocksExecutionMode, type CrewCoderApprovalMode, type Cr
 import { ComposerDictationButton } from './ComposerDictationButton'
 import { insertDictationText } from './composer-dictation-text'
 import { MobileComposerActionMenu, MobileComposerModelMenu } from './MobileComposerMenus'
+import { getCrewCodeClient } from '../../runtime/crewcode-client'
+import { fitContextMenuPosition } from '../ui/context-menu-position'
+import { composerSelectedText, replaceComposerSelection } from './composer-clipboard'
 
 const MODE_CYCLE: Mode[] = ['Ask', 'Plan', 'Build', 'Full']
 
@@ -110,6 +113,16 @@ interface SlashState {
   query: string
 }
 
+interface ComposerClipboardMenuState {
+  x: number
+  y: number
+  start: number
+  end: number
+  baseline: string
+  busy: boolean
+  error?: string
+}
+
 function findMentionAt(value: string, caret: number): MentionState | null {
   // Walk back from caret until we hit a whitespace or the `@`. If we hit `@`,
   // the chars between (`caret`) form the query.
@@ -179,6 +192,7 @@ export function Composer({
   const valueRef     = useRef(value)
   valueRef.current = value
   const modelRowRef  = useRef<ModelRowHandle>(null)
+  const clipboardMenuRef = useRef<HTMLDivElement>(null)
   // Desktop keeps the hover row open while one of its pickers is active.
   const [modelPickerOpen, setModelPickerOpen] = useState(false)
   const inputBlurTimerRef = useRef<number | null>(null)
@@ -191,6 +205,34 @@ export function Composer({
   const [slash,      setSlash]      = useState<SlashState | null>(null)
   const [internalAttachments, setInternalAttachments] = useState<ChatAttachment[]>([])
   const [isDragging, setIsDragging] = useState(false)
+  const [clipboardMenu, setClipboardMenu] = useState<ComposerClipboardMenuState | null>(null)
+
+  useLayoutEffect(() => {
+    if (!clipboardMenu || !clipboardMenuRef.current) return
+    const rect = clipboardMenuRef.current.getBoundingClientRect()
+    const fitted = fitContextMenuPosition(clipboardMenu, rect, { width: window.innerWidth, height: window.innerHeight })
+    if (fitted.x === clipboardMenu.x && fitted.y === clipboardMenu.y) return
+    setClipboardMenu(current => current ? { ...current, ...fitted } : null)
+  }, [clipboardMenu])
+
+  useEffect(() => {
+    if (!clipboardMenu) return
+    const dismissOutside = (event: PointerEvent) => {
+      if (!clipboardMenuRef.current?.contains(event.target as Node)) setClipboardMenu(null)
+    }
+    const dismissOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setClipboardMenu(null)
+    }
+    const dismissOnViewportChange = () => setClipboardMenu(null)
+    document.addEventListener('pointerdown', dismissOutside)
+    document.addEventListener('keydown', dismissOnEscape)
+    window.addEventListener('resize', dismissOnViewportChange)
+    return () => {
+      document.removeEventListener('pointerdown', dismissOutside)
+      document.removeEventListener('keydown', dismissOnEscape)
+      window.removeEventListener('resize', dismissOnViewportChange)
+    }
+  }, [clipboardMenu])
 
   const insertDictation = useCallback((transcript: string) => {
     const textarea = taRef.current
@@ -229,6 +271,82 @@ export function Composer({
       const pos = next.length
       ta.setSelectionRange(pos, pos)
     })
+  }
+
+  const restoreComposerSelection = (start: number, end = start) => {
+    requestAnimationFrame(() => {
+      const textarea = taRef.current
+      if (!textarea) return
+      const boundedStart = Math.max(0, Math.min(textarea.value.length, start))
+      const boundedEnd = Math.max(boundedStart, Math.min(textarea.value.length, end))
+      textarea.focus()
+      textarea.setSelectionRange(boundedStart, boundedEnd)
+    })
+  }
+
+  const openClipboardMenu = (event: React.MouseEvent<HTMLTextAreaElement>) => {
+    event.preventDefault()
+    const textarea = event.currentTarget
+    setMention(null)
+    setSlash(null)
+    setClipboardMenu({
+      x: event.clientX,
+      y: event.clientY,
+      start: textarea.selectionStart,
+      end: textarea.selectionEnd,
+      baseline: valueRef.current,
+      busy: false,
+    })
+  }
+
+  const failClipboardAction = (message: string) => {
+    setClipboardMenu(current => current ? { ...current, busy: false, error: message } : null)
+  }
+
+  const runClipboardAction = async (action: 'cut' | 'copy' | 'paste') => {
+    const menu = clipboardMenu
+    if (!menu || menu.busy) return
+    const selectedText = composerSelectedText(menu.baseline, menu.start, menu.end)
+    if (action !== 'paste' && !selectedText) return
+    setClipboardMenu(current => current ? { ...current, busy: true, error: undefined } : null)
+
+    try {
+      if (action === 'cut' || action === 'copy') {
+        const result = await getCrewCodeClient().clipboardWriteText(selectedText)
+        if (!result.ok) {
+          failClipboardAction(result.error || `Could not ${action} the selected text.`)
+          return
+        }
+        if (action === 'copy') {
+          setClipboardMenu(null)
+          restoreComposerSelection(menu.start, menu.end)
+          return
+        }
+      }
+
+      if (valueRef.current !== menu.baseline) {
+        failClipboardAction('The composer changed before the clipboard action completed. Try again.')
+        return
+      }
+
+      let insertion = ''
+      if (action === 'paste') {
+        const result = await getCrewCodeClient().clipboardReadText()
+        if (!result.ok) {
+          failClipboardAction(result.error || 'Clipboard access was denied.')
+          return
+        }
+        insertion = result.text ?? ''
+      }
+
+      const edit = replaceComposerSelection(menu.baseline, menu.start, menu.end, insertion)
+      resetHistoryNavigation()
+      onChange(edit.value)
+      setClipboardMenu(null)
+      restoreComposerSelection(edit.caret)
+    } catch (error) {
+      failClipboardAction(error instanceof Error ? error.message : 'Clipboard access failed.')
+    }
   }
 
   const handleValueChange = (next: string) => {
@@ -616,6 +734,7 @@ export function Composer({
               onKeyUp={updateMentionFromCaret}
               onClick={updateMentionFromCaret}
               onPaste={onPaste}
+              onContextMenu={openClipboardMenu}
               onFocus={() => {
                 if (inputBlurTimerRef.current !== null) window.clearTimeout(inputBlurTimerRef.current)
                 inputBlurTimerRef.current = null
@@ -629,6 +748,34 @@ export function Composer({
                 }, 120)
               }}
             />
+            {clipboardMenu && (
+              <div
+                ref={clipboardMenuRef}
+                className="ctx-menu composer-clipboard-menu"
+                style={{ left: clipboardMenu.x, top: clipboardMenu.y }}
+                role="menu"
+                aria-label="Composer clipboard actions"
+                onMouseDown={event => event.preventDefault()}
+              >
+                <button className="ctx-item" role="menuitem" disabled={clipboardMenu.busy || clipboardMenu.start === clipboardMenu.end} onClick={() => void runClipboardAction('cut')}>
+                  <span className="ctx-icon"><Icon name="scissors" size={14} /></span>
+                  <span className="ctx-label">Cut</span>
+                  <span className="ctx-kbd">{IS_MAC ? '⌘X' : 'Ctrl+X'}</span>
+                </button>
+                <button className="ctx-item" role="menuitem" disabled={clipboardMenu.busy || clipboardMenu.start === clipboardMenu.end} onClick={() => void runClipboardAction('copy')}>
+                  <span className="ctx-icon"><Icon name="copy" size={14} /></span>
+                  <span className="ctx-label">Copy</span>
+                  <span className="ctx-kbd">{IS_MAC ? '⌘C' : 'Ctrl+C'}</span>
+                </button>
+                <div className="ctx-divider" />
+                <button className="ctx-item" role="menuitem" disabled={clipboardMenu.busy} onClick={() => void runClipboardAction('paste')}>
+                  <span className="ctx-icon"><Icon name="fileText" size={14} /></span>
+                  <span className="ctx-label">Paste</span>
+                  <span className="ctx-kbd">{IS_MAC ? '⌘V' : 'Ctrl+V'}</span>
+                </button>
+                {clipboardMenu.error && <div className="composer-clipboard-error" role="alert">{clipboardMenu.error}</div>}
+              </div>
+            )}
             {mention && (
               <MentionPopover
                 files={files}
