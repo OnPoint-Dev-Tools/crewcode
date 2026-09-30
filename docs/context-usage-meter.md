@@ -40,6 +40,9 @@ Use these sources in order:
 2. A full window from the provider's model catalog, when it supplies one.
 3. A static model-family fallback, when no provider value is available.
 
+Claude fallback matching accepts both hyphenated provider ids (such as
+`claude-opus-4-8`) and dotted versions/display names (`Claude Opus 4.8`).
+
 Codex app-server usage notifications include `modelContextWindow`. For known
 models, this can be smaller than the model's full window because it is the
 effective request prompt budget. CrewCode shows the known full model capacity
