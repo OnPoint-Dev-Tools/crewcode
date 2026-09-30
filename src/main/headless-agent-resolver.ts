@@ -1,7 +1,7 @@
 import { existsSync, constants as fsConstants, promises as fsp } from 'fs'
 import { homedir } from 'os'
 import { delimiter, join } from 'path'
-import { execFile, spawnSync } from 'child_process'
+import { spawn, spawnSync } from 'child_process'
 import { listModels } from './agents/model-detect'
 
 const PROVIDER_COMMANDS: Record<string, string> = {
@@ -79,8 +79,19 @@ function shellResolve(command: string, flag: '-lc' | '-ic'): Promise<string | nu
   if (process.platform === 'win32') return Promise.resolve(null)
   const shell = process.env.SHELL || '/bin/sh'
   return new Promise(resolve => {
-    execFile(shell, [flag, `command -v ${command}`], { encoding: 'utf8', timeout: 3_000, windowsHide: true }, (_error, stdout) => {
-      const path = stdout?.trim().split('\n').pop()?.trim()
+    // Piped stdin alone leaves /dev/tty accessible to interactive shell profiles.
+    const child = spawn(shell, [flag, `command -v ${command}`], {
+      stdio: ['ignore', 'pipe', 'ignore'], detached: true,
+      timeout: 3_000, killSignal: 'SIGKILL', windowsHide: true,
+    })
+    let stdout = ''
+    child.stdout?.setEncoding('utf8')
+    child.stdout?.on('data', (chunk: string) => {
+      stdout = (stdout + chunk).slice(-16_384)
+    })
+    child.on('error', () => resolve(null))
+    child.on('close', code => {
+      const path = code === 0 ? stdout.trim().split('\n').pop()?.trim() : null
       resolve(path || null)
     })
   })
@@ -106,8 +117,10 @@ export function resolveHeadlessAgentPath(provider: string): string | null {
   for (const candidate of candidatePaths(command)) if (candidate && existsSync(candidate)) return candidate
   if (process.platform !== 'win32') {
     for (const flag of ['-lc', '-ic'] as const) {
-      const result = spawnSync(process.env.SHELL || '/bin/sh', [flag, `command -v ${command}`], { encoding: 'utf8', timeout: 3_000 })
-      const resolved = result.stdout?.trim().split('\n').pop()?.trim()
+      // Shell startup must not take terminal custody from the caller.
+      const options = { encoding: 'utf8' as const, timeout: 3_000, detached: true, killSignal: 'SIGKILL' as const }
+      const result = spawnSync(process.env.SHELL || '/bin/sh', [flag, `command -v ${command}`], options)
+      const resolved = result.status === 0 ? result.stdout?.trim().split('\n').pop()?.trim() : null
       if (resolved && existsSync(resolved)) return resolved
     }
   }

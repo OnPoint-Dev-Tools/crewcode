@@ -201,7 +201,9 @@ Release npm verification/version subprocesses must remain non-interactive with s
 disconnected and CI mode enabled so nested commands cannot suspend a release through
 shell job control. Keep Git fetch/push on the separate interactive path for credential
 helpers, and never infer release success until the version commit, tag, and push are
-all observed. See `docs/releasing.md`.
+all observed. Provider-discovery shell probes must have piped I/O and a separate
+process session so shell profiles cannot take the caller's controlling terminal;
+discovery tests must mock those probes. See `docs/releasing.md`.
 
 Automatic provider-usage probes must treat an observed CLI crash differently from an
 ordinary unavailable response. Cool down the crashing interactive fallback so window

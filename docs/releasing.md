@@ -41,6 +41,12 @@ configured credential helpers can still authenticate. A verification command tha
 needs input must fail explicitly rather than leaving a stopped release job that could
 later resume and mutate version/tag state.
 
+Provider-discovery tests mock shell probes rather than loading the owner's shell
+profiles. Runtime login/interactive discovery probes run in a separate process
+session with piped I/O: disconnected stdin alone does not remove access to the
+controlling terminal through `/dev/tty`. This prevents a shell profile from taking
+terminal custody or suspending the release test process group with `SIGTTIN`.
+
 CrewCode's desktop usage indicators probe installed provider CLIs independently of
 the release command. If Claude's interactive usage process exits from a crash signal,
 CrewCode pauses that fallback for ten minutes. This prevents focus-driven refreshes
