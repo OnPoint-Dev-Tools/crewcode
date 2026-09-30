@@ -9,7 +9,7 @@ import {
   removeBrainDesktopConnection,
   writeBrainDesktopConnection,
 } from './brain-desktop-rendezvous'
-import { BrainDesktopService, seedBrainRuntime } from './brain-desktop-service'
+import { BrainDesktopService, mergeDesktopWorkspacesIntoBrainRuntime, seedBrainRuntime } from './brain-desktop-service'
 import { createMachineIdentity, machineCredentialPath, writeMachineCredential } from './hub-machine-enrollment'
 
 function fixture(): { root: string; desktop: string; brain: string } {
@@ -102,6 +102,29 @@ describe('desktop Brain lifecycle', () => {
         messages: Array<{ text: string }>
       }
       expect(merged.messages.map(message => message.text)).toEqual(['seeded turn', 'desktop turn from today'])
+    } finally { rmSync(root, { recursive: true, force: true }) }
+  })
+
+  it('puts current desktop workspaces first while retaining browser-created workspaces on enable', () => {
+    const { root, desktop, brain } = fixture()
+    try {
+      mkdirSync(join(brain, 'runtime'), { recursive: true })
+      writeFileSync(join(desktop, 'workspaces.json'), JSON.stringify({ workspaces: [
+        { id: 'shared', path: '/shared', name: 'Current desktop name' },
+        { id: 'desktop-new', path: '/desktop-new', name: 'Recent desktop workspace' },
+      ] }))
+      writeFileSync(join(brain, 'runtime', 'workspaces.json'), JSON.stringify({ workspaces: [
+        { id: 'shared', path: '/shared', name: 'Old Brain name' },
+        { id: 'web-new', path: '/web-new', name: 'Browser workspace' },
+      ] }))
+
+      mergeDesktopWorkspacesIntoBrainRuntime(desktop, brain)
+
+      expect(JSON.parse(readFileSync(join(brain, 'runtime', 'workspaces.json'), 'utf8')).workspaces).toEqual([
+        { id: 'shared', path: '/shared', name: 'Current desktop name' },
+        { id: 'desktop-new', path: '/desktop-new', name: 'Recent desktop workspace' },
+        { id: 'web-new', path: '/web-new', name: 'Browser workspace' },
+      ])
     } finally { rmSync(root, { recursive: true, force: true }) }
   })
 

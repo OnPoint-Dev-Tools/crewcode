@@ -6,6 +6,7 @@ import { extractFilePathsFromToolArgs, buildUnifiedDiff, extractProviderPatchCha
 import { appendStreamChunk } from '../streaming/stream-chunks'
 import { useNotifications } from './useNotifications'
 import { clearLatestContextUsage } from './compaction-context'
+import { hasObservedAssistantReply, isRecoveredTurnId } from '../runtime/recovered-agent-history'
 import {
   activityFormForTool,
   settleActiveTurnActivities,
@@ -447,6 +448,9 @@ export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, br
               st.agentBubbleByTurn[ev.turnId] = replacementIndex
               return next
             }
+            // Relay-reconnect recovery uses a synthetic turn id, so the live
+            // turn that already rendered this reply cannot match it above.
+            if (isRecoveredTurnId(ev.turnId) && hasObservedAssistantReply(m, ev.text)) return m
             st.agentBubbleByTurn[ev.turnId] = m.length
             return [...m, {
               kind:      'agent',

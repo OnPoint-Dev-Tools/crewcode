@@ -22,14 +22,14 @@ describe('contextWindowFor', () => {
     expect(contextWindowFor('gpt-test-1m')).toBe(1_000_000)
   })
 
-  it('keeps exact CrewCode provider windows ahead of catalog aliases', () => {
+  it('prefers provider catalog windows over exact static fallbacks', () => {
     // Register a value that differs from the exact rule, otherwise this asserts
     // nothing about precedence.
     registerContextWindow('openai/gpt-5.5', 1_050_000)
 
     expect(registeredContextWindowFor('openai/gpt-5.5')).toBe(1_050_000)
-    expect(contextWindowFor('openai/gpt-5.5')).toBe(400_000)
-    expect(contextWindowFor('gpt-5.5')).toBe(400_000)
+    expect(contextWindowFor('openai/gpt-5.5')).toBe(1_050_000)
+    expect(contextWindowFor('gpt-5.5')).toBe(1_050_000)
   })
 
   it('matches display names to provider catalog ids without guessing by family', () => {

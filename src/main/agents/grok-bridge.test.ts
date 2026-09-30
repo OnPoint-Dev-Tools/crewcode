@@ -226,6 +226,15 @@ describe('grokUsageFromPromptResult', () => {
     expect(usage?.outputTokens).toBe(32)
     expect(usage?.contextTokens).toBe(12298)
     expect(usage?.contextWindow).toBe(500000)
+    expect(usage?.contextBreakdownSource).toBe('usage')
+    expect(usage?.contextBreakdown).toEqual([
+      { name: 'Latest call input', tokens: 12266 },
+      { name: 'Latest call output', tokens: 32 },
+      { name: 'Cache read (reported separately)', tokens: 128 },
+      { name: 'Reasoning (reported separately)', tokens: 20 },
+      { name: 'Turn total input', tokens: 24440 },
+      { name: 'Turn total output', tokens: 100 },
+    ])
   })
 
   it('reports the cumulative total when present', () => {
@@ -515,6 +524,10 @@ describe('grok bridge vendor notification channel', () => {
     expect(usage).toBeDefined()
     expect(usage && 'usage' in usage ? usage.usage.inputTokens : undefined).toBe(12046)
     expect(usage && 'usage' in usage ? usage.usage.contextWindow : undefined).toBe(500000)
+    expect(usage && 'usage' in usage ? usage.usage.contextBreakdown : undefined).toEqual([
+      { name: 'Latest call input', tokens: 12046 },
+      { name: 'Latest call output', tokens: 68 },
+    ])
   })
 
   it('ignores vendor chrome notifications', async () => {

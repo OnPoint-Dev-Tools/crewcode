@@ -54,7 +54,35 @@ This projection changes only CrewCode visualization. Tool availability and Claud
 
 Human-input request cards are independent of this preference. Approvals, questions, editor requests, and notifications must always render because the provider may be paused waiting for the response. Request rendering therefore takes precedence over both the Todo preference and a previously dismissed todo card.
 
-CrewCoder-mode `crewcoder_clarify` / `crewcoder_propose_plan` is a session workflow gate, not a tool-permission pause. After those tools settle, the overlay shows a dedicated clarification or **Approve plan** card. Approve sends `/approve-plan` as a normal prompt (or follow-up if the turn is still running). It must never reuse Allow/Deny on a permission card — `/approve` is still only for pending tool-call grants. A later user message hides the card: `/approve-plan` or a short CrewCoder approval continues implementation, and a revision such as `yes, but also add logging` waits for the next `crewcoder_propose_plan`. Answering a clarification is not plan approval. The Todo preference must not hide this card.
+CrewCoder-mode `crewcoder_clarify` / `crewcoder_propose_plan` is a session workflow gate, not a tool-permission pause. After those tools settle, the overlay shows a dedicated clarification or **Approve plan** card. Approve sends `/approve-plan` as a normal prompt (or follow-up if the turn is still running). It must never reuse Allow/Deny on a permission card — `/approve` is still only for pending tool-call grants. A later user message hides the card: `/approve-plan` or a short CrewCoder approval continues implementation, and a revision such as `yes, but also add logging` waits for the next `crewcoder_propose_plan`. Answering a clarification is not plan approval. The Todo preference must not hide this card. The clarification card has its own reply box and **send reply** button; the reply is sent as an ordinary prompt (follow-up while running) through the same surface's send path as Approve. Surfaces that cannot send a prompt fall back to "Reply in the composer".
+
+## Provider question cards
+
+Structured provider questions pause the turn and render in the shared `AgentRequestCard` (inline chat overlay, Crew lanes/timeline, supervisor, Mission Control, menulet). The card layout follows the question shape:
+
+| Shape | Card |
+| --- | --- |
+| options only (`kind: 'select'`) | one button per option; a click answers immediately. 2–4 short description-free options (Yes/No) sit on one row |
+| options + free text (`kind: 'prompt'` with options) | option buttons plus an "or type your own answer…" input and **send reply** |
+| free text only (`prompt` / `editor`) | input (Enter) or textarea (Ctrl/Cmd+Enter) plus **send reply** |
+| multi-select (`multiple: true`) | toggle buttons answered with `optionIds` in option order, plus optional typed text |
+| secret (`secret: true`) | masked input |
+
+**send reply** stays disabled until there is a non-empty answer. After a click the card locks (`sending…`) and unlocks only on an observed transport failure; success is confirmed by `user_request_resolved`. Cancel is an explicit cancel, never an empty answer.
+
+Provider mapping — only structured, provider-issued questions reach this card:
+
+| Provider | Native question | Free text |
+| --- | --- | --- |
+| Claude | `AskUserQuestion` via `canUseTool`, one card per question | always, matching Claude's built-in "Other"; `custom: false` / `allowFreeform: false` opts out |
+| Codex | app-server `item/tool/requestUserInput` (legacy `tool/requestUserInput` alias), one card per question | when the question sets `isOther` or has no options |
+| OpenCode | `question` SSE request | unless `custom: false` |
+| Pi | extension UI `select` / `input` / `editor` | per method |
+| CrewCoder | `crewcoder_clarify` workflow card (above) | reply box |
+
+Codex answers are returned as `{ answers: { [questionId]: { answers: string[] } } }`. A cancelled, empty, or out-of-contract answer (typed text where Codex offered no "Other") fails the whole request with an explicit JSON-RPC error; Codex never receives a fabricated or empty answer. When Codex settles a request itself (`serverRequest/resolved`, e.g. non-blocking questions) or the app-server exits, the bridge aborts the pending `RequestUserFn` signal: the promise settles as `cancel` and the card is retracted with `user_request_resolved`.
+
+Plain-text questions at the end of an agent reply ("Should I continue?") are not requests: the turn has already ended and nothing is paused, so they are answered in the composer. CrewCode must not guess questions from assistant prose or fabricate a request card for them. Codex MCP `mcpServer/elicitation/request` forms are not yet mapped.
 
 ## Surfaces
 

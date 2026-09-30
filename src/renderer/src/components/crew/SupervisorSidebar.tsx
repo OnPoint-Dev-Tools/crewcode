@@ -230,6 +230,7 @@ export function SupervisorSidebar({
               onRespond={onAgentRequestResponse}
               planGate={planGate}
               onApprovePlan={() => onSend(CREWCODER_APPROVE_PLAN_PROMPT)}
+              onReplyPlan={text => onSend(text)}
             />
           </div>
         )}

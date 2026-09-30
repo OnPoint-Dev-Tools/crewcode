@@ -2,6 +2,13 @@ import { spawnAgentProcess } from './agent-spawn'
 import type { AgentBridge, BridgeStartOpts, EmitFn, ModeLevel, RequestUserFn, TurnUsage } from './bridge-types'
 import { buildUsage, contextWindowFor } from './model-context'
 import { tripwireForToolCall } from './dangerous-command'
+import {
+  CODEX_REQUEST_USER_INPUT_METHODS,
+  codexQuestionAnswer,
+  codexQuestionRequest,
+  parseCodexUserInputQuestions,
+  type CodexAnswers,
+} from './codex-user-input'
 
 // Codex app-server JSON-RPC over stdio.
 // Protocol: newline-delimited JSON (`"jsonrpc": "2.0"` header omitted on the wire).
@@ -68,12 +75,21 @@ function pickNum(obj: Record<string, unknown> | undefined, ...keys: string[]): n
   return undefined
 }
 
-// Codex reports `modelContextWindow` as its per-request prompt budget, which is
-// smaller than the model's real window, so the ctx meter under-reports if we
-// trust it. Prefer a documented window when we have one; fall back to the wire
-// value for models we don't know.
-function codexContextWindowFor(model: string | undefined, reported: number | undefined): number | undefined {
-  return contextWindowFor(model) ?? reported
+// Codex's usage notification reports an effective per-request prompt budget.
+// The CLI's model window can be larger because it includes reserved capacity.
+// Keep both values so the meter names the full model capacity while exposing
+// the tighter active budget instead of presenting it as the model's size.
+function codexContextWindows(model: string | undefined, reported: number | undefined): { contextWindow?: number; promptBudgetTokens?: number } {
+  const modelWindow = contextWindowFor(model)
+  const promptBudgetTokens = reported !== undefined && reported > 0 ? reported : undefined
+  return {
+    contextWindow: modelWindow !== undefined && promptBudgetTokens !== undefined
+      ? Math.max(modelWindow, promptBudgetTokens)
+      : modelWindow ?? promptBudgetTokens,
+    ...(promptBudgetTokens !== undefined && modelWindow !== undefined && modelWindow > promptBudgetTokens
+      ? { promptBudgetTokens }
+      : {}),
+  }
 }
 
 function codexContextTokensFor(inputTokens: number | undefined, outputTokens: number | undefined, contextWindow: number | undefined): number | undefined {
@@ -88,7 +104,7 @@ export function usageFromCodexTokenUsage(params: Record<string, unknown>, model:
   if (!last) return undefined
   const inputTokens  = pickNum(last, 'inputTokens', 'input_tokens')
   const outputTokens = pickNum(last, 'outputTokens', 'output_tokens')
-  const contextWindow = codexContextWindowFor(model, pickNum(tu, 'modelContextWindow', 'model_context_window', 'contextWindow'))
+  const { contextWindow, promptBudgetTokens } = codexContextWindows(model, pickNum(tu, 'modelContextWindow', 'model_context_window', 'contextWindow'))
   const contextTokens = codexContextTokensFor(inputTokens, outputTokens, contextWindow)
   const usage = buildUsage({
     inputTokens,
@@ -99,7 +115,32 @@ export function usageFromCodexTokenUsage(params: Record<string, unknown>, model:
     contextWindow,
     model,
   })
-  return usage
+  if (!usage) return undefined
+  const rows: NonNullable<TurnUsage['contextBreakdown']> = []
+  const add = (name: string, value: number | undefined) => {
+    if (value !== undefined && Number.isFinite(value) && value > 0) rows.push({ name, tokens: value })
+  }
+  add('Latest request input', inputTokens)
+  add('Latest request output', outputTokens)
+  add('Cached input (included in input)', pickNum(last, 'cachedInputTokens', 'cached_input_tokens'))
+  add('Reasoning output (included in output)', pickNum(last, 'reasoningOutputTokens', 'reasoning_output_tokens'))
+  return {
+    ...usage,
+    ...(promptBudgetTokens !== undefined ? { promptBudgetTokens } : {}),
+    ...(inputTokens !== undefined ? { contextIsAuthoritative: true } : {}),
+    ...(rows.length > 0 ? { contextBreakdown: rows, contextBreakdownSource: 'usage' as const } : {}),
+  }
+}
+
+export function codexNativeCompactionStatus(
+  method: string,
+  item: Record<string, unknown> | undefined,
+): 'started' | 'completed' | null {
+  if (method === 'thread/compacted') return 'completed'
+  if (item?.type !== 'contextCompaction') return null
+  if (method === 'item/started') return 'started'
+  if (method === 'item/completed') return 'completed'
+  return null
 }
 
 // Codex app-server accepts these native effort values. Keep unsupported values
@@ -155,6 +196,9 @@ export async function createCodexBridge(
   const toolStartedItems = new Set<string>()
   let activePlanToolCallId: string | null = null
   let activePlanArgs: { plan: unknown[] } | null = null
+  // Open question cards keyed by the server request id, so `serverRequest/resolved`
+  // (Codex settled it itself) or process exit can withdraw the card.
+  const openQuestionRequests = new Map<number, AbortController>()
 
   function emitReady() {
     emit({ type: 'ready', bridgeId: opts.bridgeId })
@@ -186,6 +230,40 @@ export async function createCodexBridge(
     send({ id, result })
   }
 
+  function respondError(id: number, message: string): void {
+    send({ id, error: { code: -32000, message } })
+  }
+
+  // One overlay card per question, in order. Any unanswered question fails the
+  // whole request explicitly — Codex never receives a fabricated/empty answer.
+  async function handleUserInputRequest(msg: JsonRpcServerRequest): Promise<void> {
+    const questions = parseCodexUserInputQuestions(msg.params)
+    if (!requestUser || questions.length === 0) {
+      respondError(msg.id, requestUser ? 'request_user_input had no questions' : 'no interactive user is attached')
+      return
+    }
+    const controller = new AbortController()
+    openQuestionRequests.set(msg.id, controller)
+    const turnId = typeof msg.params.turnId === 'string' ? msg.params.turnId : currentTurnId ?? undefined
+    try {
+      const answers: CodexAnswers = {}
+      for (let index = 0; index < questions.length; index++) {
+        const question = questions[index]
+        const response = await requestUser(codexQuestionRequest(question, index, questions.length, turnId), controller.signal)
+        if (controller.signal.aborted) return
+        const answer = codexQuestionAnswer(question, response)
+        if (!answer) {
+          respondError(msg.id, 'user cancelled request_user_input')
+          return
+        }
+        answers[question.id] = { answers: answer }
+      }
+      respond(msg.id, { answers })
+    } finally {
+      openQuestionRequests.delete(msg.id)
+    }
+  }
+
   function handleResponse(msg: JsonRpcResponseOk | JsonRpcResponseErr) {
     const p = pending.get(msg.id)
     if (!p) return
@@ -205,6 +283,42 @@ export async function createCodexBridge(
   // notification (not turn/completed), so we hold the latest snapshot and flush
   // it when the turn ends.
   let lastUsage: TurnUsage | undefined
+  let nativeCompactionActive = false
+  let nativeCompactionCompletedTurnId: string | undefined
+
+  function emitNativeCompaction(status: 'started' | 'completed' | 'failed', notificationTurnId?: string) {
+    const turnId = currentTurnId ?? notificationTurnId
+    const completionKey = notificationTurnId ?? currentTurnId ?? undefined
+    if (status === 'started') {
+      if (nativeCompactionActive) return
+      nativeCompactionActive = true
+    } else if (status === 'completed') {
+      if (!nativeCompactionActive && completionKey && nativeCompactionCompletedTurnId === completionKey) return
+      nativeCompactionActive = false
+      nativeCompactionCompletedTurnId = completionKey
+      // A usage notification from before compaction must not be replayed by
+      // turn_end when the app-server has not reported the new prompt yet.
+      lastUsage = undefined
+    } else {
+      if (!nativeCompactionActive) return
+      nativeCompactionActive = false
+    }
+    emit({
+      type: 'compaction_event',
+      bridgeId: opts.bridgeId,
+      ...(turnId ? { turnId } : {}),
+      status,
+      automatic: true,
+      provider: 'codex',
+      percent: status === 'completed' ? 100 : undefined,
+      message: status === 'started'
+        ? 'Codex is compacting its native context…'
+        : status === 'completed'
+          ? 'Codex compacted its native context. Continuing normally.'
+          : 'Codex native context compaction stopped before completion.',
+      ...(status === 'completed' ? { resetContext: true } : {}),
+    })
+  }
 
   function endTurn(usage?: TurnUsage) {
     if (!currentTurnId) return
@@ -409,6 +523,19 @@ export async function createCodexBridge(
   }
 
   function handleNotification(msg: JsonRpcNotification) {
+    const notificationItem = msg.params.item as Record<string, unknown> | undefined
+    const compactionStatus = codexNativeCompactionStatus(msg.method, notificationItem)
+    if (compactionStatus) {
+      emitNativeCompaction(compactionStatus, typeof msg.params.turnId === 'string' ? msg.params.turnId : undefined)
+      return
+    }
+    if (msg.method === 'serverRequest/resolved') {
+      // Codex settled a request without us (e.g. non-blocking question).
+      // Withdraw the card rather than leave a stale "agent is waiting" prompt.
+      const id = Number(msg.params.requestId)
+      openQuestionRequests.get(id)?.abort()
+      return
+    }
     switch (msg.method) {
       case 'thread/started':
         emitReady()
@@ -425,7 +552,12 @@ export async function createCodexBridge(
         return
 
       case 'turn/completed':
+        if (nativeCompactionActive) emitNativeCompaction('failed')
+        endTurn()
+        return
+
       case 'turn/failed':
+        emitNativeCompaction('failed')
         endTurn()
         return
 
@@ -544,22 +676,8 @@ export async function createCodexBridge(
       respond(msg.id, { decision: response.action === 'accept' || response.action === 'submit' ? 'accept' : 'decline' })
       return
     }
-    if (msg.method === 'tool/requestUserInput') {
-      if (!requestUser) {
-        respond(msg.id, { decision: 'decline' })
-        return
-      }
-      const response = await requestUser({
-        kind: 'prompt',
-        turnId: currentTurnId ?? undefined,
-        title: typeof msg.params.title === 'string' ? msg.params.title : 'Agent Questions',
-        message: typeof msg.params.prompt === 'string' ? msg.params.prompt : typeof msg.params.message === 'string' ? msg.params.message : undefined,
-        detail: requestDetail(msg.params),
-        source: 'codex',
-      })
-      respond(msg.id, response.action === 'submit' || response.action === 'accept'
-        ? { input: response.value ?? '', value: response.value ?? '', decision: 'accept' }
-        : { decision: 'decline' })
+    if (CODEX_REQUEST_USER_INPUT_METHODS.has(msg.method)) {
+      await handleUserInputRequest(msg)
       return
     }
     if (msg.method === 'account/chatgptAuthTokens/refresh') {
@@ -592,6 +710,9 @@ export async function createCodexBridge(
   })
 
   proc.on('close', code => {
+    // The process that asked can no longer receive an answer.
+    for (const controller of openQuestionRequests.values()) controller.abort()
+    openQuestionRequests.clear()
     endTurn()
     // Surface the process's stderr tail so a nonzero exit (127 = binary not on
     // the host PATH, etc.) is legible instead of a bare exit code.

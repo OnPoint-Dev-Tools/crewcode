@@ -69,8 +69,8 @@ a rejected Promise where they require a disposer function.
 ## Source of truth
 
 On first enable, missing Brain runtime data is seeded from Electron `userData` into
-`~/.crewcode/brain/runtime`. Existing Brain files always win for workspaces, keys, and
-replay; they are never overwritten. Transcript shards are merged instead: a newer
+`~/.crewcode/brain/runtime`. Existing Brain files win for keys and replay; they are
+never overwritten. Transcript shards are merged instead: a newer
 desktop copy is folded into the Brain shard by message identity so work done locally
 before attachment is not stuck on the first seed snapshot. The seed includes
 registered workspaces, provider-native resume IDs, provider keys, rich transcripts,
@@ -78,6 +78,15 @@ and replay shards. Existing `thread:<session>` replay history also
 gets a non-destructive `web:<session>` alias so the first Brain-backed prompt can
 continue the desktop conversation. Provider-native resume IDs remain keyed by both
 session and provider.
+
+Every explicit enable also reconciles the current desktop workspace registry into the
+Brain before attachment: current desktop entries and ordering win for matching ids or
+paths, while genuine browser-created workspaces are retained. Immediately after the
+Brain attaches, but before Electron reloads, the foreground renderer sends its exact
+current chat/session and workspace-tab catalogue through the owner-loopback desktop
+control. This enable-time handoff supersedes an older persisted authority marker, so a
+previous Brain run cannot replace the chats, tabs, workspace, and active selections the
+owner was using when they selected **Enable**.
 
 After attachment, the Brain store is authoritative for:
 

@@ -257,7 +257,7 @@ describe('claude bridge mode options', () => {
     }
 
     expect(claudeAskUserQuestionRequest(input)).toMatchObject({
-      kind: 'select',
+      kind: 'prompt',
       title: 'Which approach?',
       options: [{ id: 'Safe', label: 'Safe' }, { id: 'Fast', label: 'Fast' }],
     })
@@ -267,6 +267,39 @@ describe('claude bridge mode options', () => {
       ...input,
       answers: { 'Which approach?': 'Safe' },
     })
+  })
+
+  it('offers option buttons plus a typed "Other" answer by default, matching Claude', () => {
+    const input = { questions: [{ question: 'Proceed?', options: [{ label: 'Yes' }, { label: 'No' }] }] }
+    const request = claudeAskUserQuestionRequest(input)
+    expect(request).toMatchObject({ kind: 'prompt', multiple: false, placeholder: 'or type your own answer…' })
+    expect(request?.options).toHaveLength(2)
+    expect(answerClaudeAskUserQuestionInput(input, {
+      requestId: 'r1', action: 'submit', value: 'Only after tests pass',
+    })).toMatchObject({ answers: { 'Proceed?': 'Only after tests pass' } })
+  })
+
+  it('keeps option-only questions when the input explicitly disables free text', () => {
+    expect(claudeAskUserQuestionRequest({
+      questions: [{ question: 'Proceed?', custom: false, options: [{ label: 'Yes' }, { label: 'No' }] }],
+    })).toMatchObject({ kind: 'select', placeholder: undefined })
+  })
+
+  it('renders multi-select options as toggles and answers with the chosen labels', () => {
+    const input = {
+      questions: [{
+        question: 'Which checks?',
+        multiSelect: true,
+        options: [{ label: 'Lint' }, { label: 'Tests' }, { label: 'Types' }],
+      }],
+    }
+    expect(claudeAskUserQuestionRequest(input)).toMatchObject({
+      multiple: true,
+      options: [{ id: 'Lint' }, { id: 'Tests' }, { id: 'Types' }],
+    })
+    expect(answerClaudeAskUserQuestionInput(input, {
+      requestId: 'r1', action: 'submit', optionIds: ['Lint', 'Types'], value: 'e2e',
+    })).toMatchObject({ answers: { 'Which checks?': 'Lint, Types, e2e' } })
   })
 
   it('answers every Claude question through canUseTool without a permission fallthrough', async () => {
@@ -291,7 +324,7 @@ describe('claude bridge mode options', () => {
     )
 
     expect(requestUser).toHaveBeenCalledTimes(2)
-    expect(requestUser.mock.calls.map(([request]) => request.kind)).toEqual(['select', 'select'])
+    expect(requestUser.mock.calls.map(([request]) => request.kind)).toEqual(['prompt', 'prompt'])
     expect(result).toEqual({
       behavior: 'allow',
       updatedInput: {
@@ -626,11 +659,11 @@ describe('claude bridge mode options', () => {
     expect(result).toEqual({ behavior: 'allow', updatedInput: { command: 'git push --force' } })
   })
 
-  it('uses Claude SDK context usage instead of aggregate billing tokens', async () => {
+  it('uses active Claude SDK categories instead of aggregate billing tokens', async () => {
     queryMock.mockImplementation(() => ({
       close: vi.fn(),
       getContextUsage: vi.fn().mockResolvedValue({
-        categories: [],
+        categories: [{ name: 'Messages', tokens: 32_175, color: '#fff' }],
         totalTokens: 322_175,
         maxTokens: 1_000_000,
         rawMaxTokens: 1_000_000,
@@ -665,7 +698,7 @@ describe('claude bridge mode options', () => {
       usage: expect.objectContaining({
         inputTokens: 12,
         outputTokens: 3,
-        contextTokens: 322_175,
+        contextTokens: 32_175,
         contextWindow: 1_000_000,
         model: 'claude-opus-4-8',
       }),
@@ -681,7 +714,7 @@ describe('claude bridge mode options', () => {
     // racing the per-turn query shutdown). Falling back to billing math makes
     // the ctx meter bounce; the bridge must reuse the previous SDK reading.
     const goodContext = {
-      categories: [],
+      categories: [{ name: 'Messages', tokens: 100_000, color: '#fff' }],
       totalTokens: 100_000,
       maxTokens: 1_000_000,
       rawMaxTokens: 1_000_000,
@@ -753,11 +786,10 @@ describe('claude bridge mode options', () => {
           { name: 'System prompt', tokens: 3_000, color: '#fff' },
           { name: 'System tools', tokens: 14_000, color: '#fff' },
           { name: 'Messages', tokens: 8_000, color: '#fff' },
-          { name: 'Autocompact buffer', tokens: 45_000, color: '#ccc' },
+          { name: 'Auto-compaction buffer', tokens: 45_000, color: '#ccc' },
           { name: 'Free space', tokens: 930_000, color: '#ccc' },
         ],
-        // Claude derives totalTokens from cumulative API usage, so it can
-        // exceed the window on a resumed thread.
+        // Deliberately inconsistent totals exercise category classification.
         totalTokens: 1_240_000,
         maxTokens: 1_000_000,
         rawMaxTokens: 1_000_000,
@@ -792,7 +824,7 @@ describe('claude bridge mode options', () => {
     queryMock.mockImplementation(() => ({
       close: vi.fn(),
       getContextUsage: vi.fn().mockResolvedValue({
-        categories: [],
+        categories: [{ name: 'Messages', tokens: 4_015_012, color: '#fff' }],
         totalTokens: 4_015_012,
         maxTokens: 1_000_000,
         rawMaxTokens: 1_000_000,
@@ -823,7 +855,7 @@ describe('claude bridge mode options', () => {
     queryMock.mockImplementation(() => ({
       close: vi.fn(),
       getContextUsage: vi.fn().mockResolvedValue({
-        categories: [],
+        categories: [{ name: 'Messages', tokens: 322_175, color: '#fff' }],
         totalTokens: 322_175,
         maxTokens: 1_000_000,
         rawMaxTokens: 1_000_000,
@@ -966,7 +998,7 @@ describe('claude bridge mode options', () => {
     }))
   })
 
-  it('falls back to Claude request context when live context usage is unavailable', async () => {
+  it('omits a context estimate when live context usage is unavailable', async () => {
     queryMock.mockImplementation(() => ({
       close: vi.fn(),
       getContextUsage: vi.fn().mockRejectedValue(new Error('control channel closed')),
@@ -995,11 +1027,142 @@ describe('claude bridge mode options', () => {
         inputTokens: 12,
         outputTokens: 3,
         totalTokens: 15,
-        contextTokens: 15_015,
         contextWindow: 500_000,
         model: 'claude-opus-4-8',
       }),
     }))
+    const turnEnd = emit.mock.calls.map(([event]) => event).find(event => event.type === 'turn_end')
+    expect(turnEnd.usage.contextTokens).toBeUndefined()
+  })
+
+  it('does not turn SDK totals without active categories into context usage', async () => {
+    queryMock.mockImplementation(() => ({
+      close: vi.fn(),
+      getContextUsage: vi.fn().mockResolvedValue({
+        categories: [],
+        totalTokens: 900_000,
+        maxTokens: 1_000_000,
+        rawMaxTokens: 1_000_000,
+        percentage: 90,
+        gridRows: [],
+        model: 'claude-opus-4-8',
+        memoryFiles: [],
+        mcpTools: [],
+        agents: [],
+      }),
+      async *[Symbol.asyncIterator]() {
+        yield { type: 'result', subtype: 'success', usage: { input_tokens: 12, output_tokens: 3 } }
+      },
+    }))
+    const emit = vi.fn()
+    const bridge = await createClaudeBridge('/bin/claude', {
+      bridgeId: 'b1', provider: 'claude', cwd: '/repo', mode: 'build', model: 'claude-opus-4-8',
+    }, emit)
+
+    await bridge.prompt('run it')
+
+    const turnEnd = emit.mock.calls.map(([event]) => event).find(event => event.type === 'turn_end')
+    expect(turnEnd.usage.contextTokens).toBeUndefined()
+  })
+
+  it('keeps a live context reading captured before the result closes the control channel', async () => {
+    const getContextUsage = vi.fn()
+      .mockResolvedValueOnce({
+        categories: [{ name: 'Messages', tokens: 42_000, color: '#fff' }],
+        totalTokens: 42_000, maxTokens: 200_000, rawMaxTokens: 200_000,
+        percentage: 21, gridRows: [], model: 'claude-haiku-4-5',
+        memoryFiles: [], mcpTools: [], agents: [],
+      })
+      .mockRejectedValue(new Error('control channel closed'))
+    queryMock.mockImplementation(() => ({
+      close: vi.fn(),
+      getContextUsage,
+      async *[Symbol.asyncIterator]() {
+        yield { type: 'assistant', message: {
+          model: 'claude-haiku-4-5',
+          content: [{ type: 'text', text: 'done' }],
+          usage: { input_tokens: 10, cache_read_input_tokens: 20_000, output_tokens: 5 },
+        } }
+        yield { type: 'result', subtype: 'success', usage: {
+          input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 800_000,
+        } }
+      },
+    }))
+    const emit = vi.fn()
+    const bridge = await createClaudeBridge('/bin/claude', {
+      bridgeId: 'b1', provider: 'claude', cwd: '/repo', mode: 'build', model: 'claude-haiku-4-5',
+    }, emit)
+
+    await bridge.prompt('run it')
+
+    const turnEnd = emit.mock.calls.map(([event]) => event).find(event => event.type === 'turn_end')
+    expect(turnEnd.usage).toMatchObject({ contextTokens: 42_000, contextWindow: 200_000 })
+    expect(getContextUsage).toHaveBeenCalledTimes(1)
+    expect(getContextUsage).toHaveBeenCalledWith({ detail: 'full' })
+  })
+
+  it('uses SDK category kinds instead of English labels for occupancy', async () => {
+    queryMock.mockImplementation(() => ({
+      close: vi.fn(),
+      getContextUsage: vi.fn().mockResolvedValue({
+        categories: [
+          { name: 'Free space', kind: 'used', tokens: 18_000, color: '#fff' },
+          { name: 'Messages', kind: 'free', tokens: 170_000, color: '#fff' },
+          { name: 'Tools', kind: 'buffer', tokens: 10_000, color: '#fff' },
+          { name: 'System', kind: 'deferred', tokens: 2_000, color: '#fff' },
+        ],
+        totalTokens: 200_000, maxTokens: 200_000, rawMaxTokens: 200_000,
+        percentage: 100, gridRows: [], model: 'claude-haiku-4-5',
+        memoryFiles: [], mcpTools: [], agents: [],
+      }),
+      async *[Symbol.asyncIterator]() {
+        yield { type: 'result', subtype: 'success', usage: { input_tokens: 200, output_tokens: 10 } }
+      },
+    }))
+    const emit = vi.fn()
+    const bridge = await createClaudeBridge('/bin/claude', {
+      bridgeId: 'b1', provider: 'claude', cwd: '/repo', mode: 'build', model: 'claude-haiku-4-5',
+    }, emit)
+
+    await bridge.prompt('run it')
+
+    const turnEnd = emit.mock.calls.map(([event]) => event).find(event => event.type === 'turn_end')
+    expect(turnEnd.usage).toMatchObject({ contextTokens: 18_000, contextWindow: 200_000 })
+  })
+
+  it('uses the latest individual assistant request when every context control call fails', async () => {
+    queryMock.mockImplementation(() => ({
+      close: vi.fn(),
+      getContextUsage: vi.fn().mockRejectedValue(new Error('control channel unavailable')),
+      async *[Symbol.asyncIterator]() {
+        yield { type: 'assistant', message: {
+          model: 'claude-haiku-4-5', content: [],
+          usage: { input_tokens: 100, cache_read_input_tokens: 20_000, output_tokens: 30 },
+        } }
+        yield { type: 'assistant', message: {
+          model: 'claude-haiku-4-5', content: [],
+          usage: { input_tokens: 200, cache_read_input_tokens: 30_000, output_tokens: 40 },
+        } }
+        yield { type: 'result', subtype: 'success', usage: {
+          input_tokens: 300, output_tokens: 70, cache_read_input_tokens: 950_000,
+        } }
+      },
+    }))
+    const emit = vi.fn()
+    const bridge = await createClaudeBridge('/bin/claude', {
+      bridgeId: 'b1', provider: 'claude', cwd: '/repo', mode: 'build', model: 'claude-haiku-4-5',
+    }, emit)
+
+    await bridge.prompt('run it')
+
+    const turnEnd = emit.mock.calls.map(([event]) => event).find(event => event.type === 'turn_end')
+    expect(turnEnd.usage).toMatchObject({
+      contextTokens: 30_240,
+      contextWindow: 200_000,
+      contextIsAuthoritative: true,
+      inputTokens: 300,
+      outputTokens: 70,
+    })
   })
 
   it('emits compaction events from Claude compact boundaries', async () => {
@@ -1028,6 +1191,39 @@ describe('claude bridge mode options', () => {
       provider: 'claude',
       beforeTokens: 151_000,
       afterTokens: 24_000,
+      resetContext: true,
     }))
+  })
+
+  it('does not reuse a pre-compaction context reading when the post-boundary control call fails', async () => {
+    const getContextUsage = vi.fn()
+      .mockResolvedValueOnce({
+        categories: [{ name: 'Messages', kind: 'used', tokens: 150_000 }],
+        maxTokens: 200_000,
+      })
+      .mockRejectedValueOnce(new Error('control channel closed'))
+    queryMock.mockImplementation(() => ({
+      close: vi.fn(),
+      getContextUsage,
+      async *[Symbol.asyncIterator]() {
+        yield { type: 'assistant', message: {
+          model: 'claude-haiku-4-5', content: [],
+          usage: { input_tokens: 150_000, output_tokens: 100 },
+        } }
+        yield { type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'auto' } }
+        yield { type: 'result', subtype: 'success', usage: { input_tokens: 150_000, output_tokens: 100 } }
+      },
+    }))
+    const emit = vi.fn()
+    const bridge = await createClaudeBridge('/bin/claude', {
+      bridgeId: 'b1', provider: 'claude', cwd: '/repo', mode: 'build', model: 'claude-haiku-4-5',
+    }, emit)
+
+    await bridge.prompt('run it')
+
+    const turnEnd = emit.mock.calls.map(([event]) => event).find(event => event.type === 'turn_end')
+    expect(getContextUsage).toHaveBeenCalledTimes(2)
+    expect(turnEnd.usage?.contextTokens).toBeUndefined()
+    expect(turnEnd.usage?.contextBreakdown).toBeUndefined()
   })
 })

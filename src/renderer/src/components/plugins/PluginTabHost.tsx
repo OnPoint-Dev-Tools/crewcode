@@ -9,6 +9,25 @@ interface PluginTabHostProps {
   workspace: Workspace | null
 }
 
+// Explicit token bridge: plugin iframes have a separate document and cannot
+// inherit the renderer's CSS variables across the origin boundary.
+const PLUGIN_THEME_TOKENS = [
+  '--background', '--foreground', '--card', '--card-foreground',
+  '--muted', '--muted-foreground', '--primary', '--primary-foreground',
+  '--border', '--input', '--success', '--warning', '--destructive',
+  '--radius', '--radius-lg', '--font-family-sans',
+] as const
+
+function pluginTheme() {
+  const style = getComputedStyle(document.body)
+  const tokens: Record<string, string> = {}
+  for (const name of PLUGIN_THEME_TOKENS) tokens[name] = style.getPropertyValue(name).trim()
+  return {
+    tokens,
+    mode: document.body.classList.contains('dark') || document.body.dataset.theme === 'dark' ? 'dark' : 'light',
+  }
+}
+
 type PluginFrameMessage =
   | {
       type: 'crewcode:request'
@@ -112,7 +131,23 @@ export function PluginTabHost({ tab, workspace }: PluginTabHostProps) {
       permissions: resolved.permissions,
       openContext: tab.pluginOpenContext ?? { source: 'restored-tab' },
     }, '*')
+    iframeRef.current?.contentWindow?.postMessage({ type: 'crewcode:theme', ...pluginTheme() }, '*')
   }
+
+  useEffect(() => {
+    if (!resolved?.ok || typeof MutationObserver === 'undefined') return
+    let frame = 0
+    const postTheme = () => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => {
+        iframeRef.current?.contentWindow?.postMessage({ type: 'crewcode:theme', ...pluginTheme() }, '*')
+      })
+    }
+    const observer = new MutationObserver(postTheme)
+    observer.observe(document.body, { attributes: true, attributeFilter: ['class', 'style', 'data-theme'] })
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style', 'data-theme'] })
+    return () => { observer.disconnect(); cancelAnimationFrame(frame) }
+  }, [resolved])
 
   if (error) {
     return (

@@ -208,6 +208,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     action: 'accept' | 'accept_for_turn' | 'decline' | 'submit' | 'cancel'
     value?: string
     optionId?: string
+    optionIds?: string[]
   }) => ipcRenderer.invoke('bridge:respondUserRequest', response),
 
   bridgeSetMode: (bridgeId: string, mode: 'ask' | 'plan' | 'build' | 'full'): void =>

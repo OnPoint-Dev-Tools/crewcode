@@ -98,6 +98,30 @@ describe('useBridgeRegistry navigation keepalive', () => {
     hook.unmount()
   })
 
+  it('does not append a relay-recovered reply the live turn already rendered', async () => {
+    let emitEvent!: (ev: unknown) => void
+    let messages: unknown[] = [
+      { kind: 'user', text: 'Testing ping', time: '7:23 PM' },
+      { kind: 'agent', text: 'Ping received. I’m here, CJ.', turnId: 'live-turn', blocks: [], streaming: false, time: '7:23 PM' },
+    ]
+    const setMessagesForTab = vi.fn((_tabId: string, updater: (current: unknown[]) => unknown[]) => { messages = updater(messages) })
+    vi.stubGlobal('window', {
+      electronAPI: {
+        onBridgeEvent: vi.fn((cb: (ev: unknown) => void) => { emitEvent = cb; return vi.fn() }),
+        bridgeStart: vi.fn(async () => ({ ok: true })),
+        bridgeStop: vi.fn(),
+        bridgeSetMode: vi.fn(),
+      },
+    })
+    const hook = renderRegistry(setMessagesForTab)
+    await act(async () => { await hook.result.current.ensureBridge('sess-live', 'codex', 'codex', '/repo') })
+    const bridgeId = hook.result.current.getBridgeId('sess-live', 'codex')!
+
+    act(() => { emitEvent({ type: 'history_agent', bridgeId, turnId: `recovered-${bridgeId}-1`, text: 'Ping received. I’m here, CJ.' }) })
+    expect(messages.filter(message => (message as { kind: string }).kind === 'agent')).toHaveLength(1)
+    hook.unmount()
+  })
+
   it('does not stop a bridge that is still starting unless explicitly forced', async () => {
     const start = deferred<{ ok: boolean }>()
     const bridgeStop = vi.fn()

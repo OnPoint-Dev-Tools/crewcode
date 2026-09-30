@@ -227,7 +227,7 @@ export class AgentBridgeService {
       }
       for (const listener of this.listeners) listener(event)
     }
-    const requestUser: RequestUserFn = request => this.requestUser(opts.bridgeId, request)
+    const requestUser: RequestUserFn = (request, signal) => this.requestUser(opts.bridgeId, request, signal)
     try {
       const bridge = await this.create(path, opts, emit, requestUser)
       const hasLocalHistory = !!opts.conversationKey && loadConversation(opts.conversationKey).length > 0
@@ -535,7 +535,8 @@ export class AgentBridgeService {
     }
   }
 
-  private requestUser(bridgeId: string, request: Omit<AgentUserRequest, 'requestId' | 'bridgeId'>): Promise<AgentUserResponse> {
+  private requestUser(bridgeId: string, request: Omit<AgentUserRequest, 'requestId' | 'bridgeId'>, signal?: AbortSignal): Promise<AgentUserResponse> {
+    if (signal?.aborted) return Promise.resolve({ requestId: `${bridgeId}:withdrawn`, action: 'cancel' })
     const entry = this.bridges.get(bridgeId)
     const prepared = this.turnPermissionGrants.prepareRequest(
       bridgeId,
@@ -550,6 +551,14 @@ export class AgentBridgeService {
     return new Promise(resolve => {
       this.pendingRequests.set(requestId, { bridgeId, request: payload, resolve })
       for (const listener of this.listeners) listener({ type: 'user_request', request: payload })
+      // Provider-side withdrawal: settle as cancel and retract the card.
+      signal?.addEventListener('abort', () => {
+        const pending = this.pendingRequests.get(requestId)
+        if (!pending) return
+        this.pendingRequests.delete(requestId)
+        pending.resolve({ requestId, action: 'cancel' })
+        for (const listener of this.listeners) listener({ type: 'user_request_resolved', bridgeId, requestId })
+      }, { once: true })
     })
   }
 

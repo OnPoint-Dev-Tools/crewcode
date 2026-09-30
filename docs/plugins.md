@@ -346,6 +346,10 @@ In the dedicated Plugins page you can install a public Git repository, check Git
 
 Plugin iframes also have a reload button. The browser API reports uncaught errors and unhandled promise rejections back to CrewCode so runtime failures are visible in the panel host and Settings debug log.
 
+### Theme tokens in plugin panels
+
+Plugin iframes cannot inherit CSS variables from the CrewCode renderer. The tab host sends a `crewcode:theme` message after frame load and whenever the host's theme classes or inline token overrides change. The payload contains a fixed allowlist of computed semantic tokens (`--background`, `--foreground`, `--card`, `--card-foreground`, `--muted`, `--muted-foreground`, `--primary`, `--primary-foreground`, `--border`, `--input`, `--success`, `--warning`, `--destructive`, `--radius`, `--radius-lg`, and `--font-family-sans`) plus a `dark` or `light` mode. Panels should accept this message only from `window.parent`, apply the provided values to their own document, and provide CSS fallbacks for older CrewCode builds.
+
 ## Security model
 
 ```txt

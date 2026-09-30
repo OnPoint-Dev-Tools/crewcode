@@ -30,6 +30,8 @@ interface AgentActivityOverlayProps {
   planGate?: CrewCoderPlanGate | null
   /** Sends `/approve-plan` as a prompt or follow-up. */
   onApprovePlan?: () => void
+  /** Sends a clarify answer as an ordinary user prompt (never an approval). */
+  onReplyPlan?: (text: string) => void
   /** Optional dismissal for completed inline activity. */
   onDismiss?: () => void
 }
@@ -48,7 +50,7 @@ export function shouldShowAgentActivity(
  * Converted from the Tailwind design in `.design/AgentActivityOverlay.tsx`.
  * This inline variant keeps chat history stable while still showing live task progress.
  */
-export function AgentActivityOverlay({ todos, isStreaming, request, onRespond, planGate, onApprovePlan, onDismiss }: AgentActivityOverlayProps) {
+export function AgentActivityOverlay({ todos, isStreaming, request, onRespond, planGate, onApprovePlan, onReplyPlan, onDismiss }: AgentActivityOverlayProps) {
   const { state: settings } = useSettings()
   const [isExpanded, setIsExpanded] = useState(isStreaming)
   const [dismissed, setDismissed] = useState(false)
@@ -92,6 +94,7 @@ export function AgentActivityOverlay({ todos, isStreaming, request, onRespond, p
     return (
       <div className="agent-activity agent-activity-plan">
         <CrewCoderPlanGateCard
+          key={planKey}
           gate={planGate}
           sent={planSent}
           onApprove={() => {
@@ -99,6 +102,11 @@ export function AgentActivityOverlay({ todos, isStreaming, request, onRespond, p
             setPlanSent(true)
             onApprovePlan()
           }}
+          onReply={onReplyPlan ? (text) => {
+            if (planSent) return
+            setPlanSent(true)
+            onReplyPlan(text)
+          } : undefined}
         />
       </div>
     )
@@ -250,10 +258,18 @@ interface CrewCoderPlanGateCardProps {
   gate: CrewCoderPlanGate
   sent: boolean
   onApprove: () => void
+  /** Present when the host surface can send a prompt for this chat/lane. */
+  onReply?: (text: string) => void
 }
 
-function CrewCoderPlanGateCard({ gate, sent, onApprove }: CrewCoderPlanGateCardProps) {
+function CrewCoderPlanGateCard({ gate, sent, onApprove, onReply }: CrewCoderPlanGateCardProps) {
   const awaitingApproval = gate.phase === 'awaiting_approval'
+  const [reply, setReply] = useState('')
+  const trimmed = reply.trim()
+  const sendReply = (): void => {
+    if (!onReply || sent || !trimmed) return
+    onReply(trimmed)
+  }
 
   return (
     <div className="agent-activity-card">
@@ -277,7 +293,32 @@ function CrewCoderPlanGateCard({ gate, sent, onApprove }: CrewCoderPlanGateCardP
                 <li key={`${index}-${question}`}>{question}</li>
               ))}
             </ol>
-            <div className="agent-plan-hint">Reply in the composer. Answering a question is not plan approval.</div>
+            {onReply ? (
+              <div className="agent-plan-reply">
+                <textarea
+                  className="agent-request-input agent-request-textarea"
+                  value={reply}
+                  onChange={event => setReply(event.target.value)}
+                  onKeyDown={event => {
+                    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                      event.preventDefault()
+                      sendReply()
+                    }
+                  }}
+                  placeholder="answer the questions…"
+                  disabled={sent}
+                  autoFocus
+                />
+                <div className="agent-plan-hint">Answering a question is not plan approval.</div>
+                <div className="agent-request-actions">
+                  <button type="button" className="agent-request-btn primary" disabled={sent || !trimmed} onClick={sendReply}>
+                    {sent ? 'sending…' : 'send reply'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="agent-plan-hint">Reply in the composer. Answering a question is not plan approval.</div>
+            )}
           </>
         ) : (
           <>

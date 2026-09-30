@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'child_process'
 import { createHash } from 'crypto'
-import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs'
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import WebSocket from 'ws'
 import type { BrainDesktopConnection, BrainDesktopStatus } from '../shared/brain-desktop-types'
@@ -125,6 +125,48 @@ export function seedBrainRuntime(desktopDataDir: string, brainDataDir: string): 
   seedBrainConversationAliases(desktopDataDir, runtimeDir)
 }
 
+interface StoredWorkspaceRow {
+  id: string
+  path: string
+  [key: string]: unknown
+}
+
+function readWorkspaceRows(path: string): StoredWorkspaceRow[] {
+  if (!existsSync(path)) return []
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as { workspaces?: unknown }
+    if (!Array.isArray(parsed.workspaces)) return []
+    return parsed.workspaces.filter((row): row is StoredWorkspaceRow => {
+      if (!row || typeof row !== 'object') return false
+      const candidate = row as { id?: unknown; path?: unknown }
+      return typeof candidate.id === 'string' && candidate.id.length > 0
+        && typeof candidate.path === 'string' && candidate.path.length > 0
+    })
+  } catch {
+    return []
+  }
+}
+
+/** On explicit enable, prefer the current desktop registry while retaining
+ * workspaces that were genuinely added through a prior browser session. */
+export function mergeDesktopWorkspacesIntoBrainRuntime(desktopDataDir: string, brainDataDir: string): void {
+  const desktopRows = readWorkspaceRows(join(desktopDataDir, 'workspaces.json'))
+  if (desktopRows.length === 0) return
+  const runtimeDir = join(brainDataDir, 'runtime')
+  const brainPath = join(runtimeDir, 'workspaces.json')
+  const brainRows = readWorkspaceRows(brainPath)
+  const desktopIds = new Set(desktopRows.map(row => row.id))
+  const desktopPaths = new Set(desktopRows.map(row => row.path))
+  const merged = [
+    ...desktopRows,
+    ...brainRows.filter(row => !desktopIds.has(row.id) && !desktopPaths.has(row.path)),
+  ]
+  mkdirSync(runtimeDir, { recursive: true, mode: 0o700 })
+  const temporary = `${brainPath}.${process.pid}.${Date.now().toString(36)}.tmp`
+  writeFileSync(temporary, `${JSON.stringify({ workspaces: merged }, null, 2)}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' })
+  renameSync(temporary, brainPath)
+}
+
 export class BrainDesktopService {
   private readonly dataDir: string
   private readonly connectionPath: string
@@ -200,7 +242,10 @@ export class BrainDesktopService {
 
   async setEnabled(enabled: boolean): Promise<BrainDesktopStatus> {
     writeBrainDesktopEnabled(this.preferencesPath, enabled)
-    if (enabled) await this.start()
+    if (enabled) {
+      mergeDesktopWorkspacesIntoBrainRuntime(this.options.desktopDataDir, this.dataDir)
+      await this.start()
+    }
     return this.status()
   }
 

@@ -235,6 +235,7 @@ export function CrewTimeline({
                               onRespond={onAgentRequestResponse}
                               planGate={planGate}
                               onApprovePlan={() => onSendToLane(lane.laneId, CREWCODER_APPROVE_PLAN_PROMPT)}
+                              onReplyPlan={text => onSendToLane(lane.laneId, text)}
                             />
                           </div>
                         )}

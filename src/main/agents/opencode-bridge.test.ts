@@ -1,6 +1,22 @@
 import { describe, expect, it } from 'vitest'
 
-import { answerOpencodeQuestion, buildOpencodePromptBody, prepareOpencodeQuestionRequest, usageFromOpencodeMessageInfo } from './opencode-bridge'
+import { answerOpencodeQuestion, buildOpencodePromptBody, opencodeCompactionEvent, prepareOpencodeQuestionRequest, usageFromOpencodeMessageInfo } from './opencode-bridge'
+
+describe('opencode compaction', () => {
+  it('resets context only for the active session completion', () => {
+    expect(opencodeCompactionEvent({ sessionID: 'other' }, 'active', 'bridge', 'turn')).toBeNull()
+    expect(opencodeCompactionEvent({ sessionID: 'active' }, 'active', 'bridge', 'turn')).toEqual({
+      type: 'compaction_event',
+      bridgeId: 'bridge',
+      turnId: 'turn',
+      status: 'completed',
+      automatic: true,
+      provider: 'opencode',
+      message: 'OpenCode auto-compacted context. Continue the conversation normally.',
+      resetContext: true,
+    })
+  })
+})
 
 describe('opencode question requests', () => {
   it('maps OpenCode question events to AgentRequestCard select requests', () => {
@@ -37,6 +53,20 @@ describe('opencode question requests', () => {
     expect(prepared?.request.kind).toBe('prompt')
     expect(prepared?.request.options).toHaveLength(1)
     expect(answerOpencodeQuestion(prepared!, { requestId: 'r', action: 'submit', value: 'feature/bar' })).toEqual(['feature/bar'])
+  })
+
+  it('renders multiple-choice OpenCode questions as toggles answered by option ids', () => {
+    const prepared = prepareOpencodeQuestionRequest({
+      question: 'Which checks?',
+      multiple: true,
+      options: [{ label: 'Lint, strict', description: '' }, { label: 'Tests', description: '' }],
+    })
+
+    expect(prepared?.request).toMatchObject({ multiple: true, options: [{ label: 'Lint, strict' }, { label: 'Tests' }] })
+    // Toggled labels are passed whole, so a comma inside a label is not split.
+    expect(answerOpencodeQuestion(prepared!, {
+      requestId: 'r', action: 'submit', optionIds: [prepared!.request.options![0].id, prepared!.request.options![1].id],
+    })).toEqual(['Lint, strict', 'Tests'])
   })
 })
 
@@ -85,6 +115,14 @@ describe('opencode prompt body', () => {
       outputTokens: 700,
       totalTokens: 18_700,
       contextTokens: 18_500,
+      contextBreakdownSource: 'usage',
+      contextBreakdown: [
+        { name: 'Latest request input', tokens: 18_000 },
+        { name: 'Latest request output', tokens: 500 },
+        { name: 'Reasoning output (reported separately)', tokens: 200 },
+        { name: 'Cache read (reported separately)', tokens: 4_000_000 },
+        { name: 'Cache write (reported separately)', tokens: 20_000 },
+      ],
       model: 'opencode/claude-opus-4-8',
     })
   })

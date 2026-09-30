@@ -21,6 +21,7 @@ composites transparency to black.
 Usage: python3 scripts/generate-favicons.py
 """
 
+import argparse
 import base64
 from io import BytesIO
 from pathlib import Path
@@ -46,15 +47,25 @@ def load_trimmed(name: str) -> Image.Image:
     return im.crop(bbox)
 
 
-def render(mark: Image.Image, size: int, margin: float, bg=None) -> Image.Image:
+def render(mark: Image.Image, size: int, margin: float, bg=None, corner_radius: float = 0) -> Image.Image:
     """Fit the mark inside a square canvas, preserving aspect ratio."""
     inner = max(1, int(size * (1 - 2 * margin)))
     w, h = mark.size
     scale = inner / max(w, h)
-    resized = mark.resize((max(1, round(w * scale)), max(1, round(h * scale))), Image.LANCZOS)
+    resized = mark.resize((max(1, round(w * scale)), max(1, round(h * scale))), Image.Resampling.LANCZOS)
 
     canvas = Image.new("RGBA", (size, size), bg if bg else (0, 0, 0, 0))
     canvas.alpha_composite(resized, ((size - resized.width) // 2, (size - resized.height) // 2))
+    if corner_radius > 0:
+        # Launcher and tray surfaces need transparent corners so the rounded
+        # brand tile does not appear as a square against the desktop chrome.
+        from PIL import ImageDraw
+
+        mask = Image.new("L", (size, size), 0)
+        ImageDraw.Draw(mask).rounded_rectangle(
+            (0, 0, size - 1, size - 1), radius=round(size * corner_radius), fill=255
+        )
+        canvas.putalpha(mask)
     return canvas
 
 
@@ -79,8 +90,26 @@ def dual_mode_svg(light: Image.Image, dark: Image.Image, size: int = 64) -> str:
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--app-only", action="store_true")
+    args = parser.parse_args()
     light = load_trimmed("icon-logo-light.png")  # black mark
     dark = load_trimmed("icon-logo-dark.png")    # white mark
+
+    if args.app_only:
+        build = REPO / "build"
+        render(dark, 1024, 0.12, BRAND_BG, 0.22).save(build / "icon.png")
+        render(dark, 256, 0.12, BRAND_BG, 0.22).save(
+            build / "icon.ico",
+            sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)],
+        )
+        for size in (256, 512):
+            render(dark, size, 0.12, BRAND_BG, 0.22).save(build / "icons" / f"{size}x{size}.png")
+        for out in (REPO / "public/icons", REPO / "src/renderer/public/icons"):
+            for size in (192, 512):
+                render(dark, size, 0.18, BRAND_BG, 0.22).save(out / f"icon-{size}.png")
+        print("wrote desktop, tray, and PWA icons")
+        return
 
     for out in TARGETS:
         out.mkdir(parents=True, exist_ok=True)

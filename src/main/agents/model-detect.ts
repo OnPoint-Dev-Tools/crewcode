@@ -280,15 +280,18 @@ function detectClaude(claudePath: string): DetectedModel[] {
   // Avoid scraping the executable: it includes legacy internal model ids that
   // are not the current /model picker choices.
   const models: DetectedModel[] = [
-   { id: 'claude-opus-5',        label: 'Claude Opus 5 (latest)',       provider: 'anthropic', contextWindow: 1_000_000 },
-    { id: 'claude-sonnet-5',      label: 'Claude Sonnet 5 (latest)',     provider: 'anthropic', contextWindow: 1_000_000 },
-    { id: 'claude-haiku-4-5',       label: 'Claude Haiku 4.5 (latest)',      provider: 'anthropic', contextWindow: 200_000 },
+   { id: 'claude-opus-5-5',        label: 'Claude Opus 5.5 (latest)',       provider: 'anthropic', contextWindow: 1_000_000 },
+   { id: 'claude-sonnet-5-5',      label: 'Claude Sonnet 5.5 (latest)',     provider: 'anthropic', contextWindow: 1_000_000 },
+   { id: 'claude-haiku-4-5',       label: 'Claude Haiku 4.5 (latest)',      provider: 'anthropic', contextWindow: 200_000 },
+   { id: 'claude-opus-5',        label: 'Claude Opus 5',       provider: 'anthropic', contextWindow: 1_000_000 },
+    { id: 'claude-sonnet-5',      label: 'Claude Sonnet 5',     provider: 'anthropic', contextWindow: 1_000_000 },
+
     { id: 'claude-opus-4-8',        label: 'Claude Opus 4.8',       provider: 'anthropic', contextWindow: 500_000 },
     { id: 'claude-sonnet-4-6',        label: 'Claude Opus 4.6',       provider: 'anthropic', contextWindow: 500_000 },
   ]
 
   if (advertisedAliases.has('fable')) {
-    models.push({ id: 'claude-fable-5', label: 'Fable 5', provider: 'anthropic', contextWindow: 500_000 })
+    models.push({ id: 'claude-fable-5-1', label: 'Fable 5.1', provider: 'anthropic', contextWindow: 1_000_000 })
   }
 
   return models
