@@ -3,7 +3,8 @@
 CrewCode's composer mode (`ModeLevel`) is a per-session gate with two halves:
 
 1. **An optional prompt preamble** injected once at session start
-   (`buildModePreamble` in `src/renderer/src/hooks/chat-session-send.ts`).
+   (`buildModePreamble` in `src/renderer/src/hooks/chat-session-send.ts`), and
+   once more on each mid-session mode switch (`buildModeSwitchPreamble`).
 2. **A real permission policy** applied per provider inside each bridge.
 
 The preamble is advisory; the bridge policy is the enforcement. Users edit mode
@@ -52,7 +53,14 @@ to true for new and legacy sessions, and is copied when a session is duplicated.
   before the first send. The toggle locks after visible history or the delivery
   marker proves startup context was committed; provider context cannot be revoked.
 - Prompt edits apply only when a session has not sent its startup context.
-  Existing/restored sessions must not receive the prompt again.
+  Existing/restored sessions must not receive the startup prompt again.
+- Switching mode mid-session sends the new mode's prompt exactly once, on the
+  next send, behind a short `<system>` notice that the previous mode's
+  instructions no longer apply. Without it the earlier preamble stays in the
+  provider transcript as the only mode contract, so an Ask to Build switch
+  could leave the agent refusing to implement. It never repeats on later turns
+  in the same mode, and a restored session whose delivery marker is missing is
+  seeded silently rather than treated as a switch.
 - Disabled mode prompts leave provider-native/default system context in place.
   Skills, attachments, handoff packets, and delegation context still use their
   normal send paths.

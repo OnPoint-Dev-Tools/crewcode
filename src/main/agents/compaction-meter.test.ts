@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { autoCompactionSignalForProvider, detectAutoCompaction, normalizeContextUsage, compactionStrategy } from './compaction-meter'
+import { autoCompactionSignalForProvider, detectAutoCompaction, normalizeContextUsage, compactionStrategy, shouldInferAutoCompactionForProvider } from './compaction-meter'
 
 describe('compactionStrategy', () => {
   const base = { httpOnly: false, nativeResume: false, hasConversationKey: true }
@@ -33,9 +33,10 @@ describe('compactionStrategy', () => {
 describe('autoCompactionSignalForProvider', () => {
   it.each([
     ['claude', 'native'],
-    ['crewcoder', 'native'],
-    ['codex', 'usage'],
+    ['crewcoder', 'native-or-usage'],
+    ['codex', 'native-or-usage'],
     ['opencode', 'usage'],
+    ['grok', 'usage'],
     ['pi', 'none'],
     ['hermes', 'none'],
     ['ollama', 'none'],
@@ -60,6 +61,26 @@ describe('detectAutoCompaction', () => {
 
   it('ignores ordinary context changes', () => {
     expect(detectAutoCompaction(before, { contextTokens: 160_000, contextWindow: 200_000 }, 'usage_update')).toBeNull()
+  })
+
+  it('uses Codex prompt budget to recognize compaction below 80% of full model capacity', () => {
+    const codexBefore = { contextTokens: 680_000, contextWindow: 1_050_000, promptBudgetTokens: 828_400 }
+    const codexAfter = { contextTokens: 35_000, contextWindow: 1_050_000, promptBudgetTokens: 828_400 }
+    expect(detectAutoCompaction(codexBefore, codexAfter, 'turn_end')).toBe('detected')
+  })
+})
+
+describe('shouldInferAutoCompactionForProvider', () => {
+  it('uses occupancy fallback for CrewCoder and Codex only when no native boundary arrived', () => {
+    expect(shouldInferAutoCompactionForProvider('crewcoder', false)).toBe(true)
+    expect(shouldInferAutoCompactionForProvider('codex', false)).toBe(true)
+    expect(shouldInferAutoCompactionForProvider('crewcoder', true)).toBe(false)
+    expect(shouldInferAutoCompactionForProvider('codex', true)).toBe(false)
+  })
+
+  it('keeps native-only and unobservable providers out of inference', () => {
+    expect(shouldInferAutoCompactionForProvider('claude', false)).toBe(false)
+    expect(shouldInferAutoCompactionForProvider('pi', false)).toBe(false)
   })
 })
 
@@ -124,6 +145,19 @@ describe('normalizeContextUsage', () => {
       contextWindow: 100_000,
     })
     expect(usage?.compaction).toBeUndefined()
+  })
+
+  it('accepts a lower provider-authoritative live context after native compaction', () => {
+    expect(normalizeContextUsage(
+      { contextTokens: 220_000, contextWindow: 1_050_000 },
+      { contextTokens: 24_000, contextWindow: 1_050_000, outputTokens: 500, contextIsAuthoritative: true },
+      { provider: 'crewcoder' },
+    )).toEqual({
+      contextTokens: 24_000,
+      contextWindow: 1_050_000,
+      outputTokens: 500,
+      contextIsAuthoritative: true,
+    })
   })
 
   it('does not pin authoritative Claude SDK context to a stale full baseline', () => {

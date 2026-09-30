@@ -12,11 +12,16 @@ export function clearLatestContextUsage(messages: Message[]): Message[] {
     const usage: TurnUsage = { ...message.usage }
     const hadContext = usage.contextTokens !== undefined
       || usage.compaction !== undefined
-      || usage.contextBreakdown !== undefined
+      || (usage.contextBreakdownSource !== 'usage' && usage.contextBreakdown !== undefined)
     if (!hadContext) return messages
     delete usage.contextTokens
     delete usage.compaction
-    delete usage.contextBreakdown
+    // Request/turn/session counters remain valid historical logs. Only
+    // Claude-style context categories describe the invalidated old prompt.
+    if (usage.contextBreakdownSource !== 'usage') {
+      delete usage.contextBreakdown
+      delete usage.contextBreakdownSource
+    }
     const next = messages.slice()
     next[index] = { ...message, usage }
     return next

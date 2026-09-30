@@ -20,6 +20,14 @@ Disabling the setting removes the tray icon immediately and restores normal
 close behavior. On macOS the Dock icon remains visible; CrewCode does not switch
 to an accessory-only application policy.
 
+Desktop packaging and the Windows/Linux tray use generated icons from
+`icon-logo-dark.png` (the white mark) on the dark brand background. Regenerate
+`build/icon.png`, `build/icon.ico`, `build/icons/*.png`, and both public PWA icon
+sets with `python3 scripts/generate-favicons.py --app-only` (requires Pillow).
+These are fixed icons, not automatic light/dark variants. Rebuild/reinstall a
+packaged app to update its launcher icon; fully quit and restart development
+Electron to reload its window/tray icon.
+
 The preference is renderer-persisted like other CrewCode settings and projected
 to the Electron main process over the narrow `tray:configure` IPC method. Web,
 Hub, and headless runtimes do not expose or emulate a system tray.

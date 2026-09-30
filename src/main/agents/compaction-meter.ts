@@ -74,14 +74,15 @@ export function compactionStrategy(opts: {
 
 export function isLikelyAutoCompaction(previous: TurnUsage | undefined, next: TurnUsage | undefined, threshold = DEFAULT_THRESHOLD_PERCENT): boolean {
   if (!previous?.contextTokens || !next?.contextTokens || !previous.contextWindow) return false
-  const previousPercent = (previous.contextTokens / previous.contextWindow) * 100
+  const effectiveLimit = previous.promptBudgetTokens ?? previous.contextWindow
+  const previousPercent = (previous.contextTokens / effectiveLimit) * 100
   // Providers rarely announce auto-compaction consistently; a large context drop
   // after warning-level usage is the safest cross-provider signal we can infer.
   return previousPercent >= threshold && next.contextTokens < previous.contextTokens * 0.6
 }
 
 export type AutoCompactionDetection = 'started' | 'detected' | null
-export type AutoCompactionSignal = 'native' | 'usage' | 'none'
+export type AutoCompactionSignal = 'native' | 'native-or-usage' | 'usage' | 'none'
 
 /**
  * Provider-specific auto-compaction observability. `native` bridges emit their
@@ -92,14 +93,22 @@ export type AutoCompactionSignal = 'native' | 'usage' | 'none'
 export function autoCompactionSignalForProvider(provider: string): AutoCompactionSignal {
   switch (provider.toLowerCase()) {
     case 'claude':
-    case 'crewcoder':
       return 'native'
+    case 'crewcoder':
     case 'codex':
+      return 'native-or-usage'
     case 'opencode':
+    case 'grok':
       return 'usage'
     default:
       return 'none'
   }
+}
+
+export function shouldInferAutoCompactionForProvider(provider: string, nativeCompactionObserved: boolean): boolean {
+  if (nativeCompactionObserved) return false
+  const signal = autoCompactionSignalForProvider(provider)
+  return signal === 'usage' || signal === 'native-or-usage'
 }
 
 /**
@@ -139,14 +148,15 @@ export function normalizeContextUsage(previous: TurnUsage | undefined, next: Tur
   }
 
   const contextTokens = num(usage.contextTokens)
-  const isAuthoritativeClaudeContext = provider === 'claude' && usage.contextBreakdown !== undefined
+  const isAuthoritativeContext = usage.contextIsAuthoritative === true
+    || (provider === 'claude' && usage.contextBreakdown !== undefined)
 
   if (
     previousUsage?.contextTokens !== undefined
     && contextTokens !== undefined
     && contextTokens < previousUsage.contextTokens
     && !isLikelyAutoCompaction(previousUsage, usage)
-    && !isAuthoritativeClaudeContext
+    && !isAuthoritativeContext
   ) {
     // A dip below the prior baseline means the provider under-reported the
     // absolute context (e.g. a fresh resume, or claude's active-only category

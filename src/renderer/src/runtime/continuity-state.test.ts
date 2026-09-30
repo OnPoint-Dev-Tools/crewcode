@@ -123,6 +123,26 @@ describe('continuity catalogue hydration', () => {
     expect(transcriptsCatalogue).not.toHaveBeenCalled()
   })
 
+  it('captures the exact foreground desktop catalogue before enabling Brain reloads', async () => {
+    storage.set('crewcode:sessionsByTab', '{"current-chat":[{"id":"current-chat","label":"Current chat"}]}')
+    storage.set('crewcode:activeSessionByTab', '{"current-chat":"current-chat"}')
+    storage.set('crewcode:workspaceTabs:v1', '{"wsTabs":{"current":[{"id":"current-chat"}]},"activeByWs":{"current":"current-chat"},"splitMap":{}}')
+    storage.set('crewcode:activeWorkspaceId', 'current')
+    storage.set('crewcode:ignored', 'not-seeded')
+    continuityDesktopSeed.mockResolvedValue({ version: 1, revision: 1, updatedAt: 1, values: {} })
+
+    const { seedCurrentDesktopCatalogue } = await import('./continuity-state')
+    await seedCurrentDesktopCatalogue(continuityDesktopSeed)
+
+    expect(continuityDesktopSeed).toHaveBeenCalledWith({
+      'crewcode:sessionsByTab': expect.stringContaining('Current chat'),
+      'crewcode:activeSessionByTab': '{"current-chat":"current-chat"}',
+      'crewcode:workspaceTabs:v1': expect.stringContaining('current-chat'),
+      'crewcode:activeWorkspaceId': 'current',
+    })
+    expect(continuityDesktopSeed.mock.calls[0][0]).not.toHaveProperty('crewcode:ignored')
+  })
+
   it('merges desktop-only sessions without replacing Brain-owned identities', async () => {
     const { mergeAttachedDesktopCatalogue } = await import('./continuity-state')
     const merged = mergeAttachedDesktopCatalogue({

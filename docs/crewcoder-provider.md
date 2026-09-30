@@ -110,9 +110,16 @@ bridge, or seed a replacement session after a successful native compact.
 
 CrewCoder's compaction update is an additive namespaced ACP extension carrying
 started/completed/failed status, automatic intent, progress, and a human-readable
-message. The bridge treats it as authoritative and does not also infer
-compaction from the later context-token drop. Automatic updates omit the summary
-body; the compacted summary remains only in CrewCoder's durable session.
+message. It covers both CrewCoder's durable-session compaction and compaction
+reported by a nested native provider. Codex app-server `contextCompaction` item
+lifecycle and `thread/compacted` notifications therefore drive the existing
+CrewCode loading bar through CrewCoder; Claude `compact_boundary` drives the
+completed state. The bridge treats a native update as authoritative and does not
+also infer compaction from the later context-token drop. If a CrewCoder provider
+does not expose a native boundary, a verified high-water-to-large-drop occupancy
+change produces one after-the-fact detected notification instead of staying
+silent. Automatic updates omit the summary body; the compacted summary remains
+only in CrewCoder's durable session.
 Host-requested `session/compact` returns the authoritative summary and includes
 it on the completed update. CrewCode replaces only its provider replay shard
 with that summary and appends the visible compact-summary card; it deliberately
@@ -141,6 +148,17 @@ bridge registration; the next composer submission uses normal missing-bridge rec
 attempting to write to closed stdin and surfacing `crewcoder acp: process not writable`. When automatic compaction is off, the user explicitly
 runs `/compact` before continuing; this policy does not affect Pi or other providers.
 
+For CrewCoder's built-in Codex provider, the nested app-server receives the
+same resolved context policy as the outer loop. Sol, Terra, and Luna GPT-5.6
+sessions therefore use a 1.05M context and a 630k normal auto-compaction limit,
+instead of app-server independently compacting near its smaller default. These
+overrides are process-scoped and do not modify the user's Codex configuration.
+Every CrewCoder built-in model declares a context window. Claude SDK-native
+auto-compaction is disabled so CrewCoder remains the only owner of its durable
+compaction boundary. ACP providers such as Grok can report the active window at
+runtime; that value supersedes static metadata and recalculates CrewCoder's
+percentage threshold for subsequent checks.
+
 A prompt has a ten-minute **inactivity** watchdog rather than a wall-clock turn
 limit. Every matching ACP update or agent request resets it, and time awaiting a
 Build permission decision is excluded. If CrewCoder becomes genuinely silent,
@@ -149,9 +167,20 @@ settle before emitting the timeout and `turn_end`. If cancellation itself remain
 unresponsive, CrewCode terminates that bridge so its replacement starts cleanly;
 a second prompt can never overlap the abandoned CrewCoder turn.
 
-Usage prefers `_meta["crewcoder/usage"]`: `lastInputTokens` is the live
-`contextTokens` value and `contextWindow` is the context limit. Top-level usage
-is only the compatibility fallback.
+Usage prefers `_meta["crewcoder/usage"]`: `lastInputTokens` is an authoritative
+live `contextTokens` measurement and `contextWindow` is the registered full model
+limit (1.05M for the Codex 5.6 family), not Codex app-server's smaller effective
+per-request prompt budget. CrewCode accepts measured drops after provider-native
+compaction instead of applying its generic monotonic resume floor. The top-level
+mirror is the compatibility fallback and preserves the same live fields. Usage is scoped to
+one ACP prompt; an errored or metadata-free prompt never inherits the preceding
+turn's snapshot.
+The chat's Token logs sidebar shows `lastInputTokens` as the latest context
+input and labels input, output, total, cache, and reasoning counters from the
+same ACP summary as cumulative session counts. These counters can overlap and
+must not be added together as context occupancy. If `lastInputTokens` is absent,
+the cumulative counters remain available in Token logs without a context
+percentage.
 
 ACP `tool_call` updates carry a category `kind` (`read`, `edit`, `think`, …), a
 human `title`, and authoritative CrewCoder tool identity in

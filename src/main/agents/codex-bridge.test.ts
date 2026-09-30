@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { CODEX_COMPACT_METHOD, codexApprovalDecisionForMode, getModeConfig, mapCodexEffort, usageFromCodexTokenUsage } from './codex-bridge'
+import { CODEX_COMPACT_METHOD, codexApprovalDecisionForMode, codexNativeCompactionStatus, getModeConfig, mapCodexEffort, usageFromCodexTokenUsage } from './codex-bridge'
+import { normalizeContextUsage } from './compaction-meter'
 
 describe('codex bridge mode config', () => {
   it.each([
@@ -46,6 +47,13 @@ describe('codex bridge mode config', () => {
     expect(CODEX_COMPACT_METHOD).toBe('thread/compact/start')
   })
 
+  it('recognizes the native Codex compaction lifecycle and legacy completion', () => {
+    expect(codexNativeCompactionStatus('item/started', { type: 'contextCompaction', id: 'compact-1' })).toBe('started')
+    expect(codexNativeCompactionStatus('item/completed', { type: 'contextCompaction', id: 'compact-1' })).toBe('completed')
+    expect(codexNativeCompactionStatus('thread/compacted', undefined)).toBe('completed')
+    expect(codexNativeCompactionStatus('item/started', { type: 'agentMessage', id: 'message-1' })).toBeNull()
+  })
+
   it('passes native reasoning effort through without downgrading xhigh', () => {
     expect(mapCodexEffort('off')).toBeUndefined()
     expect(mapCodexEffort('low')).toBe('low')
@@ -68,18 +76,17 @@ describe('codex bridge mode config', () => {
       outputTokens: 400,
       totalTokens: 12_400,
       contextTokens: 12_400,
-      // 200K documented window wins over the 258,400 prompt budget Codex reports.
-      contextWindow: 200_000,
+      contextWindow: 258_400,
       model: 'gpt-5.4-mini',
     })
   })
 
-  it('uses the documented Codex GPT-5.5 context window instead of the prompt budget', () => {
+  it('separates Codex prompt budget from known model capacity', () => {
     const usage = usageFromCodexTokenUsage({
       tokenUsage: {
         modelContextWindow: 272_000,
         total: { inputTokens: 120_000, outputTokens: 7_000, totalTokens: 127_000 },
-        last:  { inputTokens: 18_000, outputTokens: 600, totalTokens: 18_600 },
+        last:  { inputTokens: 18_000, outputTokens: 600, cachedInputTokens: 4_000, reasoningOutputTokens: 250, totalTokens: 18_600 },
       },
     }, 'gpt-5.5')
 
@@ -88,11 +95,20 @@ describe('codex bridge mode config', () => {
       outputTokens: 600,
       contextTokens: 18_600,
       contextWindow: 400_000,
+      promptBudgetTokens: 272_000,
+      contextIsAuthoritative: true,
+      contextBreakdownSource: 'usage',
+      contextBreakdown: [
+        { name: 'Latest request input', tokens: 18_000 },
+        { name: 'Latest request output', tokens: 600 },
+        { name: 'Cached input (included in input)', tokens: 4_000 },
+        { name: 'Reasoning output (included in output)', tokens: 250 },
+      ],
       model: 'gpt-5.5',
     })
   })
 
-  it('caps displayed Codex context usage at the selected model window', () => {
+  it('caps displayed Codex context usage at the model window', () => {
     const usage = usageFromCodexTokenUsage({
       tokenUsage: {
         modelContextWindow: 272_000,
@@ -106,7 +122,56 @@ describe('codex bridge mode config', () => {
       outputTokens: 963,
       contextTokens: 400_000,
       contextWindow: 400_000,
+      promptBudgetTokens: 272_000,
       model: 'gpt-5.5',
     })
+  })
+
+  it('falls back to model metadata when the app-server omits its window', () => {
+    const usage = usageFromCodexTokenUsage({
+      tokenUsage: { last: { inputTokens: 18_000, outputTokens: 600 } },
+    }, 'gpt-5.5')
+
+    expect(usage?.contextWindow).toBe(400_000)
+  })
+
+  it.each(['gpt-6.1-sol', 'gpt-6-sol', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])(
+    'shows the full 1.05M window for %s separately from Codex\'s smaller prompt budget', model => {
+      const usage = usageFromCodexTokenUsage({
+        tokenUsage: {
+          modelContextWindow: 828_400,
+          last: { inputTokens: 18_000, outputTokens: 592 },
+        },
+      }, model)
+
+      expect(usage).toMatchObject({
+        contextTokens: 18_592,
+        contextWindow: 1_050_000,
+        promptBudgetTokens: 828_400,
+        contextIsAuthoritative: true,
+      })
+    },
+  )
+
+  it('uses the reported budget as the window when full model capacity is unknown', () => {
+    const usage = usageFromCodexTokenUsage({
+      tokenUsage: { modelContextWindow: 828_400, last: { inputTokens: 18_000, outputTokens: 592 } },
+    }, 'custom-unknown-model')
+
+    expect(usage?.contextWindow).toBe(828_400)
+    expect(usage?.promptBudgetTokens).toBeUndefined()
+  })
+
+  it('keeps a smaller native reading after Codex compacts context', () => {
+    const previous = usageFromCodexTokenUsage({ tokenUsage: {
+      modelContextWindow: 272_000,
+      last: { inputTokens: 180_000, outputTokens: 2_000 },
+    } }, 'gpt-5.5')
+    const next = usageFromCodexTokenUsage({ tokenUsage: {
+      modelContextWindow: 272_000,
+      last: { inputTokens: 28_000, outputTokens: 500 },
+    } }, 'gpt-5.5')
+
+    expect(normalizeContextUsage(previous, next, { provider: 'codex' })?.contextTokens).toBe(28_500)
   })
 })

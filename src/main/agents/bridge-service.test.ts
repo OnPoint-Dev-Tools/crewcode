@@ -115,6 +115,37 @@ describe('AgentBridgeService', () => {
     }
   })
 
+  it('withdraws a pending question card when the provider resolves it itself', async () => {
+    const controller = new AbortController()
+    let answer: Promise<unknown> | undefined
+    const factory = vi.fn<AgentBridgeFactory>(async (_path, opts, _emit, requestUser) => {
+      answer = requestUser({ kind: 'prompt', title: 'Branch name?' }, controller.signal)
+      return {
+        bridgeId: opts.bridgeId,
+        pid: null,
+        prompt: async () => ({ ok: true }),
+        abort: async () => undefined,
+        stop: async () => undefined,
+      }
+    })
+    const service = new AgentBridgeService(() => '/bin/fake-agent', factory)
+    const events: BridgeEvent[] = []
+    service.subscribe(event => events.push(event))
+    await service.start({ bridgeId: 'question-bridge', provider: 'codex', cwd: '/tmp' })
+
+    const asked = events.find(event => event.type === 'user_request')
+    expect(asked).toBeDefined()
+    controller.abort()
+
+    // Settles as cancel (never an answer) and retracts the card.
+    await expect(answer).resolves.toMatchObject({ action: 'cancel' })
+    expect(events).toContainEqual({
+      type: 'user_request_resolved',
+      bridgeId: 'question-bridge',
+      requestId: asked?.type === 'user_request' ? asked.request.requestId : '',
+    })
+  })
+
   it('rejects unknown and plugin providers before resolving a path', async () => {
     const resolvePath = vi.fn(() => '/bin/agent')
     const service = new AgentBridgeService(resolvePath)

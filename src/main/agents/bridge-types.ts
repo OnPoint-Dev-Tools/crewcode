@@ -26,9 +26,8 @@ export interface CompactionStatus {
   reason?: string
 }
 
-// One slice of the context window (system prompt, tools, MCP, memory files,
-// messages, …). Only providers that report a breakdown populate it (claude via
-// getContextUsage); the UI shows it so "what's using my context" is inspectable.
+// One observed token-log row. Claude reports context categories; other
+// providers can report request/turn counters, which may overlap.
 export interface ContextCategory {
   name:      string
   tokens:    number
@@ -41,9 +40,14 @@ export interface TurnUsage {
   totalTokens?:   number
   contextTokens?: number
   contextWindow?: number
+  /** Provider-reported effective prompt budget when smaller than model capacity. */
+  promptBudgetTokens?: number
+  /** The provider measured current live occupancy, so a lower value is meaningful. */
+  contextIsAuthoritative?: boolean
   model?:         string
   compaction?:    CompactionStatus
   contextBreakdown?: ContextCategory[]
+  contextBreakdownSource?: 'context' | 'usage'
 }
 
 export interface AgentUserRequest {
@@ -61,6 +65,10 @@ export interface AgentUserRequest {
   source?: string
   /** Main-issued capability: this Build permission can grant the remaining turn. */
   allowAllForTurn?: boolean
+  /** Question options are toggles; the answer is `optionIds` (plus optional typed text). */
+  multiple?: boolean
+  /** Provider marked the answer sensitive; the card masks the typed input. */
+  secret?: boolean
 }
 
 export interface AgentUserResponse {
@@ -68,9 +76,19 @@ export interface AgentUserResponse {
   action: 'accept' | 'accept_for_turn' | 'decline' | 'submit' | 'cancel'
   value?: string
   optionId?: string
+  /** Toggled options for `multiple` question requests, in option order. */
+  optionIds?: string[]
 }
 
-export type RequestUserFn = (request: Omit<AgentUserRequest, 'requestId' | 'bridgeId'>) => Promise<AgentUserResponse>
+/**
+ * Ask the human. `signal` lets a bridge withdraw a pending card when the
+ * provider resolved the request itself (e.g. a non-blocking Codex question);
+ * the promise then settles as `cancel`, never as an answer.
+ */
+export type RequestUserFn = (
+  request: Omit<AgentUserRequest, 'requestId' | 'bridgeId'>,
+  signal?: AbortSignal,
+) => Promise<AgentUserResponse>
 
 export type BridgeEvent =
   | { type: 'ready';            bridgeId: string }

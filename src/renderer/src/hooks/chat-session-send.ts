@@ -193,6 +193,25 @@ export function buildModePreamble(
   return prompt ? `${prompt}\n\n` : ''
 }
 
+/**
+ * One-time notice sent when the user switches mode mid-session. The previous
+ * mode's instructions are still in the provider transcript, so without this the
+ * agent keeps following them (for example, refusing implementation after an
+ * Ask -> Build switch). Sent once per actual switch, never on every turn.
+ */
+export function buildModeSwitchPreamble(
+  previous: ModeLevel,
+  next: ModeLevel,
+  prompts: ModePromptConfig = DEFAULT_MODE_PROMPTS,
+): string {
+  const notice = `<system>
+The user switched from ${previous.toUpperCase()} mode to ${next.toUpperCase()} mode. Instructions from ${previous.toUpperCase()} mode earlier in this conversation no longer apply. Follow the ${next.toUpperCase()} mode instructions from now on.
+</system>
+
+`
+  return `${notice}${buildModePreamble(next, prompts)}`
+}
+
 export async function sendChatSessionPrompt(opts: SendChatSessionPromptArgs): Promise<void> {
   const {
     text,
@@ -251,9 +270,15 @@ export async function sendChatSessionPrompt(opts: SendChatSessionPromptArgs): Pr
   const shouldSeedModeForExistingSession = prevMode === undefined && sessionHasExistingMessages
   // Mode instructions are session-start material. Re-sending them every turn
   // pollutes PTY transcripts and can make agents treat the preamble as user text.
-  const modePreamble = modePromptsEnabled && prevMode === undefined && !sessionHasExistingMessages
-    ? buildModePreamble(mode, modePrompts)
-    : ''
+  // A real mode switch is the exception: the new contract is sent exactly once.
+  const modeSwitched = prevMode !== undefined && prevMode !== mode
+  const modePreamble = !modePromptsEnabled
+    ? ''
+    : prevMode === undefined && !sessionHasExistingMessages
+      ? buildModePreamble(mode, modePrompts)
+      : modeSwitched
+        ? buildModeSwitchPreamble(prevMode, mode, modePrompts)
+        : ''
   // Attachments are kept out of the visible input but ride along as `@<rel>`
   // references the agent can resolve with `fs:readFile` against the workspace
   // root. The user already sees them as chips; this block tells the agent

@@ -1,6 +1,6 @@
 import { query, resolveSettings, type CanUseTool, type PermissionMode, type PermissionResult, type Query, type SDKControlGetContextUsageResponse, type SDKMessage, type Settings } from '@anthropic-ai/claude-agent-sdk'
 import type { AgentBridge, AgentUserRequest, AgentUserResponse, BridgeStartOpts, ContextCategory, EmitFn, ModeLevel, PromptOptions, RequestUserFn, TurnUsage } from './bridge-types'
-import { buildUsage, contextWindowFor } from './model-context'
+import { contextWindowFor } from './model-context'
 import { tripwireForToolCall, extractShellCommand } from './dangerous-command'
 
 // Claude Code is driven through the official Agent SDK's `query()` rather than a
@@ -105,6 +105,7 @@ interface ClaudeAskUserQuestionRequest {
   detail?: string
   options?: ClaudeQuestionOption[]
   placeholder?: string
+  multiple: boolean
   optionsById: Record<string, ClaudeQuestionOption>
 }
 
@@ -169,28 +170,38 @@ export function claudeAskUserQuestionRequest(input: Record<string, unknown>, ind
   const optionsById = Object.fromEntries(options.map(option => [option.id, option]))
   const header = stringValue(question.header)
   const progress = questions.length > 1 ? `Question ${index + 1} of ${questions.length}.` : undefined
-  const multiple = question.multiple === true || question.multiSelect === true
-  const allowsCustom = question.custom === true || question.allowFreeform === true
-  const detail = multiple && options.length > 0
-    ? options.map(option => `- ${option.label}${option.description ? ` — ${option.description}` : ''}`).join('\n')
-    : undefined
+  const multiple = (question.multiple === true || question.multiSelect === true) && options.length > 0
+  // Claude's AskUserQuestion contract always offers "Other" free text, so a
+  // typed answer is valid unless the input explicitly opts out.
+  const allowsCustom = question.custom !== false && question.allowFreeform !== false
   return {
     questionText,
-    kind: multiple ? 'editor' : allowsCustom || options.length === 0 ? 'prompt' : 'select',
+    kind: allowsCustom || options.length === 0 ? 'prompt' : 'select',
     title: questionText,
     message: [header ? `Claude asks: ${header}` : undefined, progress].filter(Boolean).join(' ') || undefined,
-    detail,
-    options: multiple ? undefined : options,
-    placeholder: allowsCustom ? 'reply to Claude…' : undefined,
+    options: options.length > 0 ? options : undefined,
+    placeholder: allowsCustom ? (options.length > 0 ? 'or type your own answer…' : 'reply to Claude…') : undefined,
+    multiple,
     optionsById,
   }
+}
+
+function claudeAnswerText(request: ClaudeAskUserQuestionRequest, response: AgentUserResponse): { answer: string; selected?: ClaudeQuestionOption } {
+  const typed = response.value?.trim() ?? ''
+  if (request.multiple) {
+    const labels = (response.optionIds ?? [])
+      .map(id => request.optionsById[id]?.label)
+      .filter((label): label is string => !!label)
+    return { answer: [...labels, ...(typed ? [typed] : [])].join(', ') }
+  }
+  const selected = response.optionId ? request.optionsById[response.optionId] : undefined
+  return { answer: selected?.label ?? (typed || response.optionId || ''), selected }
 }
 
 export function answerClaudeAskUserQuestionInput(input: Record<string, unknown>, response: AgentUserResponse, index = 0): Record<string, unknown> {
   const request = claudeAskUserQuestionRequest(input, index)
   if (!request) return input
-  const selected = response.optionId ? request.optionsById[response.optionId] : undefined
-  const answer = selected?.label ?? response.value ?? response.optionId ?? ''
+  const { answer, selected } = claudeAnswerText(request, response)
   const answers = objectValue(input.answers) ?? {}
   const updated: Record<string, unknown> = {
     ...input,
@@ -206,64 +217,84 @@ export function answerClaudeAskUserQuestionInput(input: Record<string, unknown>,
   return updated
 }
 
-// Result usage is aggregate turn/API billing data. It is only a fallback for the
-// ctx pill; Claude SDK getContextUsage() is the authoritative context gauge.
+// Result usage is aggregate turn/API billing data. Cache reads and repeated API
+// calls make it unsuitable as a live context gauge.
 function usageFromResult(usage: unknown, model: string | undefined): TurnUsage | undefined {
   const u = usage as Record<string, unknown> | undefined
   if (!u || typeof u !== 'object') return undefined
   const input = numberValue(u.input_tokens)
   const output = numberValue(u.output_tokens)
-  const cacheCreation = numberValue(u.cache_creation_input_tokens) ?? 0
-  const cacheRead = numberValue(u.cache_read_input_tokens) ?? 0
-  const contextWindow = contextWindowFor(model)
-  const withCache = (input ?? 0) + cacheCreation + cacheRead + (output ?? 0)
-  const withoutCacheRead = (input ?? 0) + cacheCreation + (output ?? 0)
-  // Fallback only: keep ctx-pop useful on SDK/control failures without letting
-  // repeated cache-read billing become 4M context.
-  const contextTokens = contextWindow && withCache > contextWindow * 1.1 ? withoutCacheRead : withCache
-  return buildUsage({
-    inputTokens:   input,
-    outputTokens:  output,
-    contextTokens,
-    contextWindow,
+  if (input === undefined && output === undefined) return undefined
+  return {
+    inputTokens: input,
+    outputTokens: output,
+    totalTokens: (input ?? 0) + (output ?? 0),
+    contextWindow: contextWindowFor(model),
     model,
-  })
+  }
+}
+
+// Each assembled assistant message corresponds to one Claude API request. Its
+// input/cache counts describe that request's prompt, unlike the result message
+// which aggregates all requests in the turn.
+function contextFromAssistantRequest(message: Record<string, unknown>, model: string | undefined): TurnUsage | undefined {
+  const usage = objectValue(message.usage)
+  if (!usage) return undefined
+  const fields = ['input_tokens', 'cache_creation_input_tokens', 'cache_read_input_tokens'] as const
+  const counts = fields.map(field => numberValue(usage[field]))
+  if (counts.every(count => count === undefined)) return undefined
+  const input = counts.reduce<number>((sum, count) => sum + Math.max(0, count ?? 0), 0)
+  const output = Math.max(0, numberValue(usage.output_tokens) ?? 0)
+  return {
+    contextTokens: input + output,
+    contextWindow: contextWindowFor(model),
+    contextIsAuthoritative: true,
+    model,
+    contextBreakdown: [{ name: 'Latest Claude request (context control unavailable)', tokens: input + output }],
+    contextBreakdownSource: 'usage',
+  }
 }
 
 // Claude's category list is built to fill the /context grid, so it ends with
 // synthetic *capacity* rows — the unused remainder ("Free space") and the
 // reserved compaction headroom — sized so every non-deferred category sums to
 // exactly maxTokens. Counting them as usage pins the meter at 100% forever.
-const CLAUDE_CAPACITY_CATEGORIES = new Set(['free space', 'autocompact buffer', 'compact buffer'])
+const CLAUDE_CAPACITY_CATEGORIES = new Set([
+  'freespace', 'autocompactbuffer', 'autocompactionbuffer', 'compactbuffer', 'compactionbuffer',
+])
 
 function isClaudeCapacityCategory(name: unknown): boolean {
-  const label = stringValue(name)?.trim().toLowerCase()
+  const label = stringValue(name)?.toLowerCase().replace(/[^a-z]/g, '')
   return label !== undefined && CLAUDE_CAPACITY_CATEGORIES.has(label)
+}
+
+function claudeCategoryKind(category: SDKControlGetContextUsageResponse['categories'][number]): 'used' | 'free' | 'buffer' | 'deferred' {
+  // New SDK/CLI responses classify rows directly. Keep the older response
+  // shape usable while a user's installed Claude binary catches up.
+  const kind = (category as { kind?: unknown }).kind
+  if (kind === 'used' || kind === 'free' || kind === 'buffer' || kind === 'deferred') return kind
+  if (kind !== undefined) return 'deferred'
+  if (category.isDeferred) return 'deferred'
+  return isClaudeCapacityCategory(category.name) ? 'buffer' : 'used'
 }
 
 function claudeCategoryTokenSums(context: SDKControlGetContextUsageResponse): { active: number; deferred: number } {
   return context.categories.reduce((sum, category) => {
-    if (isClaudeCapacityCategory(category.name)) return sum
+    const kind = claudeCategoryKind(category)
     const tokens = numberValue(category.tokens) ?? 0
-    if (category.isDeferred) sum.deferred += tokens
-    else sum.active += tokens
+    if (kind === 'deferred') sum.deferred += tokens
+    else if (kind === 'used') sum.active += tokens
     return sum
   }, { active: 0, deferred: 0 })
 }
 
 function activeClaudeContextTokens(context: SDKControlGetContextUsageResponse): number | undefined {
-  const total = numberValue(context.totalTokens)
+  if (!Array.isArray(context.categories) || context.categories.length === 0) return undefined
   const max = numberValue(context.maxTokens) ?? numberValue(context.rawMaxTokens)
   const { active } = claudeCategoryTokenSums(context)
-  // Claude can report large deferred/reserved categories in totalTokens. Those
-  // are useful for Claude's own compaction logic, but they make CrewCode's live
-  // chat meter look full after a tiny prompt.
-  const used = active > 0 && (total === undefined || active < total) ? active : total
-  if (used === undefined) return undefined
-  // totalTokens can exceed the window (Claude derives it from cumulative API
-  // usage, which double-counts cache reads across a resumed thread). Live
-  // context physically cannot, so cap it instead of rendering >=100%.
-  return max !== undefined && max > 0 ? Math.min(used, max) : used
+  // The SDK marks exactly which categories occupy the /context window. Use
+  // those rows directly so free space, buffer, and deferred rows stay out.
+  return max !== undefined && max > 0 ? Math.min(active, max) : active
 }
 
 function pushContextRow(rows: ContextCategory[], name: string, tokens: unknown, deferred?: boolean): void {
@@ -290,9 +321,10 @@ function claudeContextBreakdown(context: SDKControlGetContextUsageResponse): Con
   for (const category of context.categories) {
     // Capacity rows are headroom, not consumption — show them flagged so the
     // list still reconciles against maxTokens without reading as usage.
-    const capacity = isClaudeCapacityCategory(category.name)
+    const kind = claudeCategoryKind(category)
+    const capacity = kind === 'free' || kind === 'buffer'
     const name = stringValue(category.name) ?? 'unknown'
-    pushContextRow(rows, capacity ? `${name} (unused headroom)` : name, category.tokens, capacity || category.isDeferred === true)
+    pushContextRow(rows, capacity ? `${name} (unused headroom)` : name, category.tokens, capacity || kind === 'deferred')
   }
 
   // The top-level categories can say "tools" or "system" without explaining why
@@ -380,14 +412,16 @@ function applyClaudeContextUsage(usage: TurnUsage | undefined, context: SDKContr
     ...(liveContextTokens !== undefined ? { contextTokens: liveContextTokens } : {}),
     ...(contextWindow !== undefined ? { contextWindow } : {}),
     ...(model ? { model } : {}),
-    ...(breakdown.length > 0 ? { contextBreakdown: breakdown } : {}),
+    ...(breakdown.length > 0 ? { contextBreakdown: breakdown, contextBreakdownSource: 'context' as const } : {}),
   }
 }
 
 async function readClaudeContextUsage(q: Query): Promise<SDKControlGetContextUsageResponse | undefined> {
   if (typeof q.getContextUsage !== 'function') return undefined
   try {
-    return await q.getContextUsage()
+    // Full uses the same counted category breakdown as /context. Summary is
+    // faster but explicitly approximate, so it cannot drive this meter.
+    return await q.getContextUsage({ detail: 'full' })
   } catch {
     return undefined
   }
@@ -434,20 +468,28 @@ export async function createClaudeBridge(
     }
     followUpQueue.length = 0
   }
-  // The ctx gauge must not bounce: getContextUsage() can fail right after a
-  // turn's result (the control channel races the per-turn query shutdown), and
-  // the billing-based fallback swings wildly with per-turn API-call counts.
-  // Cache the last good SDK reading and reuse it so the meter only moves on
-  // real SDK data; billing math is the fallback only before any reading exists.
+  // getContextUsage() can fail after a turn's result when the control channel
+  // races query shutdown. Keep a valid reading for the next turn only as a
+  // last resort after trying this turn's control and per-request measurements.
   let lastContextUsage: SDKControlGetContextUsageResponse | undefined
 
-  async function applyStableContextUsage(usage: TurnUsage | undefined, q: Query): Promise<TurnUsage | undefined> {
+  async function readMeasuredContext(q: Query): Promise<SDKControlGetContextUsageResponse | undefined> {
     const context = await readClaudeContextUsage(q)
-    if (context) {
+    if (context && activeClaudeContextTokens(context) !== undefined) {
       lastContextUsage = context
-      return applyClaudeContextUsage(usage, context)
+      return context
     }
-    return applyClaudeContextUsage(usage, lastContextUsage, true)
+    return undefined
+  }
+
+  function resolveTurnContextUsage(
+    billing: TurnUsage | undefined,
+    measured: SDKControlGetContextUsageResponse | undefined,
+    request: TurnUsage | undefined,
+  ): TurnUsage | undefined {
+    if (measured) return applyClaudeContextUsage(billing, measured)
+    if (request) return { ...(billing ?? {}), ...request }
+    return applyClaudeContextUsage(billing, lastContextUsage, true)
   }
 
   queueMicrotask(() => emit({ type: 'ready', bridgeId: opts.bridgeId }))
@@ -597,6 +639,7 @@ export async function createClaudeBridge(
           detail:      questionRequest.detail,
           options:     questionRequest.options,
           placeholder: questionRequest.placeholder,
+          multiple:    questionRequest.multiple || undefined,
           source:      'claude',
         })
         if (response.action === 'cancel' || response.action === 'decline') {
@@ -802,6 +845,7 @@ export async function createClaudeBridge(
         if (message.subtype === 'compact_boundary') {
           const metadata = (message as { compact_metadata?: Record<string, unknown> }).compact_metadata ?? {}
           const automatic = stringValue(metadata.trigger) === 'auto'
+          lastContextUsage = undefined
           emit({
             type: 'compaction_event',
             bridgeId: opts.bridgeId,
@@ -811,6 +855,7 @@ export async function createClaudeBridge(
             provider: 'claude',
             beforeTokens: numberValue(metadata.pre_tokens),
             afterTokens: numberValue(metadata.post_tokens),
+            resetContext: true,
             message: automatic
               ? 'Claude auto-compacted context. Continue the conversation normally.'
               : 'Claude compacted context. Continue the conversation normally.',
@@ -871,6 +916,8 @@ export async function createClaudeBridge(
       const turnId = startTurn()
       const state: TurnState = { sawStreamEvent: false, emittedAnyText: false, streamBlockTypeByIndex: {}, textByBlock: {}, thinkingByBlock: {}, streamedText: '', streamedThinking: '', thinkingTokens: 0, thinkingStatusActive: false }
       let lastUsage: TurnUsage | undefined
+      let turnContextUsage: SDKControlGetContextUsageResponse | undefined
+      let requestContextUsage: TurnUsage | undefined
       let turnSucceeded = false
 
       const env: Record<string, string> = {}
@@ -917,11 +964,27 @@ export async function createClaudeBridge(
 
         for await (const message of q) {
           const usage = handleMessage(message, turnId, state)
+          if (message.type === 'system' && message.subtype === 'compact_boundary') {
+            // Pre-boundary measurements belong to the old prompt. Only a new
+            // assistant reading (or a result-time control read) can refill it.
+            turnContextUsage = undefined
+            requestContextUsage = undefined
+          }
           if (message.type === 'result' && message.subtype === 'success' && !message.is_error) turnSucceeded = true
-          if (usage) lastUsage = await applyStableContextUsage(usage, q)
+          if (message.type === 'assistant') {
+            const assistant = message.message as unknown as Record<string, unknown>
+            const actualModel = stringValue(assistant.model)
+            if (actualModel) sessionModel = actualModel
+            requestContextUsage = contextFromAssistantRequest(assistant, sessionModel) ?? requestContextUsage
+            turnContextUsage = await readMeasuredContext(q) ?? turnContextUsage
+          }
+          if (usage) lastUsage = usage
+          if (message.type === 'result' && !turnContextUsage) {
+            turnContextUsage = await readMeasuredContext(q) ?? turnContextUsage
+          }
         }
 
-        if (!lastUsage?.contextTokens) lastUsage = await applyStableContextUsage(lastUsage, q)
+        lastUsage = resolveTurnContextUsage(lastUsage, turnContextUsage, requestContextUsage)
 
         if (aborted) { endTurn('aborted', lastUsage); return { ok: false, error: 'aborted' } }
         endTurn(turnSucceeded ? 'success' : 'error', lastUsage)
