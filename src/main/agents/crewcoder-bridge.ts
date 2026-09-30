@@ -11,7 +11,7 @@ import type {
   RequestUserFn,
   TurnUsage,
 } from './bridge-types'
-import { buildUsage } from './model-context'
+import { contextWindowFor } from './model-context'
 import { enrichUsageContextWindow } from './openrouter-model-context'
 import { tripwireForToolCall } from './dangerous-command'
 import { crewCoderApprovalForProfile, normalizeCrewCoderMode } from '../../shared/crewcoder-types'
@@ -343,16 +343,36 @@ export function crewCoderUsageFromPromptResult(result: unknown, model?: string):
   const source = rich ?? topLevel
   if (!source) return undefined
 
-  const usage = buildUsage({
-    inputTokens: source.inputTokens ?? source.input_tokens,
-    outputTokens: source.outputTokens ?? source.output_tokens,
-    contextTokens: rich?.lastInputTokens ?? rich?.last_input_tokens,
-    contextWindow: rich?.contextWindow ?? rich?.context_window,
-    model,
-  })
-  if (!usage) return undefined
+  const liveContextTokens = finiteNumber(source.lastInputTokens ?? source.last_input_tokens)
+  const inputTokens = finiteNumber(source.inputTokens ?? source.input_tokens)
+  const outputTokens = finiteNumber(source.outputTokens ?? source.output_tokens)
   const explicitTotal = finiteNumber(source.totalTokens ?? source.total_tokens)
-  return explicitTotal === undefined ? usage : { ...usage, totalTokens: explicitTotal }
+  if (inputTokens === undefined && outputTokens === undefined && explicitTotal === undefined && liveContextTokens === undefined) return undefined
+  const totalTokens = explicitTotal ?? (inputTokens !== undefined || outputTokens !== undefined
+    ? (inputTokens ?? 0) + (outputTokens ?? 0)
+    : undefined)
+  const rows: NonNullable<TurnUsage['contextBreakdown']> = []
+  const add = (name: string, value: unknown) => {
+    const tokens = finiteNumber(value)
+    if (tokens !== undefined && tokens > 0) rows.push({ name, tokens })
+  }
+  add('Latest context input', liveContextTokens)
+  add('Session input', source.inputTokens ?? source.input_tokens)
+  add('Session output', source.outputTokens ?? source.output_tokens)
+  add('Session total', explicitTotal)
+  add('Session cached input', source.cachedInputTokens ?? source.cached_input_tokens)
+  add('Session cache write', source.cacheWriteTokens ?? source.cache_write_tokens)
+  add('Session reasoning output', source.reasoningTokens ?? source.reasoning_tokens)
+  return {
+    inputTokens,
+    outputTokens,
+    totalTokens,
+    contextTokens: liveContextTokens,
+    contextWindow: finiteNumber(source.contextWindow ?? source.context_window) ?? contextWindowFor(model),
+    model,
+    ...(liveContextTokens === undefined ? {} : { contextIsAuthoritative: true }),
+    ...(rows.length > 0 ? { contextBreakdown: rows, contextBreakdownSource: 'usage' as const } : {}),
+  }
 }
 
 export function writeBlocked(opts: Pick<BridgeStartOpts, 'mode' | 'toolPolicy'>): boolean {
@@ -901,6 +921,9 @@ export async function createCrewCoderBridge(
       }
       if (currentTurnId) return { ok: false, error: 'crewcoder acp: a turn is already running' }
       if (proc.stdin.destroyed || !proc.stdin.writable) return { ok: false, error: 'crewcoder acp: process not writable' }
+      // Usage belongs to one ACP prompt. Never attach the preceding turn's
+      // snapshot when this prompt fails or returns without usage metadata.
+      lastUsage = undefined
       startTurn()
       void (async () => {
         try {

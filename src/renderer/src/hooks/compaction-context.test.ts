@@ -17,6 +17,7 @@ describe('clearLatestContextUsage', () => {
         model: 'crewcoder:model',
         compaction: { percent: 85 },
         contextBreakdown: [{ name: 'messages', tokens: 160_000 }],
+        contextBreakdownSource: 'usage',
       },
     }]
 
@@ -28,8 +29,25 @@ describe('clearLatestContextUsage', () => {
         totalTokens: 170_500,
         contextWindow: 200_000,
         model: 'crewcoder:model',
+        contextBreakdown: [{ name: 'messages', tokens: 160_000 }],
+        contextBreakdownSource: 'usage',
       },
     }])
+  })
+
+  it('removes invalidated context categories after a native compact', () => {
+    const messages: Message[] = [{
+      kind: 'agent', time: '12:00', blocks: [],
+      usage: {
+        contextTokens: 170_000,
+        contextWindow: 200_000,
+        contextBreakdown: [{ name: 'Messages', tokens: 170_000 }],
+        contextBreakdownSource: 'context',
+      },
+    }]
+    expect(clearLatestContextUsage(messages)[0]).toEqual({
+      ...messages[0], usage: { contextWindow: 200_000 },
+    })
   })
 
   it('changes only the latest usage-bearing agent message', () => {

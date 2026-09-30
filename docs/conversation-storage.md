@@ -85,6 +85,17 @@ and appends a visible compact-summary card, but keeps the full rich display
 transcript, provider session id, and live bridge. If CrewCoder reports a skipped
 small-session compact, CrewCode leaves replay and usage state unchanged.
 
+Provider-native automatic compaction is also observable. Direct Codex maps its
+app-server `contextCompaction` item lifecycle (plus the legacy
+`thread/compacted` completion) to the same meter. CrewCoder forwards nested
+Codex and Claude native boundaries through `_crewcoder/compaction_update`.
+Claude maps `compact_boundary`, and OpenCode maps the selected session's
+`session.compacted` SSE event. A native completion clears the previous live
+occupancy, its persisted snapshot, and the latest visible usage strip until
+new usage arrives. Native boundaries win; live-occupancy drop inference is only
+a fallback for Codex, CrewCoder, OpenCode, or Grok turns where no native
+boundary was observed, so a single compaction never creates duplicate cards.
+
 ### `summary-reset` flow (pi / hermes / older CrewCoder)
 
 Native-session providers keep their context server-side and expose no compaction RPC, so we cannot shrink it directly. Instead:

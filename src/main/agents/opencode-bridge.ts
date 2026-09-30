@@ -2,7 +2,7 @@ import { spawnAgentProcess } from './agent-spawn'
 import { isRemoteRoot, parseRemoteTarget } from '../remote/ssh-target'
 import { forwardRemotePort } from '../remote/ssh-pool'
 import type { ForwardHandle } from '../remote/ssh-pool'
-import type { AgentBridge, AgentUserRequest, AgentUserResponse, BridgeStartOpts, EmitFn, ModeLevel, RequestUserFn, TurnUsage } from './bridge-types'
+import type { AgentBridge, AgentUserRequest, AgentUserResponse, BridgeEvent, BridgeStartOpts, EmitFn, ModeLevel, RequestUserFn, TurnUsage } from './bridge-types'
 import { buildUsage } from './model-context'
 import { enrichUsageContextWindow } from './openrouter-model-context'
 
@@ -115,13 +115,41 @@ export function usageFromOpencodeMessageInfo(info: {
   const reasoning = typeof t.reasoning === 'number' && Number.isFinite(t.reasoning) ? t.reasoning : 0
   const outputTokens = outputRaw === undefined ? (reasoning || undefined) : outputRaw + reasoning
   const contextTokens = input === undefined ? undefined : input + (outputRaw ?? 0)
-  return buildUsage({
+  const usage = buildUsage({
     inputTokens:   input,
     outputTokens,
     // Cache reads are billing/cache-hit accounting, not live prompt size.
     contextTokens,
     model:         info.modelID ?? fallbackModel,
   })
+  if (!usage) return undefined
+  const rows: NonNullable<TurnUsage['contextBreakdown']> = []
+  const add = (name: string, value: number | undefined) => {
+    if (value !== undefined && Number.isFinite(value) && value > 0) rows.push({ name, tokens: value })
+  }
+  add('Latest request input', input)
+  add('Latest request output', outputRaw)
+  add('Reasoning output (reported separately)', reasoning)
+  add('Cache read (reported separately)', t.cache?.read)
+  add('Cache write (reported separately)', t.cache?.write)
+  return rows.length > 0
+    ? { ...usage, contextBreakdown: rows, contextBreakdownSource: 'usage' }
+    : usage
+}
+
+/** OpenCode's SSE completion belongs only to the selected session. */
+export function opencodeCompactionEvent(properties: Record<string, unknown>, sessionId: string, bridgeId: string, turnId: string | null): BridgeEvent | null {
+  if (properties.sessionID !== sessionId) return null
+  return {
+    type: 'compaction_event',
+    bridgeId,
+    ...(turnId ? { turnId } : {}),
+    status: 'completed',
+    automatic: true,
+    provider: 'opencode',
+    message: 'OpenCode auto-compacted context. Continue the conversation normally.',
+    resetContext: true,
+  }
 }
 
 async function pickFreePort(): Promise<number> {
@@ -191,24 +219,21 @@ export function prepareOpencodeQuestionRequest(question: OpencodeQuestionInfo, i
   const multiple = question.multiple === true
   const allowsCustom = question.custom !== false
   const header = stringValue(question.header)?.trim()
+  const toggles = multiple && options.length > 0
   const notes = [
     header ? `OpenCode asks: ${header}` : undefined,
     total > 1 ? `Question ${index + 1} of ${total}.` : undefined,
-    multiple ? 'Select all that apply. Type multiple answers separated by commas or new lines.' : undefined,
+    multiple ? 'Select all that apply.' : undefined,
   ].filter(Boolean).join(' ')
-
-  const detail = multiple && options.length > 0
-    ? options.map(option => `- ${option.label}${option.description ? ` — ${option.description}` : ''}`).join('\n')
-    : undefined
 
   return {
     request: {
-      kind: multiple ? 'editor' : allowsCustom || options.length === 0 ? 'prompt' : 'select',
+      kind: allowsCustom || options.length === 0 ? 'prompt' : 'select',
       title,
       message: notes || undefined,
-      detail,
-      options: multiple ? undefined : options,
-      placeholder: allowsCustom ? 'reply to OpenCode…' : undefined,
+      options: options.length > 0 ? options : undefined,
+      placeholder: allowsCustom ? (options.length > 0 ? 'or type your own answer…' : 'reply to OpenCode…') : undefined,
+      multiple: toggles || undefined,
       source: 'opencode',
     },
     optionsById,
@@ -217,6 +242,12 @@ export function prepareOpencodeQuestionRequest(question: OpencodeQuestionInfo, i
 }
 
 export function answerOpencodeQuestion(prepared: PreparedOpencodeQuestion, response: AgentUserResponse): string[] {
+  if (prepared.multiple && response.optionIds) {
+    const toggled = response.optionIds
+      .map(id => prepared.optionsById[id]?.label)
+      .filter((label): label is string => !!label)
+    return [...toggled, ...splitTypedAnswers(response.value, true)]
+  }
   const selected = response.optionId ? prepared.optionsById[response.optionId] : undefined
   return selected ? [selected.label] : splitTypedAnswers(response.value ?? response.optionId, prepared.multiple)
 }
@@ -658,6 +689,14 @@ export async function createOpencodeBridge(
       case 'session.idle':
         void endTurn()
         return
+      case 'session.compacted': {
+        const compacted = opencodeCompactionEvent(ev.properties, sessionId, opts.bridgeId, currentTurnId)
+        if (compacted) {
+          lastUsage = undefined
+          emit(compacted)
+        }
+        return
+      }
       case 'question.asked':
         void handleQuestionAsked(ev.properties as OpencodeQuestionRequest)
         return

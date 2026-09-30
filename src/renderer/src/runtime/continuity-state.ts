@@ -274,6 +274,14 @@ function catalogueSeedValues(values: Record<string, string>): Record<string, str
   return seed
 }
 
+/** Capture the foreground Electron catalogue immediately before the
+ * enable-triggered reload switches the renderer to the Brain backend. */
+export async function seedCurrentDesktopCatalogue(
+  seed: (values: Record<string, string>) => Promise<ContinuityStateSnapshot>,
+): Promise<ContinuityStateSnapshot> {
+  return seed(catalogueSeedValues(localValues()))
+}
+
 /** Re-materialize missing solo-chat rows from metadata only. */
 export function recoverTranscriptSessions(
   values: Record<string, string>,

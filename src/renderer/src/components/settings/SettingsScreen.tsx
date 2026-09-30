@@ -45,6 +45,7 @@ import {
   type LocalVoiceDevice,
 } from '../../../../shared/voice-types'
 import { getCrewCodeClient, getCrewCodeRuntime } from '../../runtime/crewcode-client'
+import { seedCurrentDesktopCatalogue } from '../../runtime/continuity-state'
 import { BrainAuthorizationSection } from './BrainAuthorizationSection'
 import { useAppBuildInfo } from '../../hooks/useAppBuildInfo'
 import type { EditorThemeId } from '../../../../shared/editor-theme-types'
@@ -516,7 +517,21 @@ function BrainContinuitySection() {
     try {
       const next = await window.electronAPI!.brainDesktopSetEnabled(true)
       setStatus(next)
-      if (next.attached) window.location.reload()
+      if (next.attached) {
+        const seedCatalogue = window.electronAPI?.continuityDesktopSeed
+        if (!seedCatalogue) throw new Error('Desktop catalogue handoff is unavailable; Brain was not attached.')
+        try {
+          await seedCurrentDesktopCatalogue(seedCatalogue)
+        } catch (cause) {
+          let stopped = false
+          try {
+            setStatus(await window.electronAPI!.brainDesktopStop())
+            stopped = true
+          } catch { /* preserve the handoff failure below */ }
+          throw new Error(`Could not hand off the current desktop chats and tabs: ${(cause as Error).message}.${stopped ? ' Background Brain was stopped; your desktop state is unchanged.' : ' Background Brain could not be stopped; stop it before retrying.'}`)
+        }
+        window.location.reload()
+      }
     } catch (cause) { setError((cause as Error).message) }
     finally { setBusy(false) }
   }

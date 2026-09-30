@@ -64,7 +64,7 @@ class FakeAcpProcess extends EventEmitter {
   }
 }
 
-function crewCoderAcpHarness(options: { directoryError?: string; compact?: boolean } = {}): { proc: FakeAcpProcess; sent: Array<Record<string, unknown>> } {
+function crewCoderAcpHarness(options: { directoryError?: string; compact?: boolean; promptResults?: Array<Record<string, unknown>> } = {}): { proc: FakeAcpProcess; sent: Array<Record<string, unknown>> } {
   const proc = new FakeAcpProcess()
   const sent: Array<Record<string, unknown>> = []
   let input = ''
@@ -96,6 +96,14 @@ function crewCoderAcpHarness(options: { directoryError?: string; compact?: boole
         proc.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: message.id, result: { queued: true } })}\n`)
       } else if (message.method === 'session/set_reasoning_effort') {
         proc.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: message.id, result: {} })}\n`)
+      } else if (message.method === 'session/prompt') {
+        if (options.promptResults) {
+          proc.stdout.write(`${JSON.stringify({
+            jsonrpc: '2.0',
+            id: message.id,
+            result: options.promptResults.shift() ?? { stopReason: 'end_turn' },
+          })}\n`)
+        }
       } else if (message.method === 'session/compact') {
         proc.stdout.write(`${JSON.stringify({
           jsonrpc: '2.0',
@@ -656,7 +664,15 @@ describe('CrewCoder ACP usage', () => {
       totalTokens: 1801,
       contextTokens: 1200,
       contextWindow: 200_000,
+      contextIsAuthoritative: true,
       model: 'codex:gpt-5.6-sol',
+      contextBreakdown: [
+        { name: 'Latest context input', tokens: 1200 },
+        { name: 'Session input', tokens: 1234 },
+        { name: 'Session output', tokens: 567 },
+        { name: 'Session total', tokens: 1801 },
+      ],
+      contextBreakdownSource: 'usage',
     })
   })
 
@@ -667,9 +683,105 @@ describe('CrewCoder ACP usage', () => {
       inputTokens: 40,
       outputTokens: 2,
       totalTokens: 42,
-      contextTokens: 42,
+      contextTokens: undefined,
       contextWindow: undefined,
       model: 'custom:model',
+      contextBreakdown: [
+        { name: 'Session input', tokens: 40 },
+        { name: 'Session output', tokens: 2 },
+        { name: 'Session total', tokens: 42 },
+      ],
+      contextBreakdownSource: 'usage',
     })
+  })
+
+  it('uses top-level live occupancy when an ACP transport strips namespaced metadata', () => {
+    expect(crewCoderUsageFromPromptResult({
+      usage: {
+        inputTokens: 90_000,
+        outputTokens: 700,
+        totalTokens: 90_700,
+        lastInputTokens: 42_000,
+        contextWindow: 1_050_000,
+      },
+    }, 'codex:gpt-5.6-sol')).toEqual({
+      inputTokens: 90_000,
+      outputTokens: 700,
+      totalTokens: 90_700,
+      contextTokens: 42_000,
+      contextWindow: 1_050_000,
+      contextIsAuthoritative: true,
+      model: 'codex:gpt-5.6-sol',
+      contextBreakdown: [
+        { name: 'Latest context input', tokens: 42_000 },
+        { name: 'Session input', tokens: 90_000 },
+        { name: 'Session output', tokens: 700 },
+        { name: 'Session total', tokens: 90_700 },
+      ],
+      contextBreakdownSource: 'usage',
+    })
+  })
+
+  it('shows observed cache and reasoning counters without treating them as context categories', () => {
+    const usage = crewCoderUsageFromPromptResult({
+      _meta: {
+        'crewcoder/usage': {
+          inputTokens: 100,
+          outputTokens: 20,
+          totalTokens: 120,
+          lastInputTokens: 75,
+          cachedInputTokens: 30,
+          cacheWriteTokens: 10,
+          reasoningTokens: 5,
+        },
+      },
+    }, 'codex:gpt-5.6-sol')
+
+    expect(usage?.contextBreakdownSource).toBe('usage')
+    expect(usage?.contextBreakdown).toEqual([
+      { name: 'Latest context input', tokens: 75 },
+      { name: 'Session input', tokens: 100 },
+      { name: 'Session output', tokens: 20 },
+      { name: 'Session total', tokens: 120 },
+      { name: 'Session cached input', tokens: 30 },
+      { name: 'Session cache write', tokens: 10 },
+      { name: 'Session reasoning output', tokens: 5 },
+    ])
+  })
+
+  it('keeps context unknown when only a cumulative session total is reported', () => {
+    expect(crewCoderUsageFromPromptResult({ usage: { totalTokens: 42 } }, 'custom:model')).toEqual({
+      inputTokens: undefined,
+      outputTokens: undefined,
+      totalTokens: 42,
+      contextTokens: undefined,
+      contextWindow: undefined,
+      model: 'custom:model',
+      contextBreakdown: [{ name: 'Session total', tokens: 42 }],
+      contextBreakdownSource: 'usage',
+    })
+  })
+
+  it('does not reuse a preceding prompt usage snapshot when the next result omits usage', async () => {
+    const harness = crewCoderAcpHarness({
+      promptResults: [
+        { usage: { inputTokens: 42_000, outputTokens: 700, lastInputTokens: 42_000, contextWindow: 1_050_000 } },
+        { stopReason: 'end_turn' },
+      ],
+    })
+    spawnAgentProcess.mockResolvedValue({ proc: harness.proc, dir: '/repo', remote: false })
+    const events: BridgeEvent[] = []
+    const bridge = await createCrewCoderBridge('crewcoder', {
+      bridgeId: 'bridge-usage', provider: 'crewcoder', cwd: '/repo', mode: 'build',
+    }, event => events.push(event))
+
+    await bridge.prompt('first')
+    await vi.waitFor(() => expect(events.filter(event => event.type === 'turn_end')).toHaveLength(1))
+    await bridge.prompt('second')
+    await vi.waitFor(() => expect(events.filter(event => event.type === 'turn_end')).toHaveLength(2))
+
+    const turns = events.filter(event => event.type === 'turn_end')
+    expect(turns[0]).toMatchObject({ usage: { contextTokens: 42_000, contextWindow: 1_050_000 } })
+    expect(turns[1]).toMatchObject({ usage: undefined })
   })
 })

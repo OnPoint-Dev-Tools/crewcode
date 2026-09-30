@@ -20,7 +20,7 @@ import { requiredPermissionsForPluginAgentRuntime } from '../plugin-contract'
 import { parseProviderPayload } from './plugin-provider-payload'
 import type { AgentBridge, AgentUserRequest, AgentUserResponse, BridgeEvent, BridgeStartOpts, EmitFn, HandoffPromptOptions, PromptOptions, RequestUserFn, TurnUsage } from './bridge-types'
 import { HTTP_ONLY_PROVIDERS, API_KEY_PROVIDERS } from './bridge-types'
-import { autoCompactionSignalForProvider, detectAutoCompaction, normalizeContextUsage, compactionStrategy } from './compaction-meter'
+import { detectAutoCompaction, normalizeContextUsage, compactionStrategy, shouldInferAutoCompactionForProvider } from './compaction-meter'
 import { TurnPermissionGrantStore } from './turn-permission-grants'
 import { authorityOf, custodyJournal, scopeKeyFor, scopeViolation } from './custody'
 import {
@@ -74,6 +74,10 @@ interface BridgeEntry {
   // Set after a mid-turn context drop opens the inferred auto-compaction meter;
   // turn_end closes that same meter.
   pendingAutoCompaction: boolean
+  // Native provider boundaries win over usage-drop inference. Reset for every
+  // real turn so providers with incomplete native telemetry can still use the
+  // observed occupancy fallback on a later turn.
+  nativeCompactionObservedThisTurn: boolean
   // True while a summary-reset compaction is in flight: the agent is producing a
   // structured summary that turn_end collapses into a fresh, small session.
   pendingSummaryReset: boolean
@@ -885,7 +889,8 @@ export function registerAgentBridgeIpc(resolveAgentPath: AgentPathResolver): voi
     })
 
     const win = BrowserWindow.fromWebContents(e.sender)
-    const requestUser: RequestUserFn = (request) => {
+    const requestUser: RequestUserFn = (request, signal) => {
+      if (signal?.aborted) return Promise.resolve({ requestId: `${opts.bridgeId}:withdrawn`, action: 'cancel' })
       // Check custody before even an auto-response is prepared. Otherwise a
       // Full Access grant could approve a request after its scope disappeared.
       const liveEntry = bridges.get(opts.bridgeId)
@@ -901,6 +906,17 @@ export function registerAgentBridgeIpc(resolveAgentPath: AgentPathResolver): voi
       return new Promise<AgentUserResponse>((resolve) => {
         pendingUserRequests.set(requestId, { bridgeId: opts.bridgeId, request: payload, resolve })
         win?.webContents.send('bridge:event', { type: 'user_request', request: payload } satisfies BridgeEvent)
+        // The provider withdrew the request (it resolved it itself). Settle as
+        // cancel and retract the card; the answer was never observed.
+        signal?.addEventListener('abort', () => {
+          const pending = pendingUserRequests.get(requestId)
+          if (!pending) return
+          pendingUserRequests.delete(requestId)
+          pending.resolve({ requestId, action: 'cancel' })
+          if (!win?.isDestroyed()) {
+            win?.webContents.send('bridge:event', { type: 'user_request_resolved', bridgeId: opts.bridgeId, requestId } satisfies BridgeEvent)
+          }
+        }, { once: true })
       })
     }
     const emit = (event: BridgeEvent) => {
@@ -943,6 +959,10 @@ export function registerAgentBridgeIpc(resolveAgentPath: AgentPathResolver): voi
       // Keep the idle clock and running flag current for the sweep.
       const eventBridgeId = event.type === 'user_request' ? event.request.bridgeId : event.bridgeId
       const entry = bridges.get(eventBridgeId)
+      if (entry && event.type === 'compaction_event') {
+        entry.nativeCompactionObservedThisTurn = true
+        if (event.status === 'completed') entry.pendingAutoCompaction = false
+      }
       if (entry && event.type === 'compaction_event' && event.status === 'completed' && event.resetContext) {
         // Native compaction invalidates the old absolute occupancy immediately.
         // Do not display or persist a fabricated zero: leave context unknown until
@@ -956,7 +976,7 @@ export function registerAgentBridgeIpc(resolveAgentPath: AgentPathResolver): voi
         // Only providers with a verified absolute-context usage contract use
         // inference. Claude emits authoritative compact_boundary events; Pi,
         // Hermes, HTTP providers, and plugins must not be guessed from CLI-ness.
-        const inferProviderCompaction = autoCompactionSignalForProvider(entry.provider) === 'usage'
+        const inferProviderCompaction = shouldInferAutoCompactionForProvider(entry.provider, entry.nativeCompactionObservedThisTurn)
         if (detection && inferProviderCompaction && !entry.pendingManualCompaction && !entry.pendingSummaryReset) {
           entry.pendingAutoCompaction = detection === 'started'
           win?.webContents.send('bridge:event', {
@@ -1021,6 +1041,7 @@ export function registerAgentBridgeIpc(resolveAgentPath: AgentPathResolver): voi
           delete entry.assistantTextByTurn[event.turnId]
         }
         if (event.type === 'turn_start') {
+          entry.nativeCompactionObservedThisTurn = false
           entry.running = true
           entry.userInitiatedStop = false
           // This path handles provider-internal queued follow-ups. Direct
@@ -1162,6 +1183,7 @@ export function registerAgentBridgeIpc(resolveAgentPath: AgentPathResolver): voi
         lastUsage: sessionKey ? getUsageSnapshot(sessionKey) : undefined,
         pendingManualCompaction: false,
         pendingAutoCompaction: false,
+        nativeCompactionObservedThisTurn: false,
         pendingSummaryReset: false,
         custodyScopeKey,
         custodyEnabled,

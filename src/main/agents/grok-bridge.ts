@@ -252,6 +252,27 @@ export function grokSelectedOption(
 // Usage
 // ---------------------------------------------------------------------------
 
+function grokTokenRows(values: {
+  latestInput?: number
+  latestOutput?: number
+  cacheRead?: number
+  reasoning?: number
+  turnInput?: number
+  turnOutput?: number
+}): NonNullable<TurnUsage['contextBreakdown']> {
+  const rows: NonNullable<TurnUsage['contextBreakdown']> = []
+  const add = (name: string, value: number | undefined) => {
+    if (value !== undefined && Number.isFinite(value) && value > 0) rows.push({ name, tokens: value })
+  }
+  add('Latest call input', values.latestInput)
+  add('Latest call output', values.latestOutput)
+  add('Cache read (reported separately)', values.cacheRead)
+  add('Reasoning (reported separately)', values.reasoning)
+  add('Turn total input', values.turnInput)
+  add('Turn total output', values.turnOutput)
+  return rows
+}
+
 /**
  * Per-turn usage rides on the `session/prompt` response `_meta`. `inputTokens`
  * there is the last model call's input, i.e. live context occupancy — the same
@@ -278,7 +299,19 @@ export function grokUsageFromPromptResult(
   })
   if (!usage) return undefined
   const explicitTotal = finiteNumber(cumulative?.totalTokens)
-  return explicitTotal === undefined ? usage : { ...usage, totalTokens: explicitTotal }
+  const rows = grokTokenRows({
+    latestInput: finiteNumber(meta.inputTokens),
+    latestOutput: finiteNumber(meta.outputTokens),
+    cacheRead: finiteNumber(meta.cachedReadTokens),
+    reasoning: finiteNumber(meta.reasoningTokens),
+    turnInput: finiteNumber(cumulative?.inputTokens),
+    turnOutput: finiteNumber(cumulative?.outputTokens),
+  })
+  return {
+    ...usage,
+    ...(explicitTotal === undefined ? {} : { totalTokens: explicitTotal }),
+    ...(rows.length > 0 ? { contextBreakdown: rows, contextBreakdownSource: 'usage' as const } : {}),
+  }
 }
 
 /** Context window for the active model, read off initialize/session-new `_meta`. */
@@ -703,8 +736,14 @@ export async function createGrokBridge(
       model: opts.model,
     })
     if (!built || !currentTurnId) return
-    lastUsage = built
-    emit({ type: 'usage_update', bridgeId: opts.bridgeId, turnId: currentTurnId, usage: built })
+    const rows = grokTokenRows({
+      latestInput: finiteNumber(usage.input_tokens),
+      latestOutput: finiteNumber(usage.output_tokens),
+      cacheRead: finiteNumber(usage.cached_read_tokens),
+      reasoning: finiteNumber(usage.reasoning_tokens),
+    })
+    lastUsage = rows.length > 0 ? { ...built, contextBreakdown: rows, contextBreakdownSource: 'usage' } : built
+    emit({ type: 'usage_update', bridgeId: opts.bridgeId, turnId: currentTurnId, usage: lastUsage })
   }
 
   function resolveClientPath(value: string): string {

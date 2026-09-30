@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
 import type { AgentInfo, Message, ModeLevel } from '../types'
-import { sendChatSessionPrompt } from './chat-session-send'
+import { DEFAULT_MODE_PROMPTS, sendChatSessionPrompt } from './chat-session-send'
 
 const bridgeAgent: AgentInfo = {
   id: 'codex',
@@ -175,7 +175,7 @@ describe('sendChatSessionPrompt mode handling', () => {
     expect(promptCalls[0][1]).toBe('please help')
   })
 
-  it('announces mode changes without re-injecting session-start prompt material', async () => {
+  it('delivers the new mode contract once when the mode changes mid-session', async () => {
     const messages = messageHarness()
     const opts = makeBaseOpts('full', messages)
     opts.lastDeliveredMode = vi.fn(() => 'build')
@@ -189,8 +189,36 @@ describe('sendChatSessionPrompt mode handling', () => {
       text: expect.stringContaining('mode: FULL'),
     }))
     const promptCalls = (opts.bridges.prompt as unknown as { mock: { calls: Array<[string, string]> } }).mock.calls
-    expect(promptCalls[0][1]).not.toContain('You are in FULL mode')
+    const wireText = promptCalls[0][1]
+    expect(wireText).toContain('switched from BUILD mode to FULL mode')
+    expect(wireText).toContain(DEFAULT_MODE_PROMPTS.full.trim())
+    expect(wireText).not.toContain(DEFAULT_MODE_PROMPTS.build.trim())
+    expect(wireText).toMatch(/please help$/)
+  })
+
+  it('tells an agent leaving Ask mode that its refusal rules no longer apply', async () => {
+    const messages = messageHarness()
+    const opts = makeBaseOpts('build', messages)
+    opts.lastDeliveredMode = vi.fn(() => 'ask')
+
+    await sendChatSessionPrompt(opts)
+
+    const promptCalls = (opts.bridges.prompt as unknown as { mock: { calls: Array<[string, string]> } }).mock.calls
+    const wireText = promptCalls[0][1]
+    expect(wireText).toContain('Instructions from ASK mode earlier in this conversation no longer apply')
+    expect(wireText).toContain('You are in Build mode')
+  })
+
+  it('does not send a switch preamble when CrewCode mode prompts are disabled', async () => {
+    const messages = messageHarness()
+    const opts = { ...makeBaseOpts('build', messages), modePromptsEnabled: false }
+    opts.lastDeliveredMode = vi.fn(() => 'ask')
+
+    await sendChatSessionPrompt(opts)
+
+    const promptCalls = (opts.bridges.prompt as unknown as { mock: { calls: Array<[string, string]> } }).mock.calls
     expect(promptCalls[0][1]).toBe('please help')
+    expect(opts.markModeDelivered).toHaveBeenCalledWith('sess-1', 'build')
   })
 
   it('seeds mode delivery for restored sessions without resending the mode prompt', async () => {

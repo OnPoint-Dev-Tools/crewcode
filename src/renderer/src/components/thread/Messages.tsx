@@ -1,4 +1,5 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { normalizePatchForPierre, pathField, extractProviderPatchChanges, diffStats } from '../../hooks/turn-file-edit-detect'
 import { TurnWorkLog } from './TurnWorkLog'
@@ -201,7 +202,7 @@ function SpeechButton({ text }: { text: string }) {
 }
 
 /** Floating "Context Window" card — opened by clicking the context pill. */
-function ContextWindowPopover({ usage, onClose }: { usage: TurnUsage; onClose: () => void }) {
+function ContextWindowPopover({ usage, onClose, onOpenTokenLogs }: { usage: TurnUsage; onClose: () => void; onOpenTokenLogs: () => void }) {
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const onDown = (e: MouseEvent) => {
@@ -240,37 +241,96 @@ function ContextWindowPopover({ usage, onClose }: { usage: TurnUsage; onClose: (
           <dt>Usage</dt><dd className="ctx-pop-pct">{pct.toFixed(1)}%</dd>
         </div>
         <div className="ctx-pop-row">
-          <dt>Window</dt><dd>{withThousands(total)} tokens</dd>
+          <dt>{usage.promptBudgetTokens ? 'Model window' : 'Window'}</dt><dd>{withThousands(total)} tokens</dd>
         </div>
+        {usage.promptBudgetTokens && (
+          <div className="ctx-pop-row" title="Codex app-server's effective prompt budget">
+            <dt>Prompt budget</dt><dd>{withThousands(usage.promptBudgetTokens)} tokens</dd>
+          </div>
+        )}
       </dl>
       {usage.contextBreakdown && usage.contextBreakdown.length > 0 && (
-        <div className="ctx-pop-breakdown">
-          <div className="ctx-pop-breakdown-title">What's using it</div>
-          <dl className="ctx-pop-rows">
-            {usage.contextBreakdown.map(cat => (
-              <div className="ctx-pop-row" key={cat.name}>
+        <button type="button" className="ctx-pop-token-logs" onClick={onOpenTokenLogs}>
+          Token logs <Icon name="chevRight" size={12} />
+        </button>
+      )}
+    </div>
+  )
+}
+
+function TokenLogsSidebar({ usage, onClose }: { usage: TurnUsage; onClose: () => void }) {
+  const closeRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    closeRef.current?.focus()
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+      if (event.key === 'Tab') { event.preventDefault(); closeRef.current?.focus() }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  return createPortal(
+    <div className="token-logs-layer">
+      <button type="button" className="token-logs-backdrop" onClick={onClose} aria-label="Close token logs" />
+      <aside className="token-logs-sidebar" role="dialog" aria-modal="true" aria-labelledby="token-logs-title">
+        <header className="token-logs-header">
+          <div>
+            <div className="token-logs-kicker">Context window</div>
+            <h2 id="token-logs-title">Token logs</h2>
+          </div>
+          <button ref={closeRef} type="button" className="token-logs-close" onClick={onClose} aria-label="Close token logs">×</button>
+        </header>
+        <div className="token-logs-summary">
+          {usage.contextTokens !== undefined && usage.contextWindow
+            ? <><strong>{withThousands(usage.contextTokens)}</strong> used of {withThousands(usage.contextWindow)} tokens</>
+            : <span>Context usage unavailable</span>}
+          {usage.model && <div className="token-logs-model">{usage.model}</div>}
+          {usage.promptBudgetTokens && (
+            <div className="token-logs-model">Codex prompt budget: {withThousands(usage.promptBudgetTokens)} tokens</div>
+          )}
+        </div>
+        <div className="token-logs-body">
+          <div className="token-logs-section-title">{usage.contextBreakdownSource === 'usage' ? 'Provider token counts' : "What's using it"}</div>
+          <p className="token-logs-note">
+            {usage.contextBreakdownSource === 'usage'
+              ? 'Request, turn, and session counters can overlap; they are not additive context categories.'
+              : 'Detail rows can overlap their category totals.'}
+          </p>
+          <dl className="token-logs-rows">
+            {usage.contextBreakdown?.map((cat, index) => (
+              <div className="token-logs-row" key={`${cat.name}-${index}`}>
                 <dt>{cat.name}{cat.deferred ? ' (reserved)' : ''}</dt>
                 <dd>{withThousands(cat.tokens)}</dd>
               </div>
             ))}
           </dl>
         </div>
-      )}
-    </div>
+      </aside>
+    </div>,
+    document.body,
   )
 }
 
 /** Inline tok/s + context strip rendered above the timestamp on agent bubbles. */
 function UsageStrip({ usage, durationMs, copyText }: { usage?: TurnUsage; durationMs?: number; copyText: string }) {
   const [open, setOpen] = useState(false)
+  const [tokenLogsOpen, setTokenLogsOpen] = useState(false)
+  const contextButtonRef = useRef<HTMLButtonElement>(null)
+  const closeTokenLogs = React.useCallback(() => {
+    setTokenLogsOpen(false)
+    contextButtonRef.current?.focus()
+  }, [])
   const tps = tokensPerSecond(usage, durationMs)
   const pct = contextPercent(usage)
+  const hasTokenLogs = !!usage?.contextBreakdown?.length
 
   return (
     <div className="usage-strip">
       {pct !== null && (
         <div className="usage-ctx-wrap">
           <button
+            ref={contextButtonRef}
             type="button"
             className="usage-cell usage-ctx-btn"
             onClick={() => setOpen(v => !v)}
@@ -280,8 +340,25 @@ function UsageStrip({ usage, durationMs, copyText }: { usage?: TurnUsage; durati
             <span className="usage-ctx-dial" style={{ '--pct': `${pct}%` } as React.CSSProperties} />
             {usage?.compaction ? 'compact' : 'ctx'} {pct.toFixed(0)}%
           </button>
-          {open && usage && <ContextWindowPopover usage={usage} onClose={() => setOpen(false)} />}
+          {open && usage && (
+            <ContextWindowPopover
+              usage={usage}
+              onClose={() => setOpen(false)}
+              onOpenTokenLogs={() => { setOpen(false); setTokenLogsOpen(true) }}
+            />
+          )}
         </div>
+      )}
+      {pct === null && hasTokenLogs && (
+        <button ref={contextButtonRef} type="button" className="usage-cell usage-ctx-btn" onClick={() => setTokenLogsOpen(true)}>
+          Token logs
+        </button>
+      )}
+      {tokenLogsOpen && usage && (
+        <TokenLogsSidebar
+          usage={usage}
+          onClose={closeTokenLogs}
+        />
       )}
       {tps !== null && (
         <span className="usage-cell" title="output tokens per second">

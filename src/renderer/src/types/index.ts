@@ -150,9 +150,11 @@ export interface TurnUsage {
   totalTokens?:   number
   contextTokens?: number
   contextWindow?: number
+  promptBudgetTokens?: number
   model?:         string
   compaction?:    CompactionStatus
   contextBreakdown?: ContextCategory[]
+  contextBreakdownSource?: 'context' | 'usage'
 }
 
 export interface AgentMessage {
@@ -328,6 +330,10 @@ export interface AgentUserRequest {
   source?: string
   /** Main-issued capability for Build-mode permission requests. */
   allowAllForTurn?: boolean
+  /** Question options are toggles; answer with `optionIds`. */
+  multiple?: boolean
+  /** Mask the typed answer. */
+  secret?: boolean
 }
 
 export interface AgentUserResponse {
@@ -335,6 +341,7 @@ export interface AgentUserResponse {
   action: 'accept' | 'accept_for_turn' | 'decline' | 'submit' | 'cancel'
   value?: string
   optionId?: string
+  optionIds?: string[]
 }
 
 export type BridgeEvent =

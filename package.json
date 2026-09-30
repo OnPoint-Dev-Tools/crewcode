@@ -1,6 +1,6 @@
 {
    "name": "crewcode",
-   "version": "0.2.3",
+   "version": "0.2.4",
    "description": "CrewCode is the control center for multi-agent software development.",
    "author": {
       "name": "OnPoint Tools",
@@ -146,7 +146,7 @@
       "serve": "npm run build && node bin/crewcode-server.mjs serve",
       "hub": "npm run build && node bin/crewcode-server.mjs hub",
       "hub:mobile": "npm run build && node bin/crewcode-server.mjs hub mobile --tailscale",
-      "enroll": "npm run build && node bin/crewcode-server.mjs enroll",
+      "enroll": "node bin/crewcode-server.mjs enroll",
       "brain": "npm run build && node bin/crewcode-server.mjs brain",
       "prepack": "npm run build",
       "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.web.json --noEmit && tsc -p packages/crewcode-plugin-api/tsconfig.json --noEmit",
@@ -185,7 +185,7 @@
       "vitest": "^4.1.11"
    },
    "dependencies": {
-      "@anthropic-ai/claude-agent-sdk": "^0.3.179",
+      "@anthropic-ai/claude-agent-sdk": "^0.3.282",
       "@codemirror/autocomplete": "file:packages/crew-codemirror/autocomplete",
       "@codemirror/commands": "file:packages/crew-codemirror/commands",
       "@codemirror/lang-css": "file:packages/crew-codemirror/lang-css",

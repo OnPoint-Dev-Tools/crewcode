@@ -397,6 +397,7 @@ export function SoloChatView(props: SoloChatViewProps) {
                 onRespond={onAgentRequestResponse}
                 planGate={planGate}
                 onApprovePlan={() => onRunCommand?.(CREWCODER_APPROVE_PLAN_PROMPT)}
+                onReplyPlan={onRunCommand ? text => onRunCommand(text) : undefined}
               />
             </div>
           )}
