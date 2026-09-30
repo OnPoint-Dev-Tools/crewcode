@@ -90,8 +90,9 @@ const RULES: WindowRule[] = [
     { match: /claude-sonnet-5-5/i,                window: 1_000_000 },
   { match: /claude-sonnet-5/i,                window: 1_000_000 },
   { match: /claude-fable-5\.1/i,                window: 1_000_000 },
-  { match: /claude-opus-4\.8/i, window: 500_000 },
-  { match: /claude-sonnet-4\.6/i,                window: 500_000 },
+  // Providers use both dotted versions and hyphenated ids for these models.
+  { match: /claude-opus-4[.-]8/i, window: 500_000 },
+  { match: /claude-sonnet-4[.-]6/i,                window: 500_000 },
   { match: /claude-haiku-4-5/i,                window: 200_000 },
   // Google Gemini — 1M (pro variants go to 2M but 1M is the safe floor).
   { match: /gemini-1\.5-pro/i, window: 128_000 },

@@ -146,7 +146,7 @@
       "serve": "npm run build && node bin/crewcode-server.mjs serve",
       "hub": "npm run build && node bin/crewcode-server.mjs hub",
       "hub:mobile": "npm run build && node bin/crewcode-server.mjs hub mobile --tailscale",
-      "enroll": "node bin/crewcode-server.mjs enroll",
+      "enroll": "npm run build && node bin/crewcode-server.mjs enroll",
       "brain": "npm run build && node bin/crewcode-server.mjs brain",
       "prepack": "npm run build",
       "typecheck": "tsc -p tsconfig.node.json --noEmit && tsc -p tsconfig.web.json --noEmit && tsc -p packages/crewcode-plugin-api/tsconfig.json --noEmit",

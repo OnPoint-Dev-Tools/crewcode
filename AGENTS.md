@@ -8,9 +8,53 @@
 
 This file provides guidance to models when working with code in this repository.
 
+## Code Comments: Document the "Why", Briefly
+
+When writing or modifying code driven by a design doc or non-obvious constraint, add a comment explaining **why** the code behaves the way it does.
+
+Keep comments short — one or two lines. Capture only the non-obvious reason (safety constraint, compatibility shim, design-doc rule). Don't restate what the code does, narrate the mechanism, cite design-doc sections verbatim, or explain adjacent API choices unless they're the point.
+
+## File and Module Naming
+
+Never use vague names like `helpers`, `utils`, `common`, `misc`, or `shared-stuff` for files, folders, or modules. They carry zero information and tend to become dumping grounds. Name files after what they *actually* contain — prefer the concrete domain concept (e.g. `tab-group-state.ts`, `terminal-orphan-cleanup.ts`) over the generic role (`tabs-helpers.ts`, `terminal-utils.ts`). If you find yourself reaching for `helpers`, the file probably has more than one responsibility and should be split, or there's a better name hiding in the code that describes what the functions operate on.
+
 ## GOLDEN RULE: Docs & AGENTS.md
 
 Update corresponding Docs in [CrewCode Docs](/docs/), and [AGENTS.md](/AGENTS.md/) when major changes were made and or every time i add a feature. Create or update docs file for it
+
+## Agent Notes
+
+The context usage meter must prefer the active provider's reported full context
+window over model-catalog metadata and static limits. Codex app-server usage
+reports `modelContextWindow` as an effective prompt budget; when a known full
+model window is larger, show that as the meter denominator and label the Codex
+prompt budget separately. Claude SDK `getContextUsage()` reports the active
+window. Claude occupancy must come from active SDK context categories, not
+cumulative result billing or cache-read counts. Keep static window values as
+fallbacks only. Read Claude context during the active query; if control fails,
+use only the latest individual assistant request's context counts, never
+aggregate result usage. Use SDK category `kind` and full detail for the
+measured Claude meter; summary detail is approximate. See
+`docs/context-usage-meter.md`.
+
+The context popover stays compact. Its Token logs action opens the full
+provider breakdown in a scrollable right sidebar, including for crew chats;
+keep the row data out of the small popover. See `docs/context-usage-meter.md`.
+Codex, OpenCode, Grok, and CrewCoder token logs may show only observed request,
+turn, or session counters. Label them separately from Claude's context categories and never
+present overlapping cache or cumulative counts as additive occupancy. Keep
+Token logs directly reachable when counters exist but no context percentage is
+available; show unknown occupancy instead of a fabricated zero.
+
+Confirmed native auto-compaction must invalidate old context occupancy in the
+bridge, persisted session snapshot, and latest visible usage strip. Refill only
+from a new provider reading; never replay pre-compaction usage at turn end.
+Claude `compact_boundary`, Codex app-server `contextCompaction`, CrewCoder's
+namespaced update, and OpenCode's active-session `session.compacted` are native
+signals. Allow high-water-to-large-drop inference only for providers with an
+observed absolute context reading. See `docs/context-usage-meter.md`.
+
+Plugin panels receive a fixed allowlist of semantic theme tokens from the host through `crewcode:theme` messages. Keep the iframe boundary intact, send updated tokens after theme changes, and document token changes in `docs/plugins.md`.
 
 Git Workspace changed-file rows support stage/unstage controls and a context
 menu for stage, stage-all, unstage, and explicitly confirmed discard actions.
@@ -65,6 +109,16 @@ agent exits, or replies from the L1 cache, L2 transcript hydration, continuity
 reconciliation, startup, or session switching. Preserve global delivery for
 newly appended live errors and active-scope delivery for live agent-exit
 warnings. See `docs/notifications.md`.
+
+Provider questions use the shared `AgentRequestCard` overlay: option buttons for
+choice questions (short Yes/No sets on one row), toggles for multi-select, and an
+input plus send-reply button whenever free text is allowed. Map only structured
+provider requests (Claude `AskUserQuestion` with its implicit "Other", Codex
+`item/tool/requestUserInput`, OpenCode `question`, Pi extension UI, CrewCoder
+clarify reply box); never infer questions from assistant prose. Cancel/empty
+answers are explicit failures, never empty answers, and provider-side resolution
+withdraws the card through the `RequestUserFn` abort signal. See
+`docs/agent-activity-overlay.md`.
 
 Thinking-log headers use the shared outlined thought-bubble icon; keep the
 streaming shimmer and separate disclosure chevron behavior intact.
@@ -315,8 +369,12 @@ optional capability probe into a throwing function. See
 
 Continuity catalogue hydration must merge desktop-only session/tab identities into a
 Brain catalogue without replacing genuine identities the Brain already owns, once
-desktop catalogue authority exists. Until that marker is present, or while the Brain
-still contains transcript-derived recovered rows, Electron reseeds the exact desktop
+desktop catalogue authority exists. An explicit Background Brain enable is a new
+owner-observed handoff: before the enable-triggered reload, seed the exact foreground
+desktop chat/session catalogue even when an older authority marker exists. Reconcile
+the current desktop workspace registry first for matching ids/paths and preserve
+genuine Brain-only/browser-created workspaces. Until that marker is present, or while
+the Brain still contains transcript-derived recovered rows, Electron reseeds the exact desktop
 names, active selection, tab-key order, and per-tab session order; drop unmatched
 recovered navigation rows while preserving transcript shards, and retain genuine
 web-created sessions. If catalogue records are missing, recover only
@@ -503,3 +561,19 @@ CrewCoder Codex turn must not pass that parent turn's private `CODEX_HOME`,
 thread identity, or managed-launch metadata into the standalone usage probe.
 Legacy CrewCoder sessions with an unprefixed `gpt-*` model use the Codex usage
 bucket; current namespaced `provider:model` selections remain authoritative.
+CrewCoder ACP context usage treats `lastInputTokens` as an authoritative live
+measurement, including decreases after native provider compaction. Scope every
+usage snapshot to the ACP prompt that produced it; never replay a prior turn's
+percentage when a later prompt fails or omits usage metadata.
+Provider-native compaction must reach the existing compaction meter. Prefer
+Codex app-server `contextCompaction`/`thread/compacted`, Claude
+`compact_boundary`, and CrewCoder `_crewcoder/compaction_update` boundaries;
+use a verified high-water-to-large-drop usage fallback only when no native
+boundary was observed for that turn, and never render both for one compaction.
+CrewCoder's nested Codex app-server must receive CrewCoder's resolved context
+window and computed auto-compaction limit as process-scoped configuration. Keep
+all built-in GPT-5.6 Sol/Terra/Luna variants at 1.05M with the normal 60%
+boundary (630k); never let app-server's smaller default silently compact first.
+CrewCoder must declare a positive context window for every shipped built-in
+model, disable Claude SDK-native auto-compaction, and treat an ACP provider's
+runtime context-window report as authoritative for threshold recalculation.
