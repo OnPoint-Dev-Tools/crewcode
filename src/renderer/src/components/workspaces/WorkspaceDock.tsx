@@ -324,6 +324,9 @@ interface WorkspaceDockProps {
   open:            boolean
   activeWs?:       Workspace
   onToggle:        () => void
+  onOpenTabs?: () => void
+  tabsOpen?: boolean
+  tabCount?: number
   activeWorktree?: Worktree
   pluginStatusItems?: RegisteredPluginStatusItem[]
   onPluginStatusItem?: (item: RegisteredPluginStatusItem) => void
@@ -361,6 +364,7 @@ export function WorkspaceDock({
   rateLimitStatus = 'ok',
   externalDirectoryCount = 0,
   onManageExternalDirectories,
+  onOpenTabs, tabsOpen = false, tabCount = 0,
 }: WorkspaceDockProps) {
   const sshConnId = connIdForWorkspace(activeWs)
   const [statuses, setStatuses] = useState<Record<string, RemoteConnStatus>>({})
@@ -402,6 +406,16 @@ export function WorkspaceDock({
         )}
       </span>
       <MobileProviderUsage agentId={activeAgentId} providerUsed={providerUsed} providerLimit={providerLimit} />
+      {onOpenTabs && <button
+        type="button"
+        className="ws-dock-tabs"
+        aria-label={`Tabs, ${tabCount} open`}
+        aria-haspopup="dialog"
+        aria-expanded={tabsOpen}
+        onClick={event => { event.stopPropagation(); onOpenTabs() }}
+      >
+        <Icon name="grid" size={16} /><span>Tabs</span><span className="ws-dock-tab-count">{tabCount}</span>
+      </button>}
       <span className="ws-dock-right">
         {pluginStatusItems.map(item => (
           <button

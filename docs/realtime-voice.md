@@ -211,7 +211,7 @@ renderer transport; selection speech remains capped at 4,000 total characters.
 
 ## Audio capture implementation
 
-Microphone capture uses `AudioWorkletNode` for Local voice, one-shot dictation, and xAI Realtime. The shared worklet batches PCM frames off the renderer main thread and transfers them through a message port; a zero-gain sink keeps the graph active without microphone feedback. Do not reintroduce deprecated `ScriptProcessorNode` capture.
+Microphone capture uses `AudioWorkletNode` for Local voice, one-shot dictation, and xAI Realtime. The shared worklet batches PCM frames off the renderer main thread and transfers them through a message port; a zero-gain sink keeps the graph active without microphone feedback. Local voice submits an utterance after five seconds without detected speech; this longer pause window avoids cutting off deliberate pauses while speaking. Do not reintroduce deprecated `ScriptProcessorNode` capture.
 
 ## Installing local voice
 

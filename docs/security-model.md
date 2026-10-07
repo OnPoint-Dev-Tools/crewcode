@@ -49,6 +49,10 @@ must match the request's exact origin or a CLI-configured `--public-origin`.
 Pairing and failed-session attempts use bounded per-peer fixed-window limits. The
 brain still revalidates registered workspace roots for filesystem, Git, PTY, and
 agent operations; transport authentication does not widen filesystem scope.
+With `workspace:read`, the bounded registered-workspace catalogue may include metadata
+for rows outside current Brain roots so desktop and browser navigation keep one
+authoritative project list. Those rows are explicitly marked unavailable; content and
+execution operations still require both registration and an authorized live root.
 
 **Tests:** `remote-access-auth.test.ts`, `remote-access-security.test.ts`, and
 `remote-access-server.test.ts` cover persistence/restart, expiry, revocation,
@@ -97,6 +101,9 @@ and never accepts arbitrary destinations. Browser and Brain then use ephemeral P
 handshake transcript with its enrolled Ed25519 key, and ordered application frames
 use direction-separated HKDF/AES-256-GCM keys. The Hub sees routing metadata and
 handshake public values, but not RPC, source, terminal, prompt, or response plaintext.
+Individual relay frames are capped at the same 8 MiB burst ceiling. Brain preflights
+encoded outbound frames so an oversized RPC result closes only its logical browser
+tunnel instead of causing the Hub to evict the machine relay.
 
 Hub identity still does not grant execution. `crewcode hub --local-brain` enrolls
 the Hub host only after the owner passkey exists, then spawns a sibling Brain;
@@ -109,6 +116,9 @@ stop affected agents/terminals, and remove scopes from existing sessions; additi
 require a fresh ticket and handshake. Each decrypted method must be included in both
 the ticket request and current local grant. The backend revalidates live workspace
 roots for filesystem, Git, PTY, attachments, and agent calls.
+Enabling Electron Background Brain is itself an explicit owner-local authorization
+event: it records exact existing desktop project paths as roots without adding scopes
+or granting a parent directory. Standalone/headless Brain startup remains unchanged.
 
 **Tests:** `hub-server.test.ts` covers CSRF, issue/enroll, local-brain owner gating,
 replay rejection, stale

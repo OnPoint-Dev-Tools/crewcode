@@ -20,6 +20,8 @@ describe('WorkspaceService', () => {
     expect(service.pin(added.workspace!.id, true)).toEqual({ ok: true })
     expect(service.setFolder(added.workspace!.id, 'backend')).toEqual({ ok: true })
     expect(service.list()[0]).toMatchObject({ name: 'renamed', pinned: true, folder: 'backend', path: project })
+    expect(service.listStored()[0]).toMatchObject({ name: 'renamed', pinned: true, folder: 'backend', path: project })
+    expect(service.inspect(added.workspace!.id)).toMatchObject({ name: 'renamed', path: project })
     expect(JSON.parse(readFileSync(join(root, 'state', 'workspaces.json'), 'utf8')).workspaces).toHaveLength(1)
   })
 

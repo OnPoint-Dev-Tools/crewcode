@@ -4714,7 +4714,7 @@ body.dark .has-chat-background .fresh-chat-inner {
   .agent-row > .agent,
   .thinking,
   .wl.wl-compact { min-width: 0; max-width: 100%; }
-  .agent .body { font-size: 12.5px; }
+  .agent .body { font-size: var(--mono-size, 12.5px); }
   .wl-row-file { gap: 4px; }
   .wl-verb { font-size: 10px; }
   .wl-diff-stats { gap: 4px; font-size: 10px; }
@@ -5059,6 +5059,9 @@ body.dark .has-chat-background .fresh-chat-inner {
 }
 .ed-cm-host .cm-editor {
   height: 100%;
+  /* CodeMirror injects its theme after app CSS. Important keeps the live
+     settings variable authoritative without rebuilding the editor view. */
+  font-size: var(--editor-size, 13px) !important;
 }
 .ed-cm-host .cm-scroller {
   scrollbar-gutter: stable;
@@ -7361,7 +7364,7 @@ body.light .writer-prompt-textarea {
 }
 
 /* WindowTabs is a fragment internally. Keep its host transparent so the
-   titlebar and tab strip remain direct flex children of .app at every size. */
+   titlebar and tab strip remain direct flex children of the desktop .app. */
 .window-tabs { display: contents; }
 
 /* ── Mobile web shell ───────────────────────────────────────────── */
@@ -7369,34 +7372,9 @@ body.light .writer-prompt-textarea {
   html, body, #root { overflow: auto; height: auto; min-height: 100dvh; }
   body { background: var(--background); overscroll-behavior-y: contain; }
   .app { height: 100dvh; border: none; border-radius: 0; }
-  .window-tabs {
-    display: block;
-    flex: 0 0 40px;
-    width: 100%;
-    height: 40px;
-    min-height: 0;
-    position: relative;
-    z-index: 80;
-    overflow: visible;
-    transition: flex-basis 180ms cubic-bezier(.2,.8,.2,1), height 180ms cubic-bezier(.2,.8,.2,1);
-  }
-  .window-tabs.mobile-tabs-hidden {
-    flex-basis: 0;
-    height: 0;
-  }
+  /* Mobile tabs live in the dock's on-demand sheet, leaving chat full height. */
+  .window-tabs { display: none; }
   .titlebar { display: none; }
-  .window-tabs > .wintabs {
-    width: 100%;
-    height: 40px;
-    transition: transform 180ms cubic-bezier(.2,.8,.2,1), opacity 130ms ease, visibility 0s linear;
-  }
-  .window-tabs.mobile-tabs-hidden > .wintabs {
-    transform: translateY(-100%);
-    opacity: 0;
-    visibility: hidden;
-    pointer-events: none;
-    transition: transform 180ms cubic-bezier(.2,.8,.2,1), opacity 130ms ease, visibility 0s linear 180ms;
-  }
   .wintabs {
     min-height: 40px;
     flex-shrink: 0;
@@ -7423,7 +7401,7 @@ body.light .writer-prompt-textarea {
   .app-region.drawer-left, .app-region.drawer-right { flex-direction: row; }
   .ws-drawer-backdrop {
     position: fixed;
-    inset: 40px 0 calc(44px + env(safe-area-inset-bottom));
+    inset: 0 0 calc(44px + env(safe-area-inset-bottom));
     z-index: 1090;
     display: block;
     padding: 0;
@@ -7433,7 +7411,7 @@ body.light .writer-prompt-textarea {
   }
   .ws-drawer.side {
     position: fixed;
-    top: 40px;
+    top: 0;
     bottom: calc(44px + env(safe-area-inset-bottom));
     display: block;
     width: min(var(--ws-width), calc(100vw - 44px));
@@ -7480,6 +7458,29 @@ body.light .writer-prompt-textarea {
     padding: 0 10px env(safe-area-inset-bottom);
     gap: 7px;
   }
+  .ws-dock-tabs {
+    display: inline-flex; align-items: center; gap: 6px;
+    flex-shrink: 0; min-height: 44px; padding: 0 8px;
+    border: 0; border-left: 1px solid var(--border);
+    background: transparent; color: var(--foreground); font-size: 13px;
+  }
+  .ws-dock-tab-count { color: var(--muted-foreground); font-size: 12px; }
+  .mobile-window-tabs { padding: 12px 12px calc(16px + env(safe-area-inset-bottom)); }
+  .mobile-tabs-list { display: flex; flex-direction: column; gap: 6px; }
+  .mobile-tab-row { display: flex; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .mobile-tab-row.on { border-color: var(--primary); background: var(--accent); }
+  .mobile-tab-select, .mobile-tabs-new {
+    display: flex; align-items: center; gap: 10px; min-height: 48px;
+    padding: 10px 12px; border: 0; background: transparent;
+    color: var(--foreground); text-align: left; font-size: 14px;
+  }
+  .mobile-tab-select { flex: 1; min-width: 0; }
+  .mobile-tab-select > svg { flex-shrink: 0; }
+  .mobile-tabs-new { width: 100%; margin-bottom: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--card); }
+  .mobile-tab-label { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .mobile-tab-select small { display: block; color: var(--muted-foreground); font-size: 12px; }
+  .mobile-tab-close { flex: 0 0 44px; min-height: 48px; border: 0; border-left: 1px solid var(--border); background: transparent; color: var(--muted-foreground); }
+  .mobile-tab-select:focus-visible, .mobile-tab-close:focus-visible, .mobile-tabs-new:focus-visible, .ws-dock-tabs:focus-visible { outline: 2px solid var(--primary); outline-offset: -3px; }
   .ws-dock-name,
   .ws-dock-sep,
   .ws-dock-right { display: none; }
@@ -7507,7 +7508,7 @@ body.light .writer-prompt-textarea {
   .mobile-git-backdrop,
   .ed-mobile-tree-backdrop {
     position: fixed;
-    inset: 40px 0 calc(44px + env(safe-area-inset-bottom));
+    inset: 0 0 calc(44px + env(safe-area-inset-bottom));
     z-index: var(--z-sheet-backdrop);
     display: block;
     width: 100%;
@@ -7519,7 +7520,7 @@ body.light .writer-prompt-textarea {
   .chat-pane-row > .gs,
   .ed-git-row > .gs {
     position: fixed;
-    top: 40px;
+    top: 0;
     right: 0;
     bottom: calc(44px + env(safe-area-inset-bottom));
     z-index: var(--z-sheet);
@@ -7536,7 +7537,8 @@ body.light .writer-prompt-textarea {
   .composer { width: 100%; min-width: 0; border-radius: 15px; }
   .composer-wrap { padding: 4px 6px calc(4px + env(safe-area-inset-bottom)); }
   .composer-main { padding: 6px 8px; border-radius: 13px; }
-  .composer textarea { min-height: 21px; max-height: 30dvh; padding: 2px 0; font-size: 16px; line-height: 1.3; }
+  /* Preserve iOS's 16px no-zoom floor while still honoring larger chat text. */
+  .composer textarea { min-height: 21px; max-height: 30dvh; padding: 2px 0; font-size: max(16px, var(--mono-size, 13.5px)) !important; line-height: var(--mono-line-height, 1.3); }
   .composer .bar { margin-top: 3px; gap: 5px; }
   .composer .left-bar { flex: 1; gap: 3px; overflow: hidden; }
   .desktop-composer-actions { display: none; }
@@ -7691,7 +7693,7 @@ body.light .writer-prompt-textarea {
   .ed-status::-webkit-scrollbar { display: none; }
   .ed-main > .ft {
     position: fixed;
-    top: 40px;
+    top: 0;
     right: 0;
     bottom: calc(44px + env(safe-area-inset-bottom));
     z-index: var(--z-sheet);
@@ -7855,6 +7857,7 @@ body.light .writer-prompt-textarea {
   .window-tabs,
   .window-tabs > .wintabs { transition: none; }
   .picker-sheet { animation: none; }
+  .sheet, .sheet-backdrop { animation: none !important; transition: none !important; }
 }
 
 @keyframes mobilePickerIn { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }

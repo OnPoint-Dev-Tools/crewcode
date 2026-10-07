@@ -61,7 +61,7 @@ export type CrewLaneStatus =
 // ─── Shapes ──────────────────────────────────────────────────────────────────
 
 /** Reasoning effort level — matches composer/EffortPicker. `null` = inherit. */
-export type CrewLaneEffort = 'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra' | null
+export type CrewLaneEffort = 'off' | 'adaptive' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra' | null
 
 /** Cumulative agent usage attributed to a lane — drives the cost strip. */
 export interface CrewLaneUsage {

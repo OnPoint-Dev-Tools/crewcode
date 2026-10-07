@@ -342,7 +342,7 @@ export async function sendChatSessionPrompt(opts: SendChatSessionPromptArgs): Pr
       kind: 'system',
       time,
       tone: 'info',
-      text: `injected ${pending.length} skill${pending.length === 1 ? '' : 's'} as system prompt · ${pending.map(s => s.title).join(', ')}`,
+      text: `applied ${pending.length} skill${pending.length === 1 ? '' : 's'} via this message · ${pending.map(s => s.title).join(', ')}`,
     }])
   }
 

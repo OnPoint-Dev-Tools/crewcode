@@ -132,6 +132,19 @@ describe('claude bridge mode options', () => {
     expect(queryMock.mock.calls[1][0].options.thinking).toBeUndefined()
   })
 
+  it('leaves effort and thinking unset for Adaptive, including after resuming a session', async () => {
+    const bridge = await createClaudeBridge('/bin/claude', {
+      bridgeId: 'adaptive', provider: 'claude', cwd: '/repo', thinking: 'adaptive',
+      resumeSessionId: 'existing-session',
+    }, vi.fn())
+    await bridge.prompt('hello')
+
+    const options = queryMock.mock.calls[0][0].options
+    expect(options.resume).toBe('existing-session')
+    expect(options).not.toHaveProperty('effort')
+    expect(options).not.toHaveProperty('thinking')
+  })
+
   it('echoes tool input when allowing Claude permission requests', () => {
     const input = { command: 'git status' }
 

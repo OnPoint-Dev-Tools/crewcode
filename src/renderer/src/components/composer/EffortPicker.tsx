@@ -2,7 +2,7 @@ import React from 'react'
 import { Icon } from '../ui/Icon'
 import { PickerSheet } from './PickerSheet'
 
-export type EffortLevel = 'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
+export type EffortLevel = 'off' | 'adaptive' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
 
 export interface EffortRow {
   id: EffortLevel
@@ -26,6 +26,7 @@ const CODEX_ROWS: EffortRow[] = [
 
 const CLAUDE_ROWS: EffortRow[] = [
   { id: 'off',    label: 'off',    sub: 'Off' },
+  { id: 'adaptive', label: 'Adaptive', sub: 'Let Claude Code choose effort from your settings and model defaults' },
   { id: 'low',    label: 'Low',    sub: 'Fast responses with lighter reasoning' },
   { id: 'medium', label: 'Medium', sub: 'Balances speed and reasoning depth for everyday tasks' },
   { id: 'high',   label: 'High',   sub: 'For intelligence-sensitive workloads' },

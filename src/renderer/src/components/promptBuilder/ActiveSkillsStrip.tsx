@@ -7,7 +7,7 @@
  *  - the skill name
  *  - a delivery state dot:
  *      pending (●, amber) → enabled but not yet sent to this session
- *      live    (●, mint)  → already delivered as a system block this session
+ *      live    (●, mint)  → already delivered in a user message this session
  *
  * Click the chip to jump to the skill in Prompt Builder. Click the × to
  * disable the skill globally.
@@ -40,7 +40,7 @@ export function ActiveSkillsStrip({
             key={s.id}
             className={`skill-chip ${live ? 'live' : 'pending'}`}
             title={live
-              ? `${s.title} — injected as system prompt this session`
+              ? `${s.title} — sent with an earlier message this session`
               : `${s.title} — will inject on your next message`}
           >
             <span className="skill-chip-dot" />

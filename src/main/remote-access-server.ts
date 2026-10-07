@@ -20,7 +20,7 @@ import {
   remotePeerKey,
   RemoteAccessRateLimiter,
 } from './remote-access-security'
-import { WorkspaceService } from './workspace-service'
+import { WorkspaceService, type StoredWorkspace } from './workspace-service'
 import { PtyService } from './pty-service'
 import { AgentBridgeService, webConversationKey, type AgentPathResolver } from './agents/bridge-service'
 import { headlessAgentRegistry, listHeadlessAgentModels } from './headless-agent-resolver'
@@ -198,6 +198,31 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
     }
     return resolved
   }
+  const catalogueFallback = (workspace: StoredWorkspace, brainAccess: 'requires-authorization' | 'desktop-only') => ({
+    ...workspace,
+    folder: workspace.folder ?? null,
+    remote: workspace.remote ?? null,
+    branch: null,
+    dirty: 0,
+    status: workspace.kind === 'remote' ? 'idle' : 'error',
+    agents: [],
+    updated: '',
+    projectIconDataUrl: null,
+    brainAccess,
+  })
+  const listWorkspaceCatalogue = () => workspaceService.listStored().map(workspace => {
+    if (workspace.kind === 'remote') return catalogueFallback(workspace, 'desktop-only')
+    try {
+      allowedPath(workspace.path)
+      // Local data URLs can be hundreds of KiB each; relaying several in one
+      // catalogue response would exceed the encrypted Hub frame budget.
+      return { ...workspaceService.inspect(workspace.id)!, projectIconDataUrl: null, brainAccess: 'authorized' as const }
+    } catch {
+      // Registered metadata stays visible so Brain cannot replace the desktop
+      // catalogue, but path contents remain unavailable until explicitly granted.
+      return catalogueFallback(workspace, 'requires-authorization')
+    }
+  })
   const attachmentDirectory = (root: string): string => {
     const crewDirectory = join(root, '.crewcode')
     if (!existsSync(crewDirectory)) mkdirSync(crewDirectory, { mode: 0o700 })
@@ -223,14 +248,14 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
   // carrying that behavior onto the network would expose the whole host filesystem.
   const registeredRoot = (params: Record<string, unknown>): string => {
     const root = allowedPath(params.root)
-    if (!workspaceService.list().some(workspace => workspace.path === root)) {
+    if (!workspaceService.listStored().some(workspace => workspace.path === root)) {
       throw Object.assign(new Error('filesystem root is not a registered workspace'), { remoteCode: 'FORBIDDEN' })
     }
     return root
   }
   const registeredWorkspaceId = (value: unknown): string => {
     const id = String(value ?? '')
-    const workspace = workspaceService.list().find(item => item.id === id)
+    const workspace = workspaceService.listStored().find(item => item.id === id)
     if (!workspace) return id
     try { allowedPath(workspace.path) } catch {
       throw Object.assign(new Error('workspace is outside the server workspace roots'), { remoteCode: 'FORBIDDEN' })
@@ -270,9 +295,7 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
     ['app.buildInfo', () => createAppBuildInfo()],
     ['auth.sessions', () => auth.list()],
     ['auth.revoke', params => ({ revoked: auth.revoke(String(params.sessionId ?? '')) })],
-    ['workspaces.list', () => workspaceService.list().filter(workspace => {
-      try { allowedPath(workspace.path); return true } catch { return false }
-    })],
+    ['workspaces.list', listWorkspaceCatalogue],
     ['workspaces.inspectPath', params => {
       const path = allowedPath(params.path)
       if (!statSync(path).isDirectory()) throw new Error('path is not a directory')

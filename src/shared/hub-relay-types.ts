@@ -2,7 +2,9 @@ import type { CrewCodeRemoteRequest, CrewCodeRemoteResponse } from './remote-acc
 
 export const CREWCODE_HUB_RELAY_PROTOCOL = 'crewcode.hub-relay.v1' as const
 export const HUB_CONNECTION_TICKET_TTL_MS = 60_000
-export const HUB_RELAY_MAX_FRAME_BYTES = 1024 * 1024
+// Keep one frame bounded by the same byte budget the Hub already enforces for
+// a connection burst; encrypted scoped hydration can legitimately exceed 1 MiB.
+export const HUB_RELAY_MAX_FRAME_BYTES = 8 * 1024 * 1024
 export const HUB_RELAY_IDLE_TIMEOUT_MS = 30 * 60_000
 export const HUB_RELAY_ABSOLUTE_TIMEOUT_MS = 8 * 60 * 60_000
 

@@ -19,7 +19,7 @@ const MODE_COPY: Record<Mode, string> = {
 }
 
 const EFFORT_LABEL: Record<EffortLevel, string> = {
-  off: 'Off', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'XHigh', max: 'Max', ultra: 'Ultra',
+  off: 'Off', adaptive: 'Adaptive', low: 'Low', medium: 'Medium', high: 'High', xhigh: 'XHigh', max: 'Max', ultra: 'Ultra',
 }
 
 function shortModel(id: string): string {

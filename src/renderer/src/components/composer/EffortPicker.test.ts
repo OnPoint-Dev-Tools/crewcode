@@ -3,11 +3,16 @@ import { describe, expect, it } from 'vitest'
 import { effortRowsForProvider, providerSupportsEffort } from './EffortPicker'
 
 describe('provider effort options', () => {
-  it('exposes Claude native max effort', () => {
+  it('exposes Claude Adaptive between off and the native effort levels', () => {
     expect(effortRowsForProvider('claude').map(row => row.id)).toEqual([
-      'off', 'low', 'medium', 'high', 'xhigh', 'max',
+      'off', 'adaptive', 'low', 'medium', 'high', 'xhigh', 'max',
     ])
     expect(providerSupportsEffort('claude', 'max')).toBe(true)
+    expect(providerSupportsEffort('claude', 'adaptive')).toBe(true)
+  })
+
+  it.each(['codex', 'crewcoder', 'grok', 'openrouter', 'ollama', 'opencode', 'pi', 'hermes'])('keeps Adaptive out of %s effort choices', provider => {
+    expect(providerSupportsEffort(provider, 'adaptive')).toBe(false)
   })
 
   it('exposes Codex max and ultra without leaking ultra to Claude', () => {

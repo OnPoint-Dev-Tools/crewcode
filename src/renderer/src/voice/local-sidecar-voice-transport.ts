@@ -12,7 +12,7 @@ import { createAudioInputWorklet } from './audio-input-worklet'
 
 const TARGET_RATE = 16_000
 const SPEECH_THRESHOLD = 0.015
-const END_SILENCE_MS = 750
+const END_SILENCE_MS = 5_000
 const MAX_UTTERANCE_MS = 30_000
 const PRE_ROLL_CHUNKS = 4
 const LOCAL_SPEECH_CHUNK_CHARS = 3_900

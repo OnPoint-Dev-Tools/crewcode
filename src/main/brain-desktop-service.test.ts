@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs'
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { describe, expect, it, vi } from 'vitest'
@@ -9,8 +9,9 @@ import {
   removeBrainDesktopConnection,
   writeBrainDesktopConnection,
 } from './brain-desktop-rendezvous'
-import { BrainDesktopService, mergeDesktopWorkspacesIntoBrainRuntime, seedBrainRuntime } from './brain-desktop-service'
+import { authorizeDesktopWorkspacesForBrain, BrainDesktopService, mergeDesktopWorkspacesIntoBrainRuntime, seedBrainRuntime } from './brain-desktop-service'
 import { createMachineIdentity, machineCredentialPath, writeMachineCredential } from './hub-machine-enrollment'
+import { BrainAuthorizationPolicy, brainAuthorizationPolicyPath } from './brain-authorization-policy'
 
 function fixture(): { root: string; desktop: string; brain: string } {
   const root = mkdtempSync(join(tmpdir(), 'crewcode-desktop-brain-'))
@@ -105,26 +106,67 @@ describe('desktop Brain lifecycle', () => {
     } finally { rmSync(root, { recursive: true, force: true }) }
   })
 
-  it('puts current desktop workspaces first while retaining browser-created workspaces on enable', () => {
+  it('uses the current desktop registry without resurrecting older Brain-only workspaces', () => {
     const { root, desktop, brain } = fixture()
     try {
       mkdirSync(join(brain, 'runtime'), { recursive: true })
       writeFileSync(join(desktop, 'workspaces.json'), JSON.stringify({ workspaces: [
-        { id: 'shared', path: '/shared', name: 'Current desktop name' },
-        { id: 'desktop-new', path: '/desktop-new', name: 'Recent desktop workspace' },
+        { id: 'shared', path: '/shared', name: 'Current desktop name', addedAt: 100 },
+        { id: 'desktop-new', path: '/desktop-new', name: 'Recent desktop workspace', addedAt: 200 },
       ] }))
+      utimesSync(join(desktop, 'workspaces.json'), new Date(1_000), new Date(1_000))
       writeFileSync(join(brain, 'runtime', 'workspaces.json'), JSON.stringify({ workspaces: [
-        { id: 'shared', path: '/shared', name: 'Old Brain name' },
-        { id: 'web-new', path: '/web-new', name: 'Browser workspace' },
+        { id: 'shared', path: '/shared', name: 'Old Brain name', addedAt: 100 },
+        { id: 'retired', path: '/retired', name: 'Retired workspace', addedAt: 500 },
+        { id: 'web-new', path: '/web-new', name: 'Browser workspace', addedAt: 1_500 },
       ] }))
 
       mergeDesktopWorkspacesIntoBrainRuntime(desktop, brain)
 
       expect(JSON.parse(readFileSync(join(brain, 'runtime', 'workspaces.json'), 'utf8')).workspaces).toEqual([
-        { id: 'shared', path: '/shared', name: 'Current desktop name' },
-        { id: 'desktop-new', path: '/desktop-new', name: 'Recent desktop workspace' },
-        { id: 'web-new', path: '/web-new', name: 'Browser workspace' },
+        { id: 'shared', path: '/shared', name: 'Current desktop name', addedAt: 100 },
+        { id: 'desktop-new', path: '/desktop-new', name: 'Recent desktop workspace', addedAt: 200 },
+        { id: 'web-new', path: '/web-new', name: 'Browser workspace', addedAt: 1_500 },
       ])
+    } finally { rmSync(root, { recursive: true, force: true }) }
+  })
+
+  it('honors an intentionally empty current desktop registry', () => {
+    const { root, desktop, brain } = fixture()
+    try {
+      mkdirSync(join(brain, 'runtime'), { recursive: true })
+      writeFileSync(join(desktop, 'workspaces.json'), '{"workspaces":[]}')
+      utimesSync(join(desktop, 'workspaces.json'), new Date(2_000), new Date(2_000))
+      writeFileSync(join(brain, 'runtime', 'workspaces.json'), JSON.stringify({ workspaces: [
+        { id: 'retired', path: '/retired', name: 'Retired workspace', addedAt: 500 },
+      ] }))
+
+      mergeDesktopWorkspacesIntoBrainRuntime(desktop, brain)
+
+      expect(JSON.parse(readFileSync(join(brain, 'runtime', 'workspaces.json'), 'utf8')).workspaces).toEqual([])
+    } finally { rmSync(root, { recursive: true, force: true }) }
+  })
+
+  it('auditably authorizes exact current local workspaces without granting scopes or SSH roots', () => {
+    const { root, desktop, brain } = fixture()
+    try {
+      const manualRoot = join(root, 'manual')
+      const currentRoot = join(root, 'current')
+      mkdirSync(manualRoot)
+      mkdirSync(currentRoot)
+      writeFileSync(join(desktop, 'workspaces.json'), JSON.stringify({ workspaces: [
+        { id: 'current', path: currentRoot, kind: 'folder', addedAt: 1 },
+        { id: 'ssh', path: 'ssh://devbox/srv/app', kind: 'remote', addedAt: 2 },
+      ] }))
+      new BrainAuthorizationPolicy(brainAuthorizationPolicyPath(brain), [manualRoot], ['workspace:read'])
+
+      authorizeDesktopWorkspacesForBrain(desktop, brain)
+
+      const policy = new BrainAuthorizationPolicy(brainAuthorizationPolicyPath(brain), [], []).current()
+      expect(policy.roots).toEqual([currentRoot, manualRoot].sort())
+      expect(policy.scopes).toEqual(['workspace:read'])
+      expect(policy.audit.at(-1)).toMatchObject({ userId: 'desktop-background-enable' })
+      expect(JSON.stringify(policy)).not.toContain('ssh://')
     } finally { rmSync(root, { recursive: true, force: true }) }
   })
 

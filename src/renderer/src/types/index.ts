@@ -398,7 +398,7 @@ export interface Session {
   crewcoderMode?: import('../../../shared/crewcoder-types').CrewCoderMode
   /** CrewCoder-native approval policy; defaults to review for older sessions. */
   crewcoderApprovalMode?: import('../../../shared/crewcoder-types').CrewCoderApprovalMode
-  effort:  'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
+  effort:  'off' | 'adaptive' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
   // Ids of MCP servers (from Settings → MCP) this session opts into. Empty by
   // default — MCP is never auto-attached. May be absent on sessions persisted
   // before MCP shipped, so read with `?? []`.
@@ -473,6 +473,7 @@ export interface Session {
 
 export type WorkspaceStatus = 'ready' | 'live' | 'plan' | 'idle' | 'error'
 export type WorkspaceKind   = 'repo' | 'folder' | 'remote'
+export type BrainWorkspaceAccess = 'authorized' | 'requires-authorization' | 'desktop-only'
 
 export interface Worktree {
   id:     string
@@ -534,6 +535,7 @@ export interface Workspace {
   agents:    string[]
   updated:   string
   projectIconDataUrl?: string | null
+  brainAccess?: BrainWorkspaceAccess
   worktrees: Worktree[]
   github:    GitHubStatus | null
 }
@@ -677,6 +679,7 @@ export interface StoredWorkspace {
   agents:  string[]
   updated: string
   projectIconDataUrl?: string | null
+  brainAccess?: BrainWorkspaceAccess
 }
 
 export interface RemoteDirEntry {
@@ -759,7 +762,7 @@ declare global {
         crewcoderMode?: import('../../../shared/crewcoder-types').CrewCoderMode
         crewcoderApprovalMode?: import('../../../shared/crewcoder-types').CrewCoderApprovalMode
         toolPolicy?: 'default' | 'read-only'
-        thinking?:   'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
+        thinking?:   'off' | 'adaptive' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
         apiKey?:     string
         env?:        Record<string, string>
         sessionKey?: string

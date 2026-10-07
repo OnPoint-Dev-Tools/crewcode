@@ -37,6 +37,13 @@ describe('scopeViolation', () => {
 })
 
 describe('authorityOf', () => {
+  it.each(['general', 'crewcoder', 'plugin', 'extension', undefined] as const)('records native approval for %s profile', (profile) => {
+    expect(authorityOf({
+      bridgeId: 'br-1', provider: 'crewcoder', cwd: '/repo', mode: 'build',
+      crewcoderMode: profile, crewcoderApprovalMode: 'full-access',
+    }).crewcoderApprovalMode).toBe('full-access')
+  })
+
   it('snapshots exactly the fields a grant is scoped to', () => {
     expect(authorityOf({
       bridgeId: 'br-1', provider: 'claude', cwd: '/repo', mode: 'full',
