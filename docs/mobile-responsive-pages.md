@@ -5,6 +5,26 @@ treat `≤768px` as mobile. The renderer is shared by direct `crewcode serve` an
 Hub-relayed browser sessions; responsive work must not fork the underlying data
 or privileged client paths.
 
+## Window tabs
+
+On phones, the top window-tab strip is replaced by a **Tabs** button and open-tab
+count in the existing bottom workspace dock. It opens a scrollable bottom sheet
+with the active tab highlighted, observed agent/crew activity, and separate close
+buttons. Pinned tabs stay protected from closing. Selecting a tab dismisses the
+sheet; **New tab** exposes the same built-in and plugin destinations as desktop.
+Escape, the backdrop, the close button, and dragging the handle dismiss the sheet.
+Keyboard focus stays within the sheet and returns to its trigger on dismissal.
+Desktop retains its existing tab strip. Mobile workspace, Git, and file-tree
+overlays start at the top of the viewport without reserving the former 40px strip.
+
+## Typography
+
+Hub/mobile renderers apply the same live chat and Code Editor typography settings
+as desktop. Agent replies and user bubbles consume `--mono-size`; the phone composer
+uses the selected size with a 16px minimum to prevent iOS focus zoom. CodeMirror's
+runtime theme must not override `--editor-size`, including after the editor is already
+mounted. These preferences remain browser-device-local and update without a reload.
+
 ## Code and Git review
 
 - **Code Editor** keeps the code canvas full width. Tabs and status metadata
@@ -21,7 +41,7 @@ or privileged client paths.
   stack above the diff, menus and branch selection use mobile overlay layers,
   and interactive controls/inputs remain touch-sized and iOS-safe.
 - **Changes by turn** becomes a full-screen review surface between the mobile
-  tab bar and workspace dock. With its catalogue visible, turn/file selection
+  viewport top and workspace dock. With its catalogue visible, turn/file selection
   stacks above the diff. Direct changed-file targets keep the catalogue closed
   so the selected Pierre diff receives the full viewport.
 

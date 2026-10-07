@@ -52,8 +52,24 @@ export function WorkspaceRow({ ws, active, onClick, hasWorktrees, expanded, onTo
     setEditing(true)
   }
 
+  const brainLocked = ws.brainAccess === 'requires-authorization' || ws.brainAccess === 'desktop-only'
+  const brainAccessLabel = ws.brainAccess === 'requires-authorization' ? 'AUTHORIZE'
+    : ws.brainAccess === 'desktop-only' ? 'DESKTOP'
+      : null
+  const brainAccessTitle = ws.brainAccess === 'requires-authorization'
+    ? 'Add this project under Settings → Brain Access before opening it in the browser.'
+    : ws.brainAccess === 'desktop-only'
+      ? 'This SSH workspace is available from the desktop app only.'
+      : undefined
+
   return (
-    <button className={`ws-row ws-workspace-row ${active ? 'on' : ''}`} onClick={onClick} onDoubleClick={startEdit}>
+    <button
+      className={`ws-row ws-workspace-row ${active ? 'on' : ''} ${brainLocked ? 'brain-locked' : ''}`}
+      onClick={onClick}
+      onDoubleClick={startEdit}
+      disabled={brainLocked}
+      title={brainAccessTitle}
+    >
       <span className="ws-kind">
         {ws.projectIconDataUrl
           ? <img className="ws-kind-img" src={ws.projectIconDataUrl} alt="" />
@@ -94,7 +110,7 @@ export function WorkspaceRow({ ws, active, onClick, hasWorktrees, expanded, onTo
         )}
         <span className={`ws-status ${ws.kind === 'folder' ? 'ws-status-local' : ''}`}>
           <StatusDot status={agentActivity === 'working' ? 'live' : ws.status} />
-          {ws.kind === 'folder' ? 'LOCAL' : agentActivity === 'working' ? 'live' : ws.status}
+          {brainAccessLabel ?? (ws.kind === 'folder' ? 'LOCAL' : agentActivity === 'working' ? 'live' : ws.status)}
         </span>
         <span className="ws-updated">{ws.updated}</span>
         {hasWorktrees && (

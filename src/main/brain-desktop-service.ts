@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'child_process'
 import { createHash } from 'crypto'
-import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from 'fs'
-import { join } from 'path'
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, statSync, writeFileSync } from 'fs'
+import { join, sep } from 'path'
 import WebSocket from 'ws'
 import type { BrainDesktopConnection, BrainDesktopStatus } from '../shared/brain-desktop-types'
 import { CREWCODE_REMOTE_PROTOCOL_VERSION, type CrewCodeRemoteResponse } from '../shared/remote-access-types'
@@ -14,6 +14,7 @@ import {
 } from './brain-desktop-rendezvous'
 import { defaultBrainDataDir, loadMachineCredentialIfPresent, machineCredentialPath, normalizeHubUrl } from './hub-machine-enrollment'
 import { mergeTranscriptMessages } from './transcript-service'
+import { BrainAuthorizationPolicy, brainAuthorizationPolicyPath } from './brain-authorization-policy'
 
 const START_TIMEOUT_MS = 12_000
 const POLL_MS = 150
@@ -128,43 +129,74 @@ export function seedBrainRuntime(desktopDataDir: string, brainDataDir: string): 
 interface StoredWorkspaceRow {
   id: string
   path: string
+  kind?: unknown
+  addedAt?: unknown
   [key: string]: unknown
 }
 
-function readWorkspaceRows(path: string): StoredWorkspaceRow[] {
-  if (!existsSync(path)) return []
+function readWorkspaceRows(path: string): StoredWorkspaceRow[] | null {
+  if (!existsSync(path)) return null
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf8')) as { workspaces?: unknown }
-    if (!Array.isArray(parsed.workspaces)) return []
-    return parsed.workspaces.filter((row): row is StoredWorkspaceRow => {
+    if (!Array.isArray(parsed.workspaces)) return null
+    const valid = parsed.workspaces.every((row): row is StoredWorkspaceRow => {
       if (!row || typeof row !== 'object') return false
       const candidate = row as { id?: unknown; path?: unknown }
       return typeof candidate.id === 'string' && candidate.id.length > 0
         && typeof candidate.path === 'string' && candidate.path.length > 0
     })
+    return valid ? parsed.workspaces : null
   } catch {
-    return []
+    return null
   }
 }
 
 /** On explicit enable, prefer the current desktop registry while retaining
  * workspaces that were genuinely added through a prior browser session. */
 export function mergeDesktopWorkspacesIntoBrainRuntime(desktopDataDir: string, brainDataDir: string): void {
-  const desktopRows = readWorkspaceRows(join(desktopDataDir, 'workspaces.json'))
-  if (desktopRows.length === 0) return
+  const desktopPath = join(desktopDataDir, 'workspaces.json')
+  const desktopRows = readWorkspaceRows(desktopPath)
+  if (!desktopRows) return
+  const desktopUpdatedAt = statSync(desktopPath).mtimeMs
   const runtimeDir = join(brainDataDir, 'runtime')
   const brainPath = join(runtimeDir, 'workspaces.json')
-  const brainRows = readWorkspaceRows(brainPath)
+  const brainRows = readWorkspaceRows(brainPath) ?? []
   const desktopIds = new Set(desktopRows.map(row => row.id))
   const desktopPaths = new Set(desktopRows.map(row => row.path))
   const merged = [
     ...desktopRows,
-    ...brainRows.filter(row => !desktopIds.has(row.id) && !desktopPaths.has(row.path)),
+    // A newer Brain-only row can be legitimate browser work; older missing rows
+    // were removed from the current desktop registry and must not be resurrected.
+    ...brainRows.filter(row => (
+      !desktopIds.has(row.id)
+      && !desktopPaths.has(row.path)
+      && typeof row.addedAt === 'number'
+      && Number.isFinite(row.addedAt)
+      && row.addedAt > desktopUpdatedAt
+    )),
   ]
   mkdirSync(runtimeDir, { recursive: true, mode: 0o700 })
   const temporary = `${brainPath}.${process.pid}.${Date.now().toString(36)}.tmp`
   writeFileSync(temporary, `${JSON.stringify({ workspaces: merged }, null, 2)}\n`, { encoding: 'utf8', mode: 0o600, flag: 'wx' })
   renameSync(temporary, brainPath)
+}
+
+/** Enabling Background Brain is an explicit local authorization event. Grant
+ * exact registered paths, never a broader parent, and preserve existing scopes. */
+export function authorizeDesktopWorkspacesForBrain(desktopDataDir: string, brainDataDir: string): void {
+  const desktopRows = readWorkspaceRows(join(desktopDataDir, 'workspaces.json'))
+  if (!desktopRows) return
+  const policy = new BrainAuthorizationPolicy(brainAuthorizationPolicyPath(brainDataDir), [], [])
+  const current = policy.current()
+  const roots = [...current.roots]
+  for (const workspace of desktopRows) {
+    if (workspace.kind === 'remote' || !existsSync(workspace.path) || !statSync(workspace.path).isDirectory()) continue
+    const root = realpathSync(workspace.path)
+    if (roots.some(existing => root === existing || root.startsWith(existing + sep))) continue
+    roots.push(root)
+  }
+  if (roots.length === current.roots.length) return
+  policy.update({ roots, scopes: current.scopes, userId: 'desktop-background-enable' })
 }
 
 export class BrainDesktopService {
@@ -244,6 +276,7 @@ export class BrainDesktopService {
     writeBrainDesktopEnabled(this.preferencesPath, enabled)
     if (enabled) {
       mergeDesktopWorkspacesIntoBrainRuntime(this.options.desktopDataDir, this.dataDir)
+      authorizeDesktopWorkspacesForBrain(this.options.desktopDataDir, this.dataDir)
       await this.start()
     }
     return this.status()

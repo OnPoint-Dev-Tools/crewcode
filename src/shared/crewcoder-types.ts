@@ -24,11 +24,6 @@ export function normalizeCrewCoderApprovalMode(value: unknown): CrewCoderApprova
   return isCrewCoderApprovalMode(value) ? value : 'review'
 }
 
-/** Full access must never remain effective when its visible CrewCoder profile is off. */
-export function crewCoderApprovalForProfile(mode: CrewCoderMode | undefined, value: unknown): CrewCoderApprovalMode {
-  return mode === 'crewcoder' ? normalizeCrewCoderApprovalMode(value) : 'review'
-}
-
 /** A concrete CrewCoder profile owns behavior while CrewCode retains Build's approval gate. */
 export function crewCoderProfileLocksExecutionMode(provider: string, mode: CrewCoderMode | undefined): boolean {
   return provider === 'crewcoder' && mode !== undefined

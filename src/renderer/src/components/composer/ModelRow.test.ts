@@ -14,10 +14,9 @@ describe('CrewCoder model-row control', () => {
     expect(crewCoderModesAvailable([crewcoder(true)], 'codex')).toBe(false)
   })
 
-  it('shows native approval only for the concrete CrewCoder profile', () => {
-    expect(crewCoderApprovalAvailable([crewcoder(true)], 'crewcoder', 'crewcoder')).toBe(true)
-    expect(crewCoderApprovalAvailable([crewcoder(true)], 'crewcoder', 'plugin')).toBe(false)
-    expect(crewCoderApprovalAvailable([crewcoder(true)], 'crewcoder', undefined)).toBe(false)
-    expect(crewCoderApprovalAvailable([crewcoder(true)], 'codex', 'crewcoder')).toBe(false)
+  it('shows native approval for the active provider independently of its profile', () => {
+    expect(crewCoderApprovalAvailable([crewcoder(true)], 'crewcoder')).toBe(true)
+    expect(crewCoderApprovalAvailable([crewcoder(false)], 'crewcoder')).toBe(false)
+    expect(crewCoderApprovalAvailable([crewcoder(true)], 'codex')).toBe(false)
   })
 })

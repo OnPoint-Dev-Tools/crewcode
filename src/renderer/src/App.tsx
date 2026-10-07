@@ -82,7 +82,7 @@ import { knownModelIds } from './hooks/useProviderModels'
 import { dockUsageProviderId } from './hooks/dock-usage-provider'
 import { ChatNotifications } from './components/thread/ChatNotifications'
 import { useGlobalShortcuts } from './hooks/useGlobalShortcuts'
-import { useMobileWindowTabsAutoHide } from './hooks/useMobileWindowTabsAutoHide'
+import { MobileWindowTabs } from './components/ui/MobileWindowTabs'
 import { LOCAL_SHORTCUTS, effectiveChord, matchesChord, type ActionId } from './shortcuts'
 import { useTerminalSessions } from './hooks/useTerminalSessions'
 import { useTerminalUnreadSync, useClearPane } from './stores/terminal-unread-store'
@@ -300,10 +300,14 @@ export default function App() {
   // ── Active workspace ─────────────────────────────────────────────────────
   const [activeWs, setActiveWs] = useState<string>(() => settings.onLaunch === 'last session' ? readLastActiveWorkspaceId() : '')
   useEffect(() => {
-    if (activeWs && ws.workspaces.some(w => w.id === activeWs)) return
-    if (ws.workspaces.length === 0) return
+    const available = ws.workspaces.filter(workspace => !workspace.brainAccess || workspace.brainAccess === 'authorized')
+    if (activeWs && available.some(w => w.id === activeWs)) return
+    if (available.length === 0) {
+      if (activeWs) setActiveWs('')
+      return
+    }
     const saved = settings.onLaunch === 'last session' ? readLastActiveWorkspaceId() : ''
-    const restored = saved && ws.workspaces.some(w => w.id === saved) ? saved : ws.workspaces[0].id
+    const restored = saved && available.some(w => w.id === saved) ? saved : available[0].id
     setActiveWs(restored)
   }, [ws.workspaces, activeWs, settings.onLaunch])
 
@@ -338,6 +342,9 @@ export default function App() {
   }, [setGitWidthByTab])
   // ── Mobile shell ──────────────────────────────────────────────────────────
   const mobile = useMobileShell()
+  useEffect(() => {
+    if (!mobile.isMobile) mobile.closeSheet('tabs')
+  }, [mobile.isMobile, mobile.closeSheet])
   const [storedMobileDrawerSide, setMobileDrawerSide] = useLocalStorageJsonState<'left' | 'right'>(MOBILE_DRAWER_SIDE_STORAGE, 'left')
   const mobileDrawerSide = storedMobileDrawerSide === 'right' ? 'right' : 'left'
   // A desktop bottom-drawer preference must never turn into a bottom sheet on
@@ -2376,11 +2383,7 @@ export default function App() {
   // tab and menulet read it through context via MissionControlHost/MenuletHost.
   const [menuletOpen, setMenuletOpen] = useState(false)
   const [systemMonitorOpen, setSystemMonitorOpen] = useState(false)
-  const [windowTabsMenuOpen, setWindowTabsMenuOpen] = useState(false)
-  const windowTabsHidden = useMobileWindowTabsAutoHide({
-    enabled: mobile.isMobile,
-    locked: windowTabsMenuOpen || drawerOpen || menuletOpen || systemMonitorOpen,
-  })
+
   const openMissionControl = useCallback((): void => {
     setMenuletOpen(false)
     handleNewTab('mission')
@@ -3554,6 +3557,20 @@ export default function App() {
             title: 'More',
             content: <MoreSheetContent />
           },
+          tabs: {
+            open: mobile.sheets.tabs?.open ?? false,
+            title: 'Tabs',
+            content: <MobileWindowTabs
+              tabs={displayTabs}
+              activeId={activeTabId}
+              crewTabs={crewTabs}
+              onActivate={id => { setActiveTabId(id); mobile.closeSheet('tabs') }}
+              onClose={handleCloseTab}
+              onNewTab={kind => { handleAppMenuAction({ kind: 'open-tab', tab: kind }); mobile.closeSheet('tabs') }}
+              pluginMenuItems={pluginAddMenuItems}
+              onPluginMenuItem={item => { runPluginActionTarget(item.target, { source: 'plugin-menu' }); mobile.closeSheet('tabs') }}
+            />,
+          },
           'mission-activity': {
             open: mobile.sheets['mission-activity']?.open ?? false,
             title: 'Activity',
@@ -3576,7 +3593,7 @@ export default function App() {
             />
           )}
 
-        <div className={`window-tabs${windowTabsHidden ? ' mobile-tabs-hidden' : ''}`}>
+        {!mobile.isMobile && <div className="window-tabs">
           <WindowTabs
             tabs={displayTabs}
             activeId={activeTabId}
@@ -3597,9 +3614,8 @@ export default function App() {
             onAppMenuAction={handleAppMenuAction}
             pluginMenuItems={pluginAddMenuItems}
             onPluginMenuItem={(item) => runPluginActionTarget(item.target, { source: 'plugin-menu' })}
-            onNewTabMenuOpenChange={setWindowTabsMenuOpen}
           />
-        </div>
+        </div>}
         <NotificationBar
           onNavigateToChat={navigateToChatScope}
           resolveChatSource={voiceNotificationSource}
@@ -3715,7 +3731,10 @@ export default function App() {
       <WorkspaceDock
         open={drawerOpen}
         activeWs={ws.workspaces.find(w => w.id === activeWs)}
-        onToggle={() => setDrawerOpen(o => !o)}
+        onToggle={() => { mobile.closeSheet('tabs'); setDrawerOpen(o => !o) }}
+        onOpenTabs={mobile.isMobile ? () => { setDrawerOpen(false); mobile.onSheetToggle('tabs') } : undefined}
+        tabsOpen={mobile.sheets.tabs?.open ?? false}
+        tabCount={displayTabs.length}
         pluginStatusItems={pluginStatusItems}
         onPluginStatusItem={handlePluginStatusItem}
         activeAgentId={activeAgentId}

@@ -255,18 +255,20 @@ describe('CrewCoder agent modes', () => {
     }))
   })
 
-  it.each(['always', 'never', 'full-access', 'sandboxed'] as const)('passes explicit %s approval to the ACP process', async (approval) => {
-    const harness = crewCoderAcpHarness()
-    spawnAgentProcess.mockResolvedValue({ proc: harness.proc, dir: '/repo', remote: false })
+  describe.each(['general', 'crewcoder', 'plugin', 'extension', undefined] as const)('approval in %s profile', (profile) => {
+    it.each(['review', 'always', 'never', 'full-access', 'sandboxed'] as const)('passes explicit %s approval to the ACP process', async (approval) => {
+      const harness = crewCoderAcpHarness()
+      spawnAgentProcess.mockResolvedValue({ proc: harness.proc, dir: '/repo', remote: false })
 
-    await createCrewCoderBridge('crewcoder', {
-      bridgeId: 'bridge', provider: 'crewcoder', cwd: '/repo', mode: 'build',
-      crewcoderMode: 'crewcoder', crewcoderApprovalMode: approval,
-    }, () => {})
+      await createCrewCoderBridge('crewcoder', {
+        bridgeId: 'bridge', provider: 'crewcoder', cwd: '/repo', mode: 'build',
+        crewcoderMode: profile, crewcoderApprovalMode: approval,
+      }, () => {})
 
-    expect(spawnAgentProcess).toHaveBeenCalledWith(expect.objectContaining({
-      args: ['acp', '--approval', approval, '--mode', 'crewcoder'],
-    }))
+      expect(spawnAgentProcess).toHaveBeenCalledWith(expect.objectContaining({
+        args: ['acp', '--approval', approval, ...(profile ? ['--mode', profile] : [])],
+      }))
+    })
   })
 
   it('defaults invalid persisted input to general at the process boundary', async () => {

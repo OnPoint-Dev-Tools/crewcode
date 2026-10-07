@@ -887,7 +887,7 @@ export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, br
     cwd:        string,
     model?:     string,
     mode?:      ModeLevel,
-    thinking?:  'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra',
+    thinking?:  'off' | 'adaptive' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra',
     toolPolicy?: BridgeToolPolicy,
     sessionKey?: string,
     conversationScopeKey?: string,

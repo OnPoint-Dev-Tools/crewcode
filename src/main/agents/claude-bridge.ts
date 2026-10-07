@@ -948,11 +948,11 @@ export async function createClaudeBridge(
             // Overlay only the resolved auto-compaction scalar; do not replace
             // the rest of the user's Claude settings payload.
             ...(compactionSettings ? { settings: compactionSettings } : {}),
-            // Claude defaults to adaptive thinking, so "off" must disable it
-            // explicitly; named levels map directly to the SDK effort contract.
+            // Adaptive leaves Claude's settings/model resolution intact; it
+            // is a UI choice, not a native SDK effort value. Off disables thinking.
             ...(claudeThinking === 'off'
               ? { thinking: { type: 'disabled' as const } }
-              : claudeThinking
+              : claudeThinking && claudeThinking !== 'adaptive'
                 ? { effort: claudeThinking }
                 : {}),
             permissionMode: mode.permissionMode,

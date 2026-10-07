@@ -17,6 +17,7 @@ function toWorkspace(s: StoredWorkspace, worktrees: Worktree[] = []): Workspace 
     agents:             s.agents,
     updated:            s.updated,
     projectIconDataUrl: s.projectIconDataUrl ?? null,
+    brainAccess:        s.brainAccess,
     worktrees,
     github:             null,
   }
@@ -41,6 +42,7 @@ export function useWorkspaces() {
     // Fetch worktrees for each workspace in parallel; merge as each one resolves so the
     // drawer can show worktrees without the user needing to click refresh.
     await Promise.all(list.map(async (s) => {
+      if (s.brainAccess && s.brainAccess !== 'authorized') return
       try {
         const r = await api.worktreeList(s.path)
         if (r.worktrees) {

@@ -38,7 +38,7 @@ import { useVoiceSessionController } from '../../hooks/useVoiceSessionController
 import { getCrewCodeClient } from '../../runtime/crewcode-client'
 import { isCrewLaneSessionKey } from '../../../../shared/custody-types'
 import { isSessionDrag, readSessionDrag, type SessionDragPayload } from '../thread/session-drag'
-import { crewCoderApprovalForProfile, crewCoderProfileLocksExecutionMode, type CrewCoderApprovalMode, type CrewCoderMode } from '../../../../shared/crewcoder-types'
+import { normalizeCrewCoderApprovalMode, crewCoderProfileLocksExecutionMode, type CrewCoderApprovalMode, type CrewCoderMode } from '../../../../shared/crewcoder-types'
 import { shouldShowChatBackground } from './fresh-chat-background'
 
 type CrewBranchWithMessagesProps = Omit<React.ComponentProps<typeof CrewBranch>, 'messagesByTab'>
@@ -306,9 +306,8 @@ export function ChatPane({
   const model = activeSession?.model ?? ''
   const effort = (activeSession?.effort ?? 'medium') as EffortLevel
   const crewcoderMode = activeSession?.crewcoderMode
-  // Full access is visible and effective only for the concrete CrewCoder
-  // profile; switching profiles must never leave hidden elevated authority.
-  const crewcoderApprovalMode = crewCoderApprovalForProfile(crewcoderMode, activeSession?.crewcoderApprovalMode)
+  // Approval belongs to the provider session, so profile changes retain it.
+  const crewcoderApprovalMode = normalizeCrewCoderApprovalMode(activeSession?.crewcoderApprovalMode)
   const crewCoderProfileActive = crewCoderProfileLocksExecutionMode(activeAgentId, crewcoderMode)
   const modeLevel = crewCoderProfileActive ? 'build' : normalizeModeLevel(activeSession?.mode ?? settingsDefaultMode)
   const composerMode: Mode = MODE_FROM_SETTINGS[modeLevel] ?? 'Build'
@@ -383,7 +382,6 @@ export function ChatPane({
     chatSessions.update(tabId, sessActive, {
       crewcoderMode: nextMode,
       ...(nextMode ? { mode: 'build' as const } : {}),
-      ...(nextMode === 'crewcoder' ? {} : { crewcoderApprovalMode: 'review' as const }),
     })
   }, [tabId, sessActive, chatSessions])
 

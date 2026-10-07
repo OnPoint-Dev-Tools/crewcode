@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { crewCoderApprovalForProfile, crewCoderProfileLocksExecutionMode, normalizeCrewCoderApprovalMode } from './crewcoder-types'
+import { crewCoderProfileLocksExecutionMode, normalizeCrewCoderApprovalMode } from './crewcoder-types'
 
 describe('CrewCoder execution-mode ownership', () => {
   it('locks CrewCode execution mode only for a concrete active CrewCoder profile', () => {
@@ -16,11 +16,5 @@ describe('CrewCoder approval normalization', () => {
     }
     expect(normalizeCrewCoderApprovalMode('unknown')).toBe('review')
     expect(normalizeCrewCoderApprovalMode(undefined)).toBe('review')
-  })
-
-  it('keeps full access effective only while the visible CrewCoder profile is active', () => {
-    expect(crewCoderApprovalForProfile('crewcoder', 'full-access')).toBe('full-access')
-    expect(crewCoderApprovalForProfile('plugin', 'full-access')).toBe('review')
-    expect(crewCoderApprovalForProfile(undefined, 'full-access')).toBe('review')
   })
 })

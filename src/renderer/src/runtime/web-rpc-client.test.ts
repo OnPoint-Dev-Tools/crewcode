@@ -91,6 +91,25 @@ describe('web RPC client', () => {
     }))
   })
 
+  it('preserves Claude Adaptive when starting a browser bridge', async () => {
+    const rpc = vi.fn<(method: string, params: Record<string, unknown>) => void>()
+    const client = createWebCrewCodeClient({
+      rpc: async <T,>(method: string, params: Record<string, unknown>) => {
+        rpc(method, params)
+        return { ok: true } as T
+      },
+      subscribe: () => () => undefined,
+    })
+
+    await client.bridgeStart({
+      bridgeId: 'claude-1', provider: 'claude', cwd: 'ssh://host/repo', thinking: 'adaptive',
+    })
+
+    expect(rpc).toHaveBeenCalledWith('bridge.start', expect.objectContaining({
+      provider: 'claude', cwd: 'ssh://host/repo', thinking: 'adaptive',
+    }))
+  })
+
   it('maps desktop thread keys into the Brain browser conversation namespace', async () => {
     const rpc = vi.fn<(method: string, params: Record<string, unknown>) => void>()
     const client = createWebCrewCodeClient({
@@ -121,6 +140,7 @@ describe('web RPC client', () => {
 
   it('routes Brain-backed Electron work through Brain RPC while keeping native desktop methods', async () => {
     const rpc = vi.fn<(method: string, params: Record<string, unknown>) => void>()
+    const workspacesList = vi.fn(async () => [])
     const local = {
       brainDesktopRpc: async <T,>(method: string, params: Record<string, unknown>) => {
         rpc(method, params)
@@ -128,6 +148,7 @@ describe('web RPC client', () => {
       },
       onBrainDesktopEvent: () => () => undefined,
       minimize: () => undefined,
+      workspacesList,
       agentGetKey: async () => { throw new Error('local key store must not be used') },
     } as unknown as CrewCodeClient
 
@@ -138,7 +159,8 @@ describe('web RPC client', () => {
     client.minimize()
     await client.agentGetKey('codex')
 
-    expect(rpc).toHaveBeenCalledWith('workspaces.list', {})
+    expect(workspacesList).toHaveBeenCalledTimes(1)
+    expect(rpc).not.toHaveBeenCalledWith('workspaces.list', {})
     expect(rpc).toHaveBeenCalledWith('continuity.get', {})
     expect(rpc).toHaveBeenCalledWith('desktop.continuity.seedCatalogue', { values: { 'crewcode:sessionsByTab': '{"chat":[]}' } })
     expect(rpc).toHaveBeenCalledWith('desktop.agent.getKey', { id: 'codex' })
@@ -163,9 +185,9 @@ describe('web RPC client', () => {
     await expect(client.workspacesList()).resolves.toEqual([])
     await expect(client.transcriptsMtimes()).resolves.toEqual({})
 
-    expect(rpc).toHaveBeenCalledWith('workspaces.list', {})
+    expect(localWorkspacesList).toHaveBeenCalledTimes(1)
+    expect(rpc).not.toHaveBeenCalledWith('workspaces.list', {})
     expect(rpc).toHaveBeenCalledWith('transcripts.mtimes', {})
-    expect(localWorkspacesList).not.toHaveBeenCalled()
     expect(localTranscriptsMtimes).not.toHaveBeenCalled()
   })
 

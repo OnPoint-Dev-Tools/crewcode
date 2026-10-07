@@ -566,7 +566,7 @@ function BrainContinuitySection() {
         <div className="ss-row" data-q="brain background web continuity remote conversations workspaces">
           <div>
             <div className="label">Background Brain</div>
-            <div className="help">Make this machine's Brain authoritative for workspaces, conversations, terminals, and agents. Desktop Background Brain and <code>crewcode brain</code> reuse the same saved machine enrollment; switching modes does not require enrolling your phone or machine again. Closing the desktop window leaves web access available; <b>Stop Brain</b> removes that availability.</div>
+            <div className="help">Make this machine's Brain authoritative for workspaces, conversations, terminals, and agents. Enabling grants Brain the exact currently registered local project paths, but does not add execution scopes or expose SSH projects to the browser. Desktop Background Brain and <code>crewcode brain</code> reuse the same saved machine enrollment; switching modes does not require enrolling your phone or machine again. Closing the desktop window leaves web access available; <b>Stop Brain</b> removes that availability.</div>
             <div className="help mono">{status?.running ? 'running · desktop attached' : status?.enabled ? 'enabled · not reachable' : status?.enrolled ? 'ready to enable' : 'Hub enrollment required'}</div>
             {status?.hubBrowserOrigin ? (
               <>
@@ -1076,8 +1076,8 @@ function TypographySection({ state, set }: { state: SettingsState; set: SetSetti
         </div>
         <div className="ss-row" data-q="font size">
           <div>
-            <div className="label">Font size</div>
-            <div className="help">Base size for monospace surfaces.</div>
+            <div className="label">Chat &amp; mono size</div>
+            <div className="help">Message text, composer text, code chips, and other monospace surfaces.</div>
           </div>
           <Slider value={state.fontSize} min={10} max={20} step={0.5} unit="px" onChange={v => set('fontSize', v)} />
         </div>

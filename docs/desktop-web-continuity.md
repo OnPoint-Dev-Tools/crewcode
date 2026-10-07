@@ -81,7 +81,12 @@ session and provider.
 
 Every explicit enable also reconciles the current desktop workspace registry into the
 Brain before attachment: current desktop entries and ordering win for matching ids or
-paths, while genuine browser-created workspaces are retained. Immediately after the
+paths. A Brain-only workspace is retained only when its observed creation time is newer
+than the current desktop registry; older missing entries are treated as intentionally
+removed and are not resurrected. The same explicit local enable auditably adds each
+existing registered local project as an exact Brain authorization root while preserving
+the current scopes; it never grants a broader parent or adds a scope. SSH workspaces
+remain desktop-only. Immediately after the
 Brain attaches, but before Electron reloads, the foreground renderer sends its exact
 current chat/session and workspace-tab catalogue through the owner-loopback desktop
 control. This enable-time handoff supersedes an older persisted authority marker, so a
@@ -97,12 +102,23 @@ After attachment, the Brain store is authoritative for:
 - the workspace-tab and chat-session catalogue needed to find the same threads on
   another client.
 
+Attached Electron continues to read the exact native desktop workspace catalogue so
+Brain attachment cannot hide local or SSH projects. Brain/browser `workspaces.list`
+returns that same registered catalogue after `workspace:read` is granted. Rows outside
+the currently authorized roots remain visible as **Authorize** and SSH rows as
+**Desktop**; they cannot be opened and no filesystem, Git, terminal, or agent operation
+may cross the existing root gate.
+Project icon data remains device-local and is omitted from relayed workspace catalogues
+so several large icons cannot disconnect the Brain during browser startup. Relay frames
+are bounded to the Hub's existing 8 MiB connection-burst budget; Brain rejects an
+oversized result on only the affected logical tunnel before it reaches the Hub.
+
 Each renderer still uses localStorage as a bounded paint/navigation cache. At startup,
 it hydrates the catalogue plus bounded recent tails for active and locally cached
 conversation scopes from the Brain. A cold conversation hydrates its own bounded tail
 when opened. Each remote scope tail is capped at 96 KiB; the 32-scope startup window
 therefore stays below 3 MiB of transcript plaintext and leaves encryption and other
-startup RPCs headroom inside the Hub's shared 8 MiB relay burst. Full shards remain
+startup RPCs headroom inside the Hub's shared 8 MiB relay burst and frame ceiling. Full shards remain
 authoritative on the Brain. The renderer never requests `transcripts.loadAll` over the
 Brain/Hub relay: combining a large transcript store into one encrypted frame can exceed both
 the relay frame limit and the JavaScript string limit. Full per-scope shards remain

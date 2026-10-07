@@ -1,10 +1,11 @@
-import { mkdtempSync, mkdirSync, readFileSync, realpathSync, symlinkSync } from 'fs'
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'fs'
 import { createHash } from 'crypto'
 import { join } from 'path'
 import { tmpdir as osTmpdir } from 'os'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CREWCODE_REMOTE_PROTOCOL_VERSION } from '../shared/remote-access-types'
 import { DESKTOP_CATALOGUE_AUTHORITY_KEY } from '../shared/continuity-state-types'
+import { HUB_RELAY_MAX_FRAME_BYTES } from '../shared/hub-relay-types'
 import { startRemoteAccessServer, type RunningRemoteAccessServer } from './remote-access-server'
 import WebSocket from 'ws'
 
@@ -104,6 +105,47 @@ describe('remote access server', () => {
     expect((await fetch(`${server.url}/api/v1/pair`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: server.pairingToken }) })).status).toBe(401)
     const rpc = await fetch(`${server.url}/api/v1/rpc`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${sessionToken}` }, body: JSON.stringify(envelope) })
     expect(await rpc.json()).toMatchObject({ id: 'one', ok: true, result: [] })
+  })
+
+  it('returns the authoritative registered catalogue without granting unapproved paths', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'crewcode-catalogue-'))
+    const allowed = mkdtempSync(join(tmpdir(), 'crewcode-allowed-'))
+    const blocked = mkdtempSync(join(tmpdir(), 'crewcode-blocked-'))
+    const allowedTwo = join(allowed, 'two')
+    const allowedThree = join(allowed, 'three')
+    mkdirSync(allowedTwo)
+    mkdirSync(allowedThree)
+    writeFileSync(join(allowed, 'icon.png'), Buffer.alloc(512 * 1024))
+    writeFileSync(join(allowedTwo, 'icon.png'), Buffer.alloc(512 * 1024))
+    writeFileSync(join(allowedThree, 'icon.png'), Buffer.alloc(512 * 1024))
+    writeFileSync(join(dataDir, 'workspaces.json'), JSON.stringify({ workspaces: [
+      { id: 'allowed', name: 'Allowed', path: allowed, kind: 'folder', pinned: false, addedAt: 1 },
+      { id: 'allowed-two', name: 'Allowed two', path: allowedTwo, kind: 'folder', pinned: false, addedAt: 2 },
+      { id: 'allowed-three', name: 'Allowed three', path: allowedThree, kind: 'folder', pinned: false, addedAt: 3 },
+      { id: 'blocked', name: 'Blocked', path: blocked, kind: 'folder', pinned: false, addedAt: 2 },
+      { id: 'ssh', name: 'SSH', path: 'ssh://devbox/srv/app', kind: 'remote', pinned: false, addedAt: 3, remote: { host: 'devbox' } },
+    ] }))
+    running = await startRemoteAccessServer({ dataDir, allowedWorkspaceRoots: [allowed] })
+    const pair = await fetch(`${running.url}/api/v1/pair`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: running.pairingToken }) })
+    const { sessionToken } = await pair.json() as { sessionToken: string }
+    const rpc = (id: string, method: string, params: Record<string, unknown>) => fetch(`${running!.url}/api/v1/rpc`, {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${sessionToken}` },
+      body: JSON.stringify({ protocolVersion: 1, id, method, params }),
+    })
+
+    const catalogueText = await (await rpc('list', 'workspaces.list', {})).text()
+    expect(Buffer.byteLength(catalogueText)).toBeLessThan(HUB_RELAY_MAX_FRAME_BYTES)
+    expect(JSON.parse(catalogueText)).toMatchObject({
+      ok: true,
+      result: [
+        { id: 'allowed', brainAccess: 'authorized', projectIconDataUrl: null },
+        { id: 'allowed-two', brainAccess: 'authorized', projectIconDataUrl: null },
+        { id: 'allowed-three', brainAccess: 'authorized', projectIconDataUrl: null },
+        { id: 'blocked', brainAccess: 'requires-authorization' },
+        { id: 'ssh', brainAccess: 'desktop-only' },
+      ],
+    })
+    expect((await rpc('blocked-read', 'fs.readDir', { root: blocked, rel: '' })).status).toBe(403)
   })
 
   it('restricts project onboarding to configured roots and creates projects there', async () => {

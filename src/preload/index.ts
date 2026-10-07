@@ -168,7 +168,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     crewcoderMode?: import('../shared/crewcoder-types').CrewCoderMode
     crewcoderApprovalMode?: import('../shared/crewcoder-types').CrewCoderApprovalMode
     toolPolicy?: 'default' | 'read-only'
-    thinking?:   'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
+    thinking?:   'off' | 'adaptive' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
     apiKey?:     string
     env?:        Record<string, string>
     sessionKey?: string                    // "tabId:agentId" — used to look up the resume id

@@ -89,11 +89,11 @@ describe('chat session effort migration', () => {
     expect(migratePersistedSessions(sessions).tab[0].modePromptsEnabled).toBe(true)
   })
 
-  it('preserves current effort values', () => {
+  it.each(['max', 'adaptive'] as const)('preserves current effort value %s', effort => {
     const sessions = {
       tab: [{
         id: 'tab', tabId: 'tab', label: 'Session', agentId: 'claude', model: '',
-        mode: 'build' as const, effort: 'max' as const, mcpServerIds: [],
+        mode: 'build' as const, effort, mcpServerIds: [],
       }],
     }
 
