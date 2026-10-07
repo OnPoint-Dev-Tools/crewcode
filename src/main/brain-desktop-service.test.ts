@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'fs'
+import { mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { describe, expect, it, vi } from 'vitest'
@@ -163,7 +163,8 @@ describe('desktop Brain lifecycle', () => {
       authorizeDesktopWorkspacesForBrain(desktop, brain)
 
       const policy = new BrainAuthorizationPolicy(brainAuthorizationPolicyPath(brain), [], []).current()
-      expect(policy.roots).toEqual([currentRoot, manualRoot].sort())
+      // Authorization stores canonical roots; macOS temporary paths can alias /private/var.
+      expect(policy.roots).toEqual([currentRoot, manualRoot].map(path => realpathSync(path)).sort())
       expect(policy.scopes).toEqual(['workspace:read'])
       expect(policy.audit.at(-1)).toMatchObject({ userId: 'desktop-background-enable' })
       expect(JSON.stringify(policy)).not.toContain('ssh://')
