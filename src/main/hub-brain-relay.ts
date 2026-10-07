@@ -7,6 +7,7 @@ import {
   type CrewCodeRemoteResponse,
 } from '../shared/remote-access-types'
 import {
+  HUB_RELAY_MAX_FRAME_BYTES,
   type BrainAccessScope,
   type HubRelayControlFrame,
   type HubTunnelPlaintext,
@@ -225,6 +226,10 @@ export async function startBrainRelay(options: BrainRelayOptions): Promise<Runni
       type: 'encrypted', connectionId: session.connectionId, sequence, ciphertext,
     }
     const encoded = JSON.stringify(frame)
+    if (Buffer.byteLength(encoded) > HUB_RELAY_MAX_FRAME_BYTES) {
+      closeForFrameFailure('send oversized', new Error(`encoded frame exceeds ${HUB_RELAY_MAX_FRAME_BYTES} bytes`))
+      return
+    }
     session.outboundSending = true
     activeRelay.send(encoded, error => {
       session.outboundSending = false

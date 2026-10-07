@@ -28,7 +28,7 @@ describe('mobile solo chat layout', () => {
   it('keeps the mobile composer full-width, compact, and prevents iOS input zoom', () => {
     expect(styles).toMatch(/@media \(max-width: 768px\)[\s\S]*?\.composer \{ width: 100%;/)
     expect(styles).toMatch(/\.composer-wrap \{ padding: 4px 6px/)
-    expect(styles).toMatch(/\.composer textarea \{[^}]*font-size: 16px;/)
+    expect(styles).toMatch(/\.composer textarea \{[^}]*font-size: max\(16px, var\(--mono-size, 13\.5px\)\) !important;/)
     expect(styles).toContain('.mobile-composer-action-button,')
     expect(styles).toContain('.mobile-composer-model-button {')
   })

@@ -47,7 +47,7 @@ interface ModelRowProps {
 }
 
 const EFFORT_LABEL: Record<EffortLevel, string> = {
-  off: 'off', low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max', ultra: 'ultra',
+  off: 'off', adaptive: 'Adaptive', low: 'low', medium: 'medium', high: 'high', xhigh: 'xhigh', max: 'max', ultra: 'ultra',
 }
 
 function shortModel(id: string): string {
@@ -67,8 +67,8 @@ export function crewCoderModesAvailable(agents: AgentInfo[], activeAgentId: stri
   return activeAgentId === 'crewcoder' && agents.some(agent => agent.id === 'crewcoder' && agent.available)
 }
 
-export function crewCoderApprovalAvailable(agents: AgentInfo[], activeAgentId: string, mode?: CrewCoderMode): boolean {
-  return crewCoderModesAvailable(agents, activeAgentId) && mode === 'crewcoder'
+export function crewCoderApprovalAvailable(agents: AgentInfo[], activeAgentId: string): boolean {
+  return crewCoderModesAvailable(agents, activeAgentId)
 }
 
 export const ModelRow = forwardRef<ModelRowHandle, ModelRowProps>(function ModelRow({
@@ -123,7 +123,7 @@ export const ModelRow = forwardRef<ModelRowHandle, ModelRowProps>(function Model
 
   const active = agents.find(a => a.id === activeAgentId) ?? agents.find(a => a.available)
   const showCrewCoderModes = crewCoderModesAvailable(agents, activeAgentId)
-  const showCrewCoderApproval = crewCoderApprovalAvailable(agents, activeAgentId, crewcoderMode)
+  const showCrewCoderApproval = crewCoderApprovalAvailable(agents, activeAgentId)
 
   const handleSelectAgent = (id: string) => {
     // Start resolving the next provider immediately so the model picker is warm.

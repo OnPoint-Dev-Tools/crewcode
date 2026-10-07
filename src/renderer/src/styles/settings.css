@@ -161,12 +161,8 @@ body.light .ss-nav-item.on {
 .ss-section {
   margin-bottom: 32px;
   scroll-margin-top: 16px;
-  /* Only the top 1-2 sections are visible on open, but all 11 mount at once.
-     Skip style/layout/paint for off-screen sections so the post-commit render
-     pass doesn't stall (~700ms observed). intrinsic-size keeps the scrollbar +
-     scroll-spy offsets stable before a section has been rendered. */
-  content-visibility: auto;
-  contain-intrinsic-size: auto 480px;
+  /* Sidebar navigation and scroll-spy need real section heights. Off-screen
+     placeholder sizes move the target as smooth scrolling reveals content. */
 }
 .ss-section-h {
   display: flex; align-items: baseline; justify-content: space-between;

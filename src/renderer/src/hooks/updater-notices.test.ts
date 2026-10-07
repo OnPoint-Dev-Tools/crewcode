@@ -3,18 +3,18 @@ import { updaterNoticeForEvent } from './updater-notices'
 
 describe('updaterNoticeForEvent', () => {
   it('announces an available version without requiring Settings to be open', () => {
-    expect(updaterNoticeForEvent({ type: 'available', version: '0.2.4' })).toEqual({
-      key: 'available:0.2.4',
+    expect(updaterNoticeForEvent({ type: 'available', version: '0.2.5' })).toEqual({
+      key: 'available:0.2.5',
       type: 'info',
-      message: 'CrewCode 0.2.4 is available',
+      message: 'CrewCode 0.2.5 is available',
     })
   })
 
   it('announces a downloaded update that still needs a restart', () => {
-    expect(updaterNoticeForEvent({ type: 'downloaded', version: '0.2.4' })).toEqual({
-      key: 'downloaded:0.2.4',
+    expect(updaterNoticeForEvent({ type: 'downloaded', version: '0.2.5' })).toEqual({
+      key: 'downloaded:0.2.5',
       type: 'success',
-      message: 'CrewCode 0.2.4 is ready · restart to install',
+      message: 'CrewCode 0.2.5 is ready · restart to install',
     })
   })
 

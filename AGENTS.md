@@ -24,6 +24,19 @@ Update corresponding Docs in [CrewCode Docs](/docs/), and [AGENTS.md](/AGENTS.md
 
 ## Agent Notes
 
+Mobile window tabs use the bottom workspace dock's Tabs button and an on-demand
+sheet; never reserve a top tab-strip row on phones. Preserve exact tab selection,
+observed activity, pinned-tab close protection, built-in/plugin new-tab actions,
+and dismiss-on-selection. Desktop retains its tab strip. Mobile overlay offsets
+must not reserve the former 40px strip. See `docs/mobile-responsive-pages.md`.
+
+
+Claude effort menus include Off, Adaptive, Low, Medium, High, XHigh, and Max.
+Adaptive is a Claude-only UI selection: omit SDK `effort` and `thinking` so
+Claude Code retains its environment/settings/model resolution. Off explicitly
+disables thinking; named levels pass through as SDK effort values. Keep the
+session, crew, desktop/web, and SSH contracts aligned. See `docs/reasoning-effort.md`.
+
 The context usage meter must prefer the active provider's reported full context
 window over model-catalog metadata and static limits. Codex app-server usage
 reports `modelContextWindow` as an effective prompt budget; when a known full
@@ -374,8 +387,20 @@ Brain catalogue without replacing genuine identities the Brain already owns, onc
 desktop catalogue authority exists. An explicit Background Brain enable is a new
 owner-observed handoff: before the enable-triggered reload, seed the exact foreground
 desktop chat/session catalogue even when an older authority marker exists. Reconcile
-the current desktop workspace registry first for matching ids/paths and preserve
-genuine Brain-only/browser-created workspaces. Until that marker is present, or while
+the current desktop workspace registry first for matching ids/paths. Preserve only
+Brain-only/browser-created workspaces whose observed creation time is newer than the
+desktop registry; never resurrect older entries missing from the current desktop list.
+Treat explicit Background Brain enable as an audited owner-local grant of each exact
+existing registered local project path, preserving scopes and never granting a broader
+parent; standalone Brain remains explicit-root-only and SSH stays desktop-only. Attached
+Electron must read the exact native registry. Brain/browser catalogue reads may expose
+registered metadata outside current roots as locked rows, but every content or execution
+operation still requires the existing scope, registered-workspace, and live-root gates.
+Never relay device-local project icon data in the workspace catalogue. Keep individual
+encrypted Hub frames within the existing 8 MiB connection-burst ceiling and preflight
+Brain output so an oversized RPC result closes only its logical browser tunnel, not the
+machine relay.
+Until that marker is present, or while
 the Brain still contains transcript-derived recovered rows, Electron reseeds the exact desktop
 names, active selection, tab-key order, and per-tab session order; drop unmatched
 recovered navigation rows while preserving transcript shards, and retain genuine
@@ -452,6 +477,12 @@ The composer PromptPicker has separate Prompts and Skills tabs backed by the sha
 
 On phones, Code Editor keeps the code canvas primary and opens its file tree as a dismissible right overlay. Git Sidebar must remain the same stateful surface on desktop and mobile, becoming an off-canvas panel with backdrop/close controls instead of being hidden or squeezing chat/editor content. Changes by turn is a full-screen mobile review: its catalogue stacks above the diff when open, while a targeted changed-file route keeps the catalogue closed. Keep all JS/CSS decisions aligned at `≤768px`; see `docs/mobile-responsive-pages.md`.
 
+Mobile/Hub typography must honor the live chat `--mono-size` and CodeMirror
+`--editor-size` settings. Keep the composer at `max(16px, --mono-size)` to prevent
+iOS focus zoom without blocking larger user-selected text, and keep the editor size
+authoritative over CodeMirror's runtime-injected theme. See
+`docs/mobile-responsive-pages.md`.
+
 The Code Editor file tree is lazy and must expose dependency, build-output, cache,
 and workspace-local Python environment folders on demand for local and SSH roots.
 Keep `.git` and `.DS_Store` hidden from direct browsing. Do not widen bounded
@@ -502,7 +533,7 @@ CrewCoder `crew-tasks` activity remains provider-owned and optional. Preserve th
 
 YuHeard PTY integration must remain bundle-safe. `PtyService` receives the active YuHeard server through an injected accessor and statically imports its shell-wrapper helpers; do not use runtime relative `require('./yuheard-*')` calls from PTY code because electron-vite can move that code into a chunk without emitting the required sibling modules. CLI launch, initial TUI paint, and prompt submission are not completed turns. Codex must use only its exact `approval-requested` and `agent-turn-complete` hook events—never generic PTY idle/BEL heuristics—while output fallback detection remains available for agents without an exact hook. Suppress every YuHeard surface only when the exact completing terminal owns keyboard focus in the focused CrewCode window; a different pane must still alert. See `docs/yuheard.md`.
 
-CrewCoder agent profiles are separate from CrewCode execution modes. Show the desktop model-row profile picker only when the installed CrewCoder provider is active; disable it during a running turn, persist the optional session-scoped `crewcoderMode`, omit `--mode` for Configured default, and pass only `general | crewcoder | plugin | extension` to `crewcoder acp --mode`. A concrete profile locks the underlying CrewCode permission policy to Build and disables Ask/Plan/Build/Full on desktop and phone; Configured default re-enables those controls. Never retain a hidden prior Ask, Plan, or Full Access policy under a concrete profile. When the concrete `crewcoder` profile is active, show the separate desktop approval picker and persist `crewcoderApprovalMode`; expose only CrewCoder's `review`, `always`, `never`, `full-access`, and `sandboxed` values, with `review` as the fail-closed default. Treat approval changes as immutable launch authority: disable them during a running turn, drop only the idle bridge, include the value in custody, and native-resume on the next prompt. Never suppresses prompts but continues to block dangerous calls; Sandboxed applies the native sandbox policy where supported; Full access bypasses CrewCoder approval requests and dangerous-command blocking, so label that risk truthfully and never imply CrewCode Build still interposes. Never route Ask/Plan/Build/Full into CrewCoder's `--mode`. The `crewcoder` profile's plan gate is CrewCoder-owned: project `crewcoder_clarify` / `crewcoder_propose_plan` into the activity overlay and send `/approve-plan` as a prompt, never as a tool-permission Allow/Deny. See `docs/crewcoder-provider.md`.
+CrewCoder agent profiles are separate from CrewCode execution modes. Show the desktop model-row profile picker only when the installed CrewCoder provider is active; disable it during a running turn, persist the optional session-scoped `crewcoderMode`, omit `--mode` for Configured default, and pass only `general | crewcoder | plugin | extension` to `crewcoder acp --mode`. A concrete profile locks the underlying CrewCode permission policy to Build and disables Ask/Plan/Build/Full on desktop and phone; Configured default re-enables those controls. Never retain a hidden prior Ask, Plan, or Full Access policy under a concrete profile. When the installed CrewCoder provider is active, show the separate desktop approval picker across general, crewcoder, plugin, extension, and Configured default; persist `crewcoderApprovalMode` independently of profile changes and honor it at launch in every profile; expose only CrewCoder's `review`, `always`, `never`, `full-access`, and `sandboxed` values, with `review` as the fail-closed default. Treat approval changes as immutable launch authority: disable them during a running turn, drop only the idle bridge, include the value in custody, and native-resume on the next prompt. Never suppresses prompts but continues to block dangerous calls; Sandboxed applies the native sandbox policy where supported; Full access bypasses CrewCoder approval requests and dangerous-command blocking, so label that risk truthfully and never imply CrewCode Build still interposes. Never route Ask/Plan/Build/Full into CrewCoder's `--mode`. The `crewcoder` profile's plan gate is CrewCoder-owned: project `crewcoder_clarify` / `crewcoder_propose_plan` into the activity overlay and send `/approve-plan` as a prompt, never as a tool-permission Allow/Deny. See `docs/crewcoder-provider.md`.
 
 CrewCoder manual compaction is capability-gated. Expose the bridge `compact()` path only after observing exact `initialize._meta["crewcoder/sessionCompact"].method === "session/compact"`; older CrewCoder versions retain summary-reset. Call the advertised method only while idle and keep CrewCoder's durable session id and ACP child after success. Use the returned summary to replace CrewCode's replay shard and add the visible compact-summary card while retaining the full rich display transcript. Treat `_crewcoder/compaction_update` as authoritative, never infer a duplicate from usage, never fabricate a turn for idle progress, and do not clear usage/replay when the provider reports a skipped compact. See `docs/crewcoder-provider.md` and `docs/conversation-storage.md`.
 

@@ -18,7 +18,7 @@ export interface WindowTabPluginMenuItem {
   target: { pluginId: string; sidebarPanel?: string; tab?: string; command?: string }
 }
 
-interface WindowTab extends Tab {
+export interface WindowTab extends Tab {
   displayIconProviderId?: string
   agentActivity?: AgentActivityState
 }
@@ -50,7 +50,7 @@ interface WindowTabsProps {
   onNewTabMenuOpenChange?: (open: boolean) => void
 }
 
-const TAB_ICONS: Record<TabKind, string> = {
+export const TAB_ICONS: Record<TabKind, string> = {
   chat: 'threads', crew: 'crew', canvas: 'grid', git: 'gitBranch', code: 'code', writer: 'edit', terminal: 'terminal',
   browser: 'globe', settings: 'settings', plugins: 'plug', prompts: 'sparkle', mission: 'grid', archive: 'archive', plugin: 'grid',
 }

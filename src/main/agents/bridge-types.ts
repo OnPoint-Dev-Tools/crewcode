@@ -131,7 +131,7 @@ export type BridgeEvent =
   // at the next turn instead. Not a violation — the deferral IS the enforcement.
   | { type: 'custody_deferred'; bridgeId: string; message: string }
 
-export type EffortLevel = 'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
+export type EffortLevel = 'off' | 'adaptive' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
 export type { ModeLevel } from '../../shared/mode-types'
 export type BridgeToolPolicy = 'default' | 'read-only'
 

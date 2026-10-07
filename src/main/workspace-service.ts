@@ -360,6 +360,20 @@ export class WorkspaceService {
     return readStore(this.storeFilePath).workspaces.map(enrich)
   }
 
+  /** Catalogue metadata is safe to inspect before any filesystem authority is
+   * granted; callers must still gate every operation that touches a path. */
+  listStored(): StoredWorkspace[] {
+    return readStore(this.storeFilePath).workspaces.map(workspace => ({
+      ...workspace,
+      remote: workspace.remote ? { ...workspace.remote } : workspace.remote,
+    }))
+  }
+
+  inspect(id: string): EnrichedWorkspace | null {
+    const workspace = readStore(this.storeFilePath).workspaces.find(item => item.id === id)
+    return workspace ? enrich(workspace) : null
+  }
+
   add(absPath: string): { ok?: boolean; error?: string; workspace?: EnrichedWorkspace } {
     if (!absPath) return { error: 'no path' }
     if (!existsSync(absPath)) return { error: `path does not exist: ${absPath}` }

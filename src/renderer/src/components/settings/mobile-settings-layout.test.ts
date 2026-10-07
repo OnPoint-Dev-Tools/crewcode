@@ -9,11 +9,11 @@ const mobileSettings = settingsStyles.slice(settingsStyles.indexOf('/* ---------
 const mobileApp = appStyles.slice(appStyles.indexOf('@media (max-width: 768px)'))
 
 describe('mobile Settings layout', () => {
-  it('removes the mobile titlebar while retaining the tab strip', () => {
+  it('removes the mobile titlebar and tab strip without leaving drawer offsets', () => {
     expect(mobileApp).toContain('.titlebar { display: none; }')
-    expect(mobileApp).toContain('.wintabs {')
-    expect(mobileApp).not.toContain('.wintabs { display: none; }')
-    expect(mobileApp).toContain('top: 40px;')
+    expect(mobileApp).toContain('.window-tabs { display: none; }')
+    expect(mobileApp).not.toContain('top: 40px;')
+    expect(mobileApp).toContain('inset: 0 0 calc(44px + env(safe-area-inset-bottom));')
   })
 
   it('turns Settings into a stacked layout with horizontally scrollable categories', () => {

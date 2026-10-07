@@ -465,7 +465,7 @@ export function createWebCrewCodeClient(sessionOrTransport: string | WebClientTr
 }
 
 const BRAIN_BACKED_METHODS = new Set([
-  'workspacesList', 'workspacesAdd', 'workspacesRemove', 'workspacesPin', 'workspacesRename', 'workspacesSetFolder',
+  'workspacesAdd', 'workspacesRemove', 'workspacesPin', 'workspacesRename', 'workspacesSetFolder',
   'workspacesCloneRepo', 'workspacesInitProject',
   'agentRegistry', 'agentListModels',
   'transcriptsLoadAll', 'transcriptsLoad', 'transcriptsCatalogue', 'transcriptsMtimes', 'transcriptsSave', 'transcriptsRemove', 'transcriptsSaveSyncBatch',
@@ -488,7 +488,8 @@ const BRAIN_BACKED_METHODS = new Set([
 /**
  * Electron keeps native window/picker/updater integrations while all durable
  * workspace, transcript, terminal, and agent work crosses the same Brain
- * boundary used by the web client.
+ * boundary used by the web client. Its workspace catalogue remains the exact
+ * desktop registry so attaching Brain cannot hide local or SSH projects.
  */
 export function createBrainAttachedCrewCodeClient(local: CrewCodeClient): CrewCodeClient {
   const transport: WebClientTransport = {

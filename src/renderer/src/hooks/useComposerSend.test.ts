@@ -126,6 +126,21 @@ describe('useComposerSend session continuity', () => {
     h.unmount()
   })
 
+  it.each(['general', 'crewcoder', 'plugin', 'extension', undefined] as const)('restarts the same CrewCoder session when approval changes in %s profile', (profile) => {
+    const crewcoder = { ...agent, id: 'crewcoder', name: 'CrewCoder' }
+    const opts = makeOpts({
+      agents: [crewcoder], activeAgentId: 'crewcoder', crewcoderMode: profile,
+      crewcoderApprovalMode: 'review',
+    })
+    const h = renderHook(useComposerSend, opts)
+
+    h.rerender({ ...opts, crewcoderApprovalMode: 'full-access' })
+
+    expect(opts.bridges.dropBridge).toHaveBeenCalledOnce()
+    expect(opts.bridges.dropBridge).toHaveBeenCalledWith('sess-1', 'crewcoder')
+    h.unmount()
+  })
+
   it('records activity when a prompt is sent', async () => {
     const onSessionUsed = vi.fn()
     const opts = makeOpts({ onSessionUsed })

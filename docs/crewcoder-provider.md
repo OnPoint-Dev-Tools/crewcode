@@ -2,7 +2,7 @@
 
 CrewCoder is a first-class CrewCode chat and Crew provider implemented by
 `src/main/agents/crewcoder-bridge.ts`. CrewCode is the ACP **client**: it spawns
-`crewcoder acp --approval review`, optionally adding a selected CrewCoder
+`crewcoder acp --approval <policy>` (defaulting to `review`), optionally adding a selected CrewCoder
 `--mode`, and translates newline-delimited JSON-RPC 2.0 onto the shared
 `AgentBridge` event stream. CrewCoder remains the ACP agent.
 
@@ -36,8 +36,9 @@ a turn is running so authority cannot change underneath live execution. It
 stays absent for unavailable or inactive providers and from the phone layout,
 where the desktop model-row reveal itself is intentionally hidden.
 
-When the concrete **CrewCoder** profile is selected, the row also shows a
-session-scoped approval picker with all native policies:
+When CrewCoder is the active installed provider, the row also shows a
+session-scoped approval picker for **General**, **CrewCoder**, **Plugin**,
+**Extension**, and **Configured default**, with all native policies:
 
 - **Review** (`review`) lets safe calls proceed and asks for mutations and dangerous calls.
 - **Always** (`always`) asks for every non-safe call.
@@ -45,6 +46,7 @@ session-scoped approval picker with all native policies:
 - **Full access** (`full-access`) accepts calls without prompts.
 - **Sandboxed** (`sandboxed`) shows no prompts and runs non-dangerous calls through the sandbox policy where supported.
 
+The selected policy survives profile changes, including Configured default.
 Older or invalid persisted values fail closed to Review. Changing the policy
 drops only the idle CrewCoder bridge and native-resumes it on the next prompt;
 both controls are disabled during a running turn. Full access is an explicit
@@ -219,8 +221,10 @@ CrewCoder TUI, including active → pending → completed ordering.
 
 ## Mode and permission enforcement
 
-CrewCoder always starts with `--approval review`; CrewCode applies the current
-composer mode when each `session/request_permission` arrives:
+CrewCoder starts with the session's selected `--approval` policy in every agent
+profile, defaulting to `review`. CrewCode applies the current composer mode
+when a `session/request_permission` arrives; policies that emit no request
+bypass this permission overlay:
 
 | CrewCode mode | Decision |
 | --- | --- |
