@@ -10,7 +10,7 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    include: ['src/**/*.{test,integration.test}.ts'],
+    include: ['src/**/*.{test,integration.test}.{ts,tsx}'],
     // Real-git integration tests shell out to git in temp repos — give them room.
     testTimeout: 20_000,
   },

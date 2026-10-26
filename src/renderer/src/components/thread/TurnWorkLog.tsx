@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { Icon, IconName } from '../ui/Icon'
 import { PierreDiff } from '../diff/PierreDiff'
 import { CodeBlock } from '../code/CodeBlock'
@@ -78,6 +78,8 @@ export interface Diagnostic {
 }
 
 export interface WorkLogRow {
+  /** Observed file-change evidence also classifies shell or generic tool calls. */
+  modifiesFiles?: boolean
   kind:    WorkLogRowKind
   title?:  string
   label:   string
@@ -114,6 +116,9 @@ export interface WorkLogChangedFile {
 interface TurnWorkLogProps {
   rows:    WorkLogRow[]
   live:    boolean
+  separateFileCalls?: boolean
+  turnActive?: boolean
+  collapsedByDefault?: boolean
   total?:  number
   /** Unique files changed during a completed turn, shown below its tool rows. */
   changedFiles?: WorkLogChangedFile[]
@@ -325,17 +330,88 @@ function RowTitle({ row, onOpenFile }: RowTitleProps): React.ReactElement {
   )
 }
 
-export function TurnWorkLog({ rows, live, total, changedFiles = [], onOpenFile, onOpenChangedFile }: TurnWorkLogProps) {
-  // Keep the consolidated turn summary visible when it lands immediately before
-  // the final response; users can still collapse it from the header.
-  const [open, setOpen] = useState(true)
+export function TurnWorkLog({ rows, live, total, separateFileCalls = false, turnActive = live, collapsedByDefault = false, changedFiles = [], onOpenFile, onOpenChangedFile }: TurnWorkLogProps) {
+  const [open, setOpen] = useState(!collapsedByDefault)
+  // Keep solo tool logs closed by default; manual disclosure lasts until turn end.
+  useEffect(() => {
+    if (collapsedByDefault && !turnActive) setOpen(false)
+  }, [collapsedByDefault, turnActive])
   const [expanded, setExpanded] = useState<Record<number, boolean>>(() => {
     // TodoWrite is a primary progress surface, so show it immediately in chat.
     return Object.fromEntries(rows.map((row, i) => [i, row.kind === 'todowrite']))
   })
 
+  const [sectionsOpen, setSectionsOpen] = useState({ files: turnActive, tools: turnActive })
+  useEffect(() => {
+    if (separateFileCalls) setSectionsOpen({ files: turnActive, tools: turnActive })
+  }, [separateFileCalls, turnActive])
+  // Preserve source indices when partitioning so row disclosure follows its tool.
+  const entries = rows.map((row, i) => ({ row, i }))
+  const sections = [
+    { id: 'files' as const, label: 'File changes', entries: entries.filter(({ row }) => row.modifiesFiles ?? ['edit', 'write', 'patch'].includes(row.kind)) },
+    { id: 'tools' as const, label: 'Other tools', entries: entries.filter(({ row }) => !(row.modifiesFiles ?? ['edit', 'write', 'patch'].includes(row.kind))) },
+  ]
+
   const count = total ?? rows.length
   const hasError = rows.some(row => row.status === 'error' || row.kind === 'error')
+
+  const renderRow = (row: WorkLogRow, i: number) => {
+    const isErr = row.status === 'error' || row.kind === 'error'
+    const canExpand = hasExpandableBody(row)
+    const showBody = expanded[i] && canExpand
+    const status: WorkLogRowStatus = row.status ?? 'done'
+    const hasInlineDiagnostics = (row.diagnostics?.length ?? 0) > 0
+
+    return (
+      <div
+        key={i}
+        className="min-w-0 [animation:cc-fade-up_240ms_cubic-bezier(0.23,1,0.32,1)_both]"
+      >
+        <div
+          role={canExpand ? 'button' : undefined}
+          tabIndex={canExpand ? 0 : undefined}
+          aria-expanded={canExpand ? showBody : undefined}
+          onClick={() => canExpand && setExpanded(current => ({ ...current, [i]: !current[i] }))}
+          onKeyDown={(event) => {
+            if (event.currentTarget !== event.target || !canExpand || (event.key !== 'Enter' && event.key !== ' ')) return
+            event.preventDefault()
+            setExpanded(current => ({ ...current, [i]: !current[i] }))
+          }}
+          className={`group -mx-[3px] flex min-h-7 w-[calc(100%+6px)] min-w-0 items-center gap-2 rounded-md px-[3px] py-1 text-left transition-colors duration-150 focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1 focus-visible:outline-cc-accent ${canExpand ? 'cursor-pointer hover:bg-cc-hover' : ''} ${isErr ? 'text-cc-danger' : ''}`}
+        >
+          <span className="relative flex size-4 shrink-0 items-center justify-center text-cc-muted">
+            <span className={`transition-opacity duration-150 ${canExpand ? 'group-hover:opacity-0' : ''} ${showBody ? 'opacity-0' : ''}`}>
+              <Icon name={rowIconName(row.kind)} size={13} />
+            </span>
+            {canExpand && (
+              <span
+                className={`absolute inline-flex transition-[opacity,transform] duration-150 group-hover:opacity-100 ${showBody ? 'opacity-100' : 'opacity-0'}`}
+                style={{ transform: showBody ? 'rotate(0deg)' : 'rotate(-90deg)' }}
+              >
+                <Icon name="chevDown" size={12} />
+              </span>
+            )}
+          </span>
+          <RowTitle row={row} onOpenFile={onOpenFile} />
+          <span
+            className={`wl-row-status wl-row-status-${status}`}
+            role="img"
+            aria-label={status}
+            title={status}
+          >
+            <Icon name={STATUS_ICON[status]} size={12} />
+          </span>
+        </div>
+
+        {hasInlineDiagnostics && <DiagnosticsList items={row.diagnostics!} />}
+        {showBody && (
+          <div className="ml-2 min-w-0 border-l border-cc-line py-1 pl-3 sm:ml-2.5 sm:pl-3.5">
+            <RowBody row={row} />
+          </div>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div className="wl wl-compact">
@@ -343,7 +419,7 @@ export function TurnWorkLog({ rows, live, total, changedFiles = [], onOpenFile, 
         type="button"
         aria-expanded={open}
         onClick={() => setOpen(current => !current)}
-        className="-mx-1.5 flex max-w-[calc(100%+0.75rem)] cursor-pointer appearance-none items-center gap-1.5 rounded-md border-0 bg-transparent px-1.5 py-1 text-left font-mono text-[12px] text-cc-muted transition-colors duration-150 hover:bg-cc-hover hover:text-cc-ink focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-cc-accent sm:text-[12.5px]"
+        className={`${collapsedByDefault ? 'solo-turn-log-header ' : ''}-mx-1.5 flex max-w-[calc(100%+0.75rem)] cursor-pointer appearance-none items-center gap-1.5 rounded-md border-0 bg-transparent px-1.5 py-1 text-left font-mono text-[12px] text-cc-muted transition-colors duration-150 hover:bg-cc-hover hover:text-cc-ink focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-cc-accent sm:text-[12.5px]`}
       >
         <svg
           width="13"
@@ -395,63 +471,25 @@ export function TurnWorkLog({ rows, live, total, changedFiles = [], onOpenFile, 
       >
         <div className="min-h-0 overflow-hidden">
           <div className="mt-1.5 flex min-w-0 flex-col gap-1 pb-1">
-            {rows.map((row, i) => {
-              const isErr = row.status === 'error' || row.kind === 'error'
-              const canExpand = hasExpandableBody(row)
-              const showBody = expanded[i] && canExpand
-              const status: WorkLogRowStatus = row.status ?? 'done'
-              const hasInlineDiagnostics = (row.diagnostics?.length ?? 0) > 0
-
-              return (
-                <div
-                  key={i}
-                  className="min-w-0 [animation:cc-fade-up_240ms_cubic-bezier(0.23,1,0.32,1)_both]"
+            {separateFileCalls ? sections.filter(section => section.entries.length > 0).map(section => (
+              <div key={section.id} data-worklog-section={section.id} className="min-w-0">
+                <button
+                  type="button"
+                  aria-expanded={sectionsOpen[section.id]}
+                  onClick={() => setSectionsOpen(current => ({ ...current, [section.id]: !current[section.id] }))}
+                  className="flex max-w-full cursor-pointer items-center gap-1.5 rounded-md border-0 bg-transparent px-1 py-1 text-left font-[inherit] text-[12px] text-cc-muted hover:bg-cc-hover hover:text-cc-ink focus-visible:outline focus-visible:outline-1 focus-visible:outline-cc-accent"
                 >
-                  <div
-                    role={canExpand ? 'button' : undefined}
-                    tabIndex={canExpand ? 0 : undefined}
-                    aria-expanded={canExpand ? showBody : undefined}
-                    onClick={() => canExpand && setExpanded(current => ({ ...current, [i]: !current[i] }))}
-                    onKeyDown={(event) => {
-                      if (event.currentTarget !== event.target || !canExpand || (event.key !== 'Enter' && event.key !== ' ')) return
-                      event.preventDefault()
-                      setExpanded(current => ({ ...current, [i]: !current[i] }))
-                    }}
-                    className={`group -mx-[3px] flex min-h-7 w-[calc(100%+6px)] min-w-0 items-center gap-2 rounded-md px-[3px] py-1 text-left transition-colors duration-150 focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-1 focus-visible:outline-cc-accent ${canExpand ? 'cursor-pointer hover:bg-cc-hover' : ''} ${isErr ? 'text-cc-danger' : ''}`}
-                  >
-                    <span className="relative flex size-4 shrink-0 items-center justify-center text-cc-muted">
-                      <span className={`transition-opacity duration-150 ${canExpand ? 'group-hover:opacity-0' : ''} ${showBody ? 'opacity-0' : ''}`}>
-                        <Icon name={rowIconName(row.kind)} size={13} />
-                      </span>
-                      {canExpand && (
-                        <span
-                          className={`absolute inline-flex transition-[opacity,transform] duration-150 group-hover:opacity-100 ${showBody ? 'opacity-100' : 'opacity-0'}`}
-                          style={{ transform: showBody ? 'rotate(0deg)' : 'rotate(-90deg)' }}
-                        >
-                          <Icon name="chevDown" size={12} />
-                        </span>
-                      )}
-                    </span>
-                    <RowTitle row={row} onOpenFile={onOpenFile} />
-                    <span
-                      className={`wl-row-status wl-row-status-${status}`}
-                      role="img"
-                      aria-label={status}
-                      title={status}
-                    >
-                      <Icon name={STATUS_ICON[status]} size={12} />
-                    </span>
-                  </div>
-
-                  {hasInlineDiagnostics && <DiagnosticsList items={row.diagnostics!} />}
-                  {showBody && (
-                    <div className="ml-2 min-w-0 border-l border-cc-line py-1 pl-3 sm:ml-2.5 sm:pl-3.5">
-                      <RowBody row={row} />
-                    </div>
-                  )}
+                  <span aria-hidden="true" style={{ transform: sectionsOpen[section.id] ? 'rotate(0deg)' : 'rotate(-90deg)' }}>
+                    <Icon name="chevDown" size={12} />
+                  </span>
+                  <span>{section.label}</span>
+                  <span className="tabular-nums">({section.entries.length})</span>
+                </button>
+                <div hidden={!sectionsOpen[section.id]} className="min-w-0 pl-3">
+                  {section.entries.map(({ row, i }) => renderRow(row, i))}
                 </div>
-              )
-            })}
+              </div>
+            )) : rows.map(renderRow)}
             {changedFiles.length > 0 && (
               <div
                 className="mt-1.5 flex min-w-0 flex-wrap gap-1.5 border-t border-cc-line pt-2.5"

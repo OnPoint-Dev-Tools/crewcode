@@ -15,7 +15,8 @@ export const APP_CSP_DIRECTIVES: readonly string[] = [
   "connect-src 'self' data: blob:",
   "media-src 'self' data: blob:",
   "worker-src 'self' blob:",
-  "frame-src 'self' crewcode-plugin:",
+  // Only framed content gets network/preview access; renderer scripts stay local.
+  "frame-src 'self' crewcode-plugin: crewcode-artifact: https: http:",
   "object-src 'none'",
   "base-uri 'none'",
 ]

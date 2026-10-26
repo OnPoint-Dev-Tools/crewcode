@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Icon } from '../ui/Icon'
 import type { ChatAttachment } from '../../types'
+import { getCrewCodeClient } from '../../runtime/crewcode-client'
+import { ImageDialog } from '../images/ImageDialog'
 
 interface AttachmentPreviewStripProps {
   attachments: ChatAttachment[]
@@ -10,7 +12,6 @@ interface AttachmentPreviewStripProps {
 }
 
 const IMAGE_EXT_RE = /\.(avif|bmp|gif|ico|jpe?g|png|svg|webp)$/i
-const dataUrlCache = new Map<string, string>()
 
 function basename(path: string): string {
   const i = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
@@ -38,33 +39,30 @@ function AttachmentImageTile({
   onRemove?: (rel: string) => void
 }) {
   const [src, setSrc] = useState<string | null>(null)
-  const cacheKey = useMemo(() => workspacePath ? `${workspacePath}::${attachment.rel}` : '', [workspacePath, attachment.rel])
+  const [open, setOpen] = useState(false)
 
   useEffect(() => {
-    if (!workspacePath) { setSrc(null); return }
-    const cached = dataUrlCache.get(cacheKey)
-    if (cached) { setSrc(cached); return }
+    setSrc(null)
+    if (!workspacePath) return
     let cancelled = false
-    const api = window.electronAPI
-    if (!api) return
+    const api = getCrewCodeClient()
     // Load previews through IPC instead of file:// so sandboxed renderer code can
     // show local thumbnails without widening the browser's file access surface.
     void api.fsReadDataUrl(workspacePath, attachment.rel).then((res) => {
       if (cancelled || !res.ok || !res.dataUrl) return
-      dataUrlCache.set(cacheKey, res.dataUrl)
       setSrc(res.dataUrl)
     }).catch(() => {
       if (!cancelled) setSrc(null)
     })
     return () => { cancelled = true }
-  }, [attachment.rel, cacheKey, workspacePath])
+  }, [attachment.rel, workspacePath])
 
   return (
     <div className={`attachment-tile attachment-tile-${variant}`} title={attachment.rel}>
       <div className="attachment-thumb">
-        {src
+        <button type="button" className="attachment-image-open" aria-label={`Open image ${attachmentName(attachment)}`} onClick={() => setOpen(true)}>{src
           ? <img src={src} alt={attachmentName(attachment)} draggable={false} />
-          : <div className="attachment-thumb-fallback"><Icon name="fileText" size={18} /></div>}
+          : <span className="attachment-thumb-fallback"><Icon name="fileText" size={18} /></span>}</button>
         {onRemove && (
           <button
             type="button"
@@ -79,6 +77,7 @@ function AttachmentImageTile({
       <div className="attachment-meta">
         <span className="attachment-name">{attachmentName(attachment)}</span>
       </div>
+      {open && <ImageDialog root={workspacePath} path={attachment.rel} onClose={() => setOpen(false)} />}
     </div>
   )
 }

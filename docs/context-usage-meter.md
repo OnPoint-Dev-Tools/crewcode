@@ -4,6 +4,26 @@ The chat meter divides the latest observed context occupancy by the active
 context window. The numerator is the provider's current prompt/context size,
 not cumulative billing tokens for the entire conversation.
 
+The chat header **Context** button opens the session context management sidebar
+directly (also available in the mobile Actions menu). Close it with the close
+button, backdrop, or Escape; switching sessions closes the panel. It follows the
+newest reported usage snapshot, including cleared occupancy after compaction,
+and stays available before the first reading with an explicit empty state.
+Opening the panel makes no extra provider requests; the Codex policy read below
+happens once at bridge startup.
+
+Token-log rows use decorative icons from the shared icon set beside their text
+labels, including nested contributors and compaction policy rows. Token values
+use compact k/M suffixes throughout the sidebar; hover or assistive text retains
+the exact count. Percentages and contributor item counts retain their own units.
+
+The panel shows reported occupancy, a usage bar, category token counts and
+percentages of the full window. Expand MCP tools, system tools/prompt, memory
+files, agents, skills, message details, attachments, and provider diagnostics when
+reported. Detail rows and billing counters never become additive occupancy;
+reserved/headroom/deferred rows have no active percentage. Providers without
+categories show observed token counters and explain the missing breakdown.
+
 Clicking the context pill opens a compact usage summary. When the provider
 supplies token details, **Token logs** opens a scrollable right sidebar. The
 sidebar can be closed with its close button, the backdrop, or Escape. Claude
@@ -88,6 +108,39 @@ fallback exists. A fallback percentage is an estimate, not a provider reading.
 The latest usage snapshot is persisted for resumed chats. A new provider
 report replaces its window; occupancy normalization and compaction handling
 are described in [Conversation storage](conversation-storage.md).
+
+## Provider compaction policy and /compact
+
+The sidebar separates the provider's compaction policy from occupancy and prompt
+budget. Codex reads its effective workspace configuration through a bounded,
+read-only app-server config/read request at bridge creation. An explicit positive
+model_auto_compact_token_limit is labeled as a configured threshold; its counting
+scope is shown as full context or growth after the compacted prefix. An unset
+model default, an unsupported read, or a timeout stays unknown. The sidebar does
+not derive a compaction trigger from the prompt budget or a warning percentage.
+Configuration evidence is a startup snapshot, not a live countdown.
+
+Claude exposes the resolved autoCompactEnabled value used by the bridge. Its SDK
+does not currently supply a numeric trigger through this integration. CrewCoder
+owns its persisted autoCompact policy; its current ACP usage contract does not
+report a numeric trigger or enabled setting. Both show unknown fields explicitly.
+The latest matching provider compaction event supplies manual/automatic status,
+including started, completed, failed/interrupted, or an explicitly inferred drop.
+CrewCode does not introduce a second automatic compactor.
+
+Typed and picked /compact commands use the same native provider path on desktop
+and Brain/browser: Codex thread/compact/start, Claude /compact through the SDK,
+and CrewCoder's advertised session/compact extension. These paths preserve the
+provider session instead of replacing it with a separate CrewCode summary.
+Codex waits for the native boundary, not the RPC acknowledgement. Claude requires
+a compact_boundary before reporting success. Stop during startup cancels dispatch
+and retry; concurrent turns/compaction are refused. A Codex manual-operation
+completion timeout fails and stops the owned process, without retrying or claiming
+success. Existing unsupported/fallback behavior remains for older providers.
+
+Successful native boundaries invalidate old occupancy. A fresh post-boundary
+reading is retained even if it arrives before the manual RPC returns. Policy
+metadata survives renderer occupancy invalidation; no zero usage is fabricated.
 
 ## Automatic compaction
 

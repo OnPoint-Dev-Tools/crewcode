@@ -16,6 +16,8 @@ import type { CompletionProviderId } from '../../../../shared/agent-completion-t
 import type { EditorThemeId } from '../../../../shared/editor-theme-types'
 import { useMobileLayout } from '../../hooks/useMobileLayout'
 import { diskSyncDecision } from './editor-disk-sync'
+import { ImageViewer } from '../images/ImageViewer'
+import { isImageFile } from '../../../../shared/image-files'
 
 export type { CodeFile }
 
@@ -291,6 +293,7 @@ export function CodeEditor({
   const codeActionRequestRef = useRef(0)
 
   const active = tabs.find(t => t.rel === activeRel) ?? null
+  const activeImage = !!active && isImageFile(active.rel)
   const dirty  = active ? active.text !== active.originalText : false
   const text   = active?.text ?? ''
   const activeLang = active ? langFromName(active.name) : 'text'
@@ -340,7 +343,7 @@ export function CodeEditor({
     const api = window.electronAPI
     if (!api || !root) return
     const before = tabsRef.current.find(tab => tab.rel === rel)
-    if (!before || before.needsLoad) return
+    if (!before || before.needsLoad || isImageFile(rel)) return
     const sequence = (diskReadSequenceRef.current.get(rel) ?? 0) + 1
     diskReadSequenceRef.current.set(rel, sequence)
     let result: Awaited<ReturnType<typeof api.fsReadFile>>
@@ -783,6 +786,7 @@ export function CodeEditor({
   }
 
   async function format() {
+    if (activeImage) return
     if (!root || !active || !onFormatFile || !onUpdateText) return
     setFormatting(true)
     const beforeCursor = currentEditorCursor()
@@ -799,6 +803,7 @@ export function CodeEditor({
   const undoRef = useRef<() => void>()
   const redoRef = useRef<() => void>()
   async function save() {
+    if (activeImage) return
     if (!active || !dirty || !onSaveFile) return
     setSaving(true); setErr(null)
     try {
@@ -960,7 +965,7 @@ export function CodeEditor({
           </span>
         )}
         <div className="ed-pathbar-actions">
-          {active && (
+          {active && !activeImage && (
             <button
               title={formatting ? 'formatting…' : 'format (Ctrl+Shift+F)'}
               onClick={format}
@@ -1140,7 +1145,8 @@ export function CodeEditor({
               <DiffView title={diffView.title} diff={diffView.diff} onClose={() => setDiffView(null)} />
             )}
 
-            {!externalDiff && active && !diffView && !busy && (
+            {!externalDiff && active && activeImage && !diffView && !busy && <ImageViewer key={`${root}:${active.rel}`} root={root} path={active.rel} title={active.name} />}
+            {!externalDiff && active && !activeImage && !diffView && !busy && (
               <CrewCodeMirrorEditor
                 ref={editorRef}
                 rel={active.rel}
@@ -1196,7 +1202,7 @@ export function CodeEditor({
 
           <div className="ed-status">
             <span className="ed-status-branch"><Icon name="branch" size={11} />{lang.toUpperCase()}</span>
-            <span>UTF-8  LF</span>
+            {!activeImage && <span>UTF-8  LF</span>}
             <div style={{ marginLeft: 'auto', display: 'flex', gap: 16 }}>
               {hasTypeScriptTab && (
                 <button type="button" className="ed-status-problems" onClick={() => setProblemsOpen(open => !open)}>
@@ -1208,7 +1214,7 @@ export function CodeEditor({
                   TS LSP: {languageServer.status === 'ready' ? 'ready' : languageServer.status}
                 </span>
               )}
-              {active && <span>{lines.length} lines · {active.size} B</span>}
+              {active && <span>{activeImage ? 'Read-only image preview' : `${lines.length} lines · ${active.size} B`}</span>}
             </div>
           </div>
         </div>

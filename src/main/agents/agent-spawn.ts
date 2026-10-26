@@ -2,6 +2,7 @@ import { spawn } from 'child_process'
 import type { ClientChannel } from 'ssh2'
 import { isRemoteRoot, parseRemoteTarget } from '../remote/ssh-target'
 import { execRemoteStream } from '../remote/ssh-pool'
+import { getSpawnArgsForWindows } from '../win32-utils'
 
 // A spawned agent process, abstracted over local child_process and a remote
 // ssh2 exec channel so the provider bridges (codex, pi) read/write JSON over
@@ -70,10 +71,13 @@ export async function spawnAgentProcess(opts: SpawnAgentOpts): Promise<SpawnAgen
     return { proc: wrapChannel(channel), dir, remote: true }
   }
 
-  const cp = spawn(opts.command, opts.args, {
+  // npm installs expose .cmd shims on Windows, which direct spawn rejects.
+  const { spawnCmd, spawnArgs } = getSpawnArgsForWindows(opts.command, opts.args)
+  const cp = spawn(spawnCmd, spawnArgs, {
     cwd:   opts.cwd,
     env:   { ...process.env, ...(opts.env ?? {}) },
     stdio: ['pipe', 'pipe', 'pipe'],
+    windowsHide: true,
   })
   // child_process satisfies the AgentProc subset structurally; the cast keeps
   // the bridges on a single type regardless of transport.

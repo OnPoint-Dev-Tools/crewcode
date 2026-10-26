@@ -24,6 +24,40 @@ Update corresponding Docs in [CrewCode Docs](/docs/), and [AGENTS.md](/AGENTS.md
 
 ## Agent Notes
 
+Image files open read-only in Code Editor tabs; chat attachments and agent
+Markdown images/image links open the shared in-app viewer. Use the typed
+`fsReadDataUrl` boundary for workspace images, retaining the bounded local/SSH
+read path. Render SVG only as an inert image; never turn it into an active app
+document or persist image bytes in editor-session state. Keep generated-code
+artifact sandboxing separate. See `docs/image-viewer.md`.
+
+Chat artifacts use the sandboxed Artifacts panel for HTML/SVG fences and supported
+workspace/HTTP links. Keep generated scripts in an opaque iframe without native
+capabilities; read files through the typed client and registered workspace root.
+Serve interactive previews through the dedicated artifact protocol/static web
+bootstrap with a response-header sandbox; never loosen renderer script CSP or
+send artifact HTML in HTTP queries. Keep the desktop, direct-web, and Hub policy aligned.
+Do not confuse SSH loopback with the client host. Codex MCP elicitations require
+real action/content responses and cancellation; never answer unknown server
+requests with empty success. Sandbox extensions remain explicit turn-scoped
+grants, including in Full Access. See `docs/chat-artifacts.md`.
+
+Delegation first-send placement is an explicit CrewCode choice before provider
+dispatch. Honor the persisted owner isolation choice, pin shared checkout paths
+separately from isolated worktree metadata, and never checkout the parent to
+satisfy delegation. Cancel pending sends on Stop/session or checkout changes;
+recheck parent liveness and cohort after worktree creation, preserving interrupted
+results without launching workers. Stop during bridge startup must cancel prompt
+forwarding and stale-bridge retries, targeting only the exact late bridge id.
+See `docs/delegated-threads.md`.
+
+Windows provider discovery must use the shared Windows executable candidates
+for desktop, Brain, and usage probes, including native .exe and npm .cmd/.bat
+launchers and per-user locations when the GUI PATH is stale. Never use Unix
+which/Bash probes on Windows. Local agent spawning must route batch launchers
+through the existing Windows spawn adapter; SSH resolves on the host. See
+`docs/getting-started.md`.
+
 Mobile window tabs use the bottom workspace dock's Tabs button and an on-demand
 sheet; never reserve a top tab-strip row on phones. Preserve exact tab selection,
 observed activity, pinned-tab close protection, built-in/plugin new-tab actions,
@@ -49,6 +83,20 @@ use only the latest individual assistant request's context counts, never
 aggregate result usage. Use SDK category `kind` and full detail for the
 measured Claude meter; summary detail is approximate. See
 `docs/context-usage-meter.md`.
+
+The chat header Context action directly toggles the session context management
+sidebar, including through mobile Actions. Use the latest reported session usage,
+retain unknown/empty states and native-compaction invalidation, and group provider
+detail separately from category totals without adding overlapping counters.
+Token-log row icons use the shared icon set, stay decorative, and retain text
+labels and wrapping for nested details and compaction policy rows. Compact token
+values consistently with k/M suffixes while retaining exact counts on hover and
+for assistive text; do not abbreviate percentages or contributor item counts.
+Keep provider compaction policy separate from occupancy and prompt budget; expose
+only observed settings and explicit configured thresholds, otherwise unknown.
+Typed/picked /compact must use native provider operations, preserve sessions, and
+wait for native confirmation rather than treating an acknowledgement as completion.
+Never start a second automatic compactor or erase a fresh post-boundary reading.
 
 The context popover stays compact. Its Token logs action opens the full
 provider breakdown in a scrollable right sidebar, including for crew chats;
@@ -132,6 +180,24 @@ clarify reply box); never infer questions from assistant prose. Cancel/empty
 answers are explicit failures, never empty answers, and provider-side resolution
 withdraws the card through the `RequestUserFn` abort signal. See
 `docs/agent-activity-overlay.md`.
+
+Solo agent replies render Markdown as text streams and retain the same Markdown
+renderer at completion. Keep renderer component identities stable across deltas
+so code blocks and link actions do not remount on every update.
+
+Solo chat keeps one Thinking log and one Work log per agent turn, including live
+interleaved events and restored history. Open Thinking during the active turn;
+keep the Work log closed by default but manually expandable. Collapse both on turn completion; completed history starts closed and remains manually
+expandable. Preserve manual disclosure during tool/reasoning pauses.
+Solo Work logs separate file-modifying calls from other tools into independent
+chevron sections with counts. Preserve source row identity and manual section
+disclosure during streaming; collapse sections at completion. Classify edits,
+writes, patches, and calls with observed file-change evidence as file calls;
+reads stay in other tools.
+Show the aggregated changed-file chips only after the turn ends, not while tools
+are running or between tool calls. Keep log headers free of bottom dividers and
+retain complete turn scope when paging.
+See `docs/tailwind-renderer.md`.
 
 Thinking-log headers use the shared outlined thought-bubble icon; keep the
 streaming shimmer and separate disclosure chevron behavior intact.

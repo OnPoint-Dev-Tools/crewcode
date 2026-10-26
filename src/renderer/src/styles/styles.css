@@ -2208,8 +2208,10 @@ body.light .spill.brand { background: #e8f3ed; border-color: var(--border); colo
   padding: 10px 0; border-top: 1px solid var(--border);
   font: 11px var(--font-family-mono);
 }
-.token-logs-row dt { min-width: 0; color: var(--muted-foreground); overflow-wrap: anywhere; }
-.token-logs-row dd { margin: 0; flex: 0 0 auto; color: var(--foreground); }
+.token-logs-row dt { min-width: 0; display: flex; align-items: baseline; gap: 8px; color: var(--muted-foreground); overflow-wrap: anywhere; }
+.token-logs-row dt > svg { flex: 0 0 auto; align-self: center; }
+.token-logs-row dt > span { min-width: 0; }
+.token-logs-row dd { margin: 0; flex: 0 0 auto; max-width: 60%; text-align: right; overflow-wrap: anywhere; color: var(--foreground); }
 @media (max-width: 480px) {
   .token-logs-sidebar { width: min(100vw, 420px); }
   .token-logs-header, .token-logs-summary { padding-left: 18px; padding-right: 18px; }
@@ -7863,3 +7865,18 @@ body.light .writer-prompt-textarea {
 @keyframes mobilePickerIn { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes sheetIn { from { transform: translateY(100%); } to { transform: translateY(0); } }
 @keyframes sheetBackdropIn { from { opacity: 0; } to { opacity: 1; } }
+
+/* Context details stay separate from totals because provider rows can overlap. */
+.context-usage-headline { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.context-usage-bar { margin-top: 12px; height: 5px; border-radius: 3px; background: var(--muted); overflow: hidden; }
+.context-usage-bar > span { display: block; height: 100%; background: var(--primary); }
+.context-row-percent { display: inline-block; min-width: 54px; margin-left: 10px; color: var(--muted-foreground); text-align: right; }
+.context-detail-group { border-top: 1px solid var(--border); }
+.context-detail-group summary { display: list-item; padding: 12px 0; cursor: pointer; font-size: 13px; color: var(--foreground); }
+.context-detail-group summary > span { float: right; color: var(--muted-foreground); }
+.context-detail-group .token-logs-rows { padding-left: 12px; }
+.context-detail-group .token-logs-row { font-size: 12px; }
+.context-usage-empty { color: var(--muted-foreground); font-size: 13px; line-height: 1.6; }
+
+.context-usage-sidebar .token-logs-row { font-size: 12px; }
+.context-usage-sidebar .token-logs-note { font-size: 12px; line-height: 1.6; }

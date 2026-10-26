@@ -96,6 +96,10 @@ export function useDelegatedThreads(deps: DelegatedThreadsDeps): void {
           return ok(d.providers())
 
         case 'create': {
+          const placement = parent.delegationPlacement
+          if (!parent.delegationEnabled || !placement) return fail('Choose delegated session placement in CrewCode before creating threads', 409)
+          if (!d.isRunning(parent.id)) return fail('The delegating turn was interrupted or is no longer running', 409)
+          const cohort = d.spawnCohort(request.sessionId)
           const parentTabId = d.tabIdForSession(request.sessionId)
           if (!parentTabId) return fail('the delegating chat has no workspace tab', 409)
 
@@ -121,12 +125,18 @@ export function useDelegatedThreads(deps: DelegatedThreadsDeps): void {
           // Only `worktree` isolation touches git. `build` + `shared` runs in the
           // parent's checkout and works in a plain folder — gating shell access on
           // git repo status was the bug that made test-running impossible.
-          if (request.request.isolation === 'worktree') {
+          // Placement is an owner choice; an agent cannot override it.
+          if (placement.isolation === 'worktree') {
             const created = await d.createWorktree(request.sessionId, request.request.title)
             if (!created.ok) return fail(created.error, 409)
             worktree = { path: created.path, branch: created.branch, base: created.base }
           }
 
+          const live = depsRef.current.allSessions().find(s => s.id === parent.id)
+          if (!live?.delegationEnabled || !depsRef.current.isRunning(parent.id) || JSON.stringify(live.delegationPlacement) !== JSON.stringify(placement)
+            || depsRef.current.spawnCohort(parent.id).runId !== cohort.runId) {
+            return fail('Delegation interrupted or placement changed; any created worktree is preserved, no agent started', 409)
+          }
           const child = d.addDelegated(parentTabId, {
             title: request.request.title,
             parentSessionId: request.sessionId,
@@ -138,7 +148,7 @@ export function useDelegatedThreads(deps: DelegatedThreadsDeps): void {
             // or whether an autonomous turn created it.
             runId: d.spawnCohort(request.sessionId).runId,
             duringWake: d.spawnCohort(request.sessionId).duringWake,
-            ...(worktree ? { worktreePath: worktree.path, branch: worktree.branch, base: worktree.base } : {}),
+            ...(worktree ? { worktreePath: worktree.path, branch: worktree.branch, base: worktree.base } : { checkoutPath: placement.path }),
           })
           if (!child) return fail('could not create the delegated thread', 500)
 

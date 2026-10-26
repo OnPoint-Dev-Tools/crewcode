@@ -2,6 +2,7 @@ import { existsSync, readdirSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { homedir } from 'node:os'
 import { delimiter, dirname, isAbsolute, join } from 'node:path'
+import { detectWindowsAgentPath } from '../windows-agent-discovery'
 
 function getExecutableNames(platform: NodeJS.Platform, commandName: string): string[] {
   if (platform === 'win32') {
@@ -141,6 +142,11 @@ function resolveCommand(commandName: string, overridePath?: string | null, platf
   if (overridePath) {
     const expanded = expandHome(overridePath, homePath)
     if (existsSync(expanded)) return expanded
+  }
+
+  if (platform === 'win32') {
+    const windowsCandidate = detectWindowsAgentPath(commandName)
+    if (windowsCandidate) return windowsCandidate
   }
 
   const executableNames = getExecutableNames(platform, commandName)

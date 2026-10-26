@@ -46,6 +46,7 @@ export interface DelegatedSpawn {
   model?: string
   /** Write-capable spawns only — read-only children share the parent worktree. */
   worktreePath?: string
+  checkoutPath?: string
   branch?: string
   base?: string
   /** Cohort id, so threads spawned for one request report as one group. */
@@ -312,6 +313,7 @@ export function useChatSessions(defaults: SessionDefaults) {
       delegatedBy: spawn.parentSessionId,
       delegatedAt: Date.now(),
       ...(spawn.worktreePath ? { delegatedWorktreePath: spawn.worktreePath } : {}),
+      ...(spawn.checkoutPath ? { delegatedCheckoutPath: spawn.checkoutPath } : {}),
       ...(spawn.branch       ? { delegatedBranch: spawn.branch } : {}),
       ...(spawn.base         ? { delegationBase: spawn.base } : {}),
       ...(spawn.runId        ? { delegationRunId: spawn.runId } : {}),
@@ -328,7 +330,7 @@ export function useChatSessions(defaults: SessionDefaults) {
     setActiveByTab(prev => ({ ...prev, [tabId]: sessionId }))
   }, [])
 
-  const update = useCallback((tabId: string, sessionId: string, patch: Partial<Pick<Session, 'agentId' | 'model' | 'mode' | 'crewcoderMode' | 'crewcoderApprovalMode' | 'effort' | 'label' | 'mcpServerIds' | 'enabledSkillIds' | 'modePromptsEnabled' | 'delegationEnabled' | 'delegationClosedAt' | 'pinned' | 'externalDirectories' | 'initialBranch'>>) => {
+  const update = useCallback((tabId: string, sessionId: string, patch: Partial<Pick<Session, 'agentId' | 'model' | 'mode' | 'crewcoderMode' | 'crewcoderApprovalMode' | 'effort' | 'label' | 'mcpServerIds' | 'enabledSkillIds' | 'modePromptsEnabled' | 'delegationEnabled' | 'delegationPlacement' | 'delegationClosedAt' | 'pinned' | 'externalDirectories' | 'initialBranch'>>) => {
     if (!tabId) return
     setSessionsByTab(prev => {
       const list = prev[tabId] ?? []

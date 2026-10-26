@@ -34,8 +34,9 @@ describe('renderer CSP cannot silently weaken', () => {
     expect(connect).not.toMatch(/https?:(?!\/)/) // no bare http:/https: host wildcard
   })
 
-  it('only frames self + the plugin protocol', () => {
-    expect(directive('frame-src')).toBe("frame-src 'self' crewcode-plugin:")
+  it('allows isolated artifact documents and HTTP previews without widening scripts', () => {
+    expect(directive('frame-src')).toBe("frame-src 'self' crewcode-plugin: crewcode-artifact: https: http:")
+    expect(directive('script-src')).not.toContain("'unsafe-inline'")
   })
 
   it('APP_CSP string is the directives joined', () => {

@@ -56,7 +56,9 @@ function relativeToWorkspace(path: string, workspaceRoot?: string): string | nul
   if (!normalized) return null
 
   if (isAbsolutePath(normalized)) {
-    const root = workspaceRoot ? normalizeSlashes(workspaceRoot.trim()).replace(/\/+$/, '') : ''
+    // Absolute paths in SSH replies belong to the workspace host.
+    const workspacePath = workspaceRoot?.startsWith('ssh://') ? decodePathComponent(new URL(workspaceRoot).pathname) : workspaceRoot
+    const root = workspacePath ? normalizeSlashes(workspacePath.trim()).replace(/\/+$/, '') : ''
     if (!root) return null
     const candidateKey = comparisonKey(normalized)
     const rootKey = comparisonKey(root)

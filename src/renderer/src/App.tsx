@@ -9,6 +9,7 @@ import { WorkspaceDock } from './components/workspaces/WorkspaceDock'
 import { AddProjectModal }  from './components/workspaces/AddProjectModal'
 import { EmptyWorkspaceState } from './components/workspaces/EmptyWorkspaceState'
 import { CodeEditor }       from './components/editor/CodeEditor'
+import { isImageFile } from '../../shared/image-files'
 import { WriterWorkspace }   from './components/writer/WriterWorkspace'
 import { BrowserTab }       from './components/browser/BrowserTab'
 import { BrowserGrabSendModal, type BrowserGrabChatTarget } from './components/browser/BrowserGrabSendModal'
@@ -555,12 +556,16 @@ export default function App() {
   const worktreeForChatSurface = useCallback((surfaceTabId: string, sessionId?: string) => {
     const resolvedSessionId = sessionId ?? chatSessions.getActiveId(surfaceTabId)
     const key = worktreeSelectionKey(surfaceTabId, 'chat', resolvedSessionId)
-    const selected = resolveSelectedWorktree(surfaceWorktreeIds[key], activeWorkspace.worktrees ?? [])
+    const session = chatSessions.getSessions(surfaceTabId).find(s => s.id === resolvedSessionId)
+    const pinnedPath = session?.delegatedWorktreePath ?? session?.delegatedCheckoutPath
+    const selected = pinnedPath
+      ? activeWorkspace.worktrees?.find(w => w.path === pinnedPath)
+      : resolveSelectedWorktree(surfaceWorktreeIds[key], activeWorkspace.worktrees ?? [])
     return {
       key,
       id: selected?.id ?? null,
-      path: selected?.path ?? activeWorkspace.path,
-      branch: selected?.branch ?? activeWorkspace.branch ?? '—',
+      path: pinnedPath ?? selected?.path ?? activeWorkspace.path,
+      branch: session?.delegatedBranch ?? selected?.branch ?? activeWorkspace.branch ?? '\u2014',
       worktreeBranch: selected?.branch ?? null,
       dirty: selected?.dirty ?? activeWorkspace.dirty ?? 0,
     }
@@ -860,7 +865,7 @@ export default function App() {
 
       const api = window.electronAPI
       if (!api || !root) return
-      const r = await api.fsReadFile(root, rel)
+      const r = isImageFile(rel) ? { ok: true, text: '', name: rel.split(/[\\/]/).pop(), size: 0, error: undefined } : await api.fsReadFile(root, rel)
       if (r.error || !r.ok) {
         show({ type: 'error', message: r.error ? `open failed: ${r.error}` : `open failed: ${rel}` })
         return
@@ -1801,7 +1806,7 @@ export default function App() {
     const workspace = ws.workspaces.find(w => w.id === wsId) ?? activeWorkspace
     // Read-only children share the parent's worktree; a write-capable child
     // supplies its own path once step 6 lands.
-    const cwd = session.delegatedWorktreePath ?? workspace.path
+    const cwd = session.delegatedWorktreePath ?? session.delegatedCheckoutPath ?? workspace.path
     const pane = [...pty.panes].reverse().find(p => p.tabId === session.tabId && p.agentId === session.agentId) ?? null
 
     chatSessions.touchLastUsed(session.tabId, session.id)
@@ -1881,17 +1886,16 @@ export default function App() {
         return { ok: false as const, error: 'write-capable delegated threads need a git repository; this workspace is a plain folder' }
       }
 
-      // Fork from the branch the delegating chat is on, and record it as the ref
-      // the child's work merges back onto. `effectiveBranch` is '—' when unknown,
-      // in which case git forks from HEAD.
-      const base = effectiveBranch && effectiveBranch !== '—' ? effectiveBranch : undefined
+      // Use the owner's saved base, never the currently focused pane's branch.
+      const base = parent?.delegationPlacement?.base
+      if (!base || base === '\u2014') return { ok: false as const, error: 'the delegating session has no observed base branch; choose placement again' }
       const branch = delegatedBranchName(title, branchSuffix())
       const created = await ws.createWorktree(workspace.id, branch, base)
       if (!created || 'error' in created || !created.path) {
         return { ok: false as const, error: ('error' in (created ?? {}) ? created.error : undefined) ?? 'could not create the worktree' }
       }
       return { ok: true as const, path: created.path, branch, ...(base ? { base } : {}) }
-    }, [effectiveBranch, sessionById, workspaceByChatTabId, ws]),
+    }, [sessionById, workspaceByChatTabId, ws]),
     spawnCohort: useCallback((parentSessionId: string) => ({
       runId: delegationInbox.runId(parentSessionId),
       duringWake: delegationInbox.isAutonomousTurn(parentSessionId),
@@ -1958,7 +1962,7 @@ export default function App() {
         session.id,
         session.agentId,
         session.agentId as AgentProviderId,
-        session.delegatedWorktreePath ?? workspace.path,
+        session.delegatedWorktreePath ?? session.delegatedCheckoutPath ?? workspace.path,
         session.model || undefined,
         session.effort,
         normalizeModeLevel(session.mode),
@@ -2496,7 +2500,7 @@ export default function App() {
   }, [activeWs, chatSessions, mobile.isMobile, splitAnchorWithSession, workspaceByChatTabId])
 
   const resolveHandoffSessionPath = useCallback((session: Session) =>
-    session.delegatedWorktreePath ?? worktreeForChatSurface(session.tabId, session.id).path,
+    session.delegatedWorktreePath ?? session.delegatedCheckoutPath ?? worktreeForChatSurface(session.tabId, session.id).path,
   [worktreeForChatSurface])
 
   const activateHandoffDestination = useCallback((session: Session) => {
@@ -2842,9 +2846,9 @@ export default function App() {
           scrollMap={sess.scroll}
           onOpenFile={async (rel) => {
             if (!effectivePath) throw new Error('no workspace')
-            const api = window.electronAPI
-            if (!api) throw new Error('no api')
-            const r = await api.fsReadFile(effectivePath, rel)
+            const api = getCrewCodeClient()
+            // Image tabs retain only identity; the viewer reads binary data on demand.
+            const r = isImageFile(rel) ? { ok: true, text: '', name: rel.split(/[\\/]/).pop(), size: 0, error: undefined } : await api.fsReadFile(effectivePath, rel)
             if (r.error || !r.ok) throw new Error(r.error ?? 'failed')
             codeEditors.openFile(tabId, { rel, name: r.name ?? rel, text: r.text ?? '', size: r.size ?? 0 })
           }}
@@ -2852,6 +2856,7 @@ export default function App() {
           onSetActiveRel={(rel) => codeEditors.setActiveRel(tabId, rel)}
           onUpdateText={(rel, text) => codeEditors.updateText(tabId, rel, text)}
           onSaveFile={async (rel) => {
+            if (isImageFile(rel)) return
             if (!effectivePath) return
             const tab = sess.tabs.find(t => t.rel === rel)
             if (!tab) return

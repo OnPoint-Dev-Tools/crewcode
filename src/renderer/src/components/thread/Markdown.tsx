@@ -1,14 +1,16 @@
-import React from 'react'
-import ReactMarkdown, { type Components } from 'react-markdown'
+import React, { useMemo, useRef } from 'react'
+import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { CodeBlock } from '../code/CodeBlock'
+import { isArtifactLink, useChatArtifacts } from './ChatArtifacts'
+import { isImageFile } from '../../../../shared/image-files'
 
 interface MarkdownProps {
   text: string
   onOpenLink?: (url: string) => void
 }
 
-function createComponents(onOpenLink?: (url: string) => void): Components {
+function createComponents(onOpenLink?: (url: string) => void, artifacts?: ReturnType<typeof useChatArtifacts>): Components {
   return {
     p:          ({ children }) => <p className="md-p">{children}</p>,
     h1:         ({ children }) => <h1 className="md-h1">{children}</h1>,
@@ -21,10 +23,11 @@ function createComponents(onOpenLink?: (url: string) => void): Components {
     blockquote: ({ children }) => <blockquote className="md-quote">{children}</blockquote>,
     hr:         () => <hr className="md-hr" />,
     a: ({ href, children }) => (
-      <a
+      <><a
         className="md-a"
         href={href}
         onClick={(e) => {
+          if (href && artifacts && isImageFile(href)) { e.preventDefault(); artifacts.openLink(href); return }
           if (!href || !onOpenLink) return
           e.preventDefault()
           onOpenLink(href)
@@ -34,7 +37,9 @@ function createComponents(onOpenLink?: (url: string) => void): Components {
       >
         {children}
       </a>
+      {href && artifacts && isArtifactLink(href) && <button type="button" className="chat-artifact-open" onClick={() => artifacts.openLink(href)} aria-label={`Preview ${href} in artifacts`}>Preview</button>}</>
     ),
+    img: ({ src, alt }) => artifacts && src ? <button type="button" className="chat-artifact-open" onClick={() => artifacts.openLink(src, true)}>Open image: {alt || 'Image'}</button> : <span>{alt || 'Image'}</span>,
     table: ({ children }) => (
       <div className="md-table-wrap"><table className="md-table">{children}</table></div>
     ),
@@ -53,7 +58,8 @@ function createComponents(onOpenLink?: (url: string) => void): Components {
       const isBlock = /language-/.test(className || '') || code.includes('\n')
       if (isBlock) {
         const lang = className?.match(/(?:^|\s)language-([^\s]+)/)?.[1]
-        return <CodeBlock code={code.replace(/\n$/, '')} lang={lang} className="md-code-highlight" />
+        return <><CodeBlock code={code.replace(/\n$/, '')} lang={lang} className="md-code-highlight" />
+          {artifacts && /^(html|svg)$/i.test(lang ?? '') && <button type="button" className="chat-artifact-open" onClick={() => artifacts.openHtml(code, `${lang} artifact`)}>Open artifact</button>}</>
       }
       return <code className="md-code-inline" {...props}>{children}</code>
     },
@@ -61,11 +67,28 @@ function createComponents(onOpenLink?: (url: string) => void): Components {
 }
 
 export function Markdown({ text, onOpenLink }: MarkdownProps) {
+  const artifacts = useChatArtifacts()
+  const artifactsRef = useRef(artifacts)
+  artifactsRef.current = artifacts
+  const hasArtifacts = !!artifacts
+  // The artifact provider can replace its actions on each delta; use current
+  // actions without remounting Markdown code blocks and links.
+  const artifactActions = useMemo<ReturnType<typeof useChatArtifacts>>(() => hasArtifacts ? {
+    openHtml: (html, title) => artifactsRef.current?.openHtml(html, title),
+    openLink: (href, image) => artifactsRef.current?.openLink(href, image),
+  } : null, [hasArtifacts])
+  const components = useMemo(() => createComponents(onOpenLink, artifactActions), [onOpenLink, artifactActions])
   return (
     <div className="md">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        components={createComponents(onOpenLink)}
+        components={components}
+        urlTransform={(value, key) => {
+          // Native file links are resolved against the workspace before any read.
+          if (/^(?:[a-z]:[\\/]|file:\/\/)/i.test(value)) return value
+          if (key === 'src' && value.length <= 35_000_000 && /^data:image\/[\w.+-]+;base64,/i.test(value)) return value
+          return defaultUrlTransform(value)
+        }}
       >
         {text}
       </ReactMarkdown>

@@ -8,6 +8,28 @@ This is distinct from Crew Surface. Crew lanes are ephemeral, live in one tab, a
 exist for the duration of a crew run. Delegated threads are ordinary `Session`s with
 transcripts, archiving, and drawer rows — they outlive the turn that made them.
 
+## First-send placement choice
+
+With Delegate enabled, the first user send pauses at a CrewCode choice card before
+any provider prompt is sent. Choose **Isolated worktree from the displayed branch**
+or **Current checkout**, which shows its exact path. The choice is stored on the
+session and applies to every new child regardless of the agent's isolation request.
+A different parent checkout or branch requires another choice. For the main checkout
+this means an isolated branch from committed main, or workers sharing main's files.
+Origin is a Git remote, not an executable checkout; CrewCode never implicitly fetches,
+switches branches, or copies uncommitted changes to satisfy this choice.
+
+Cancel, Stop, toggling delegation off, switching sessions/checkouts, or unmounting
+withdraws the pending send and preserves the draft. Stop also cancels a pending
+provider startup, stops its exact late bridge id, and prevents missing-bridge retries
+from forwarding the prompt after interruption. Choosing placement does not
+create a worktree itself. If the parent stops while an actual worktree creation is
+in flight, the result is preserved for inspection and no child starts. The handler
+rechecks parent liveness, choice, and turn cohort after creation. Shared children
+persist their checkout path separately from isolated-worktree/branch metadata;
+worker follow-ups and foreground chat sends use that path rather than whichever
+checkout happens to be selected later. SSH delegation remains explicitly unavailable.
+
 ## Contract
 
 - Delegation is **off by default**, enabled per session.

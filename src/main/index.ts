@@ -1,4 +1,5 @@
 import electron from 'electron'
+import { CHAT_ARTIFACT_PROTOCOL, CHAT_ARTIFACT_FRAME_HTML, CHAT_ARTIFACT_HEADERS } from '../shared/chat-artifact-frame'
 import { join } from 'path'
 import { spawnSync } from 'child_process'
 import { existsSync } from 'fs'
@@ -64,6 +65,7 @@ import { packagedHeadlessArgs } from './packaged-cli-dispatch'
 import { BrainDesktopService } from './brain-desktop-service'
 import { revealBrowserWindow, SystemTrayService } from './system-tray'
 import { resolveCodexCommand } from './rate-limits/resolve-agent'
+import { detectWindowsAgentPath } from './windows-agent-discovery'
 
 const { app, BrowserWindow, clipboard, ipcMain, Menu, nativeImage, protocol, session, shell, Tray } = electron
 import { spawn } from 'child_process'
@@ -108,6 +110,7 @@ function isWaylandSession(): boolean {
 // Plugin panels use a custom protocol because the dev renderer is http:// and
 // Chromium blocks file:// iframes from that origin.
 protocol.registerSchemesAsPrivileged([
+  { scheme: CHAT_ARTIFACT_PROTOCOL, privileges: { standard: true, secure: true } },
   { scheme: PLUGIN_PROTOCOL, privileges: { standard: true, secure: true, supportFetchAPI: true } },
 ])
 
@@ -124,7 +127,7 @@ function applyContentSecurityPolicy(): void {
   if (isDev) return
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     // Leave plugin-protocol responses on their own (stricter) CSP.
-    if (details.url.startsWith(`${PLUGIN_PROTOCOL}://`)) {
+    if (details.url.startsWith(`${PLUGIN_PROTOCOL}://`) || details.url.startsWith(`${CHAT_ARTIFACT_PROTOCOL}://`)) {
       callback({ responseHeaders: details.responseHeaders })
       return
     }
@@ -264,6 +267,7 @@ if (!packagedCliArgs) app.whenReady().then(async () => {
   registerMcpConfigIpc()
   registerKeybindsIpc()
   registerPluginProtocol()
+  protocol.handle(CHAT_ARTIFACT_PROTOCOL, () => new Response(CHAT_ARTIFACT_FRAME_HTML, { headers: CHAT_ARTIFACT_HEADERS }))
   registerPluginIpc()
   registerSystemStatsIpc()
   registerTranscriptIpc()
@@ -379,6 +383,8 @@ function detectAgentPath(cmd: string): string | null {
     const managed = resolveCodexCommand()
     if (managed !== cmd && existsSync(managed)) return managed
   }
+
+  if (process.platform === 'win32') return detectWindowsAgentPath(cmd)
 
   // 1) Try Electron's own PATH first (covers /usr/bin, /usr/local/bin, etc.)
   const which = spawnSync('which', [cmd], { encoding: 'utf8', timeout: SHELL_PROBE_TIMEOUT_MS })

@@ -1,4 +1,6 @@
+import { codexCompactionPolicy, type ProviderCompactionPolicy } from '../../shared/provider-compaction-policy'
 import { spawnAgentProcess } from './agent-spawn'
+import { answerCodexMcpElicitation } from './codex-mcp-elicitation'
 import type { AgentBridge, BridgeStartOpts, EmitFn, ModeLevel, RequestUserFn, TurnUsage } from './bridge-types'
 import { buildUsage, contextWindowFor } from './model-context'
 import { tripwireForToolCall } from './dangerous-command'
@@ -28,7 +30,7 @@ interface JsonRpcRequest {
 interface JsonRpcResponseOk  { id: number; result: Record<string, unknown> }
 interface JsonRpcResponseErr { id: number; error:  { code: number; message: string } }
 interface JsonRpcNotification { method: string; params: Record<string, unknown> }
-interface JsonRpcServerRequest { id: number; method: string; params: Record<string, unknown> }
+interface JsonRpcServerRequest { id: number | string; method: string; params: Record<string, unknown> }
 
 type IncomingMessage = JsonRpcResponseOk | JsonRpcResponseErr | JsonRpcNotification | JsonRpcServerRequest
 
@@ -36,7 +38,8 @@ function isResponse(msg: IncomingMessage): msg is JsonRpcResponseOk | JsonRpcRes
   return typeof (msg as { id?: unknown }).id === 'number' && !('method' in msg)
 }
 function isServerRequest(msg: IncomingMessage): msg is JsonRpcServerRequest {
-  return typeof (msg as { id?: unknown }).id === 'number' && 'method' in msg
+  const id = (msg as { id?: unknown }).id
+  return (typeof id === 'number' || typeof id === 'string') && 'method' in msg
 }
 
 const READ_TOOLS = new Set(['read', 'glob', 'grep', 'web_search', 'webfetch'])
@@ -198,7 +201,7 @@ export async function createCodexBridge(
   let activePlanArgs: { plan: unknown[] } | null = null
   // Open question cards keyed by the server request id, so `serverRequest/resolved`
   // (Codex settled it itself) or process exit can withdraw the card.
-  const openQuestionRequests = new Map<number, AbortController>()
+  const openQuestionRequests = new Map<number | string, AbortController>()
 
   function emitReady() {
     emit({ type: 'ready', bridgeId: opts.bridgeId })
@@ -210,13 +213,19 @@ export async function createCodexBridge(
     return true
   }
 
-  function request(method: string, params: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+  function request(method: string, params: Record<string, unknown> = {}, timeoutMs?: number): Promise<Record<string, unknown>> {
     const id = nextReqId++
     const req: JsonRpcRequest = { id, method, params }
     return new Promise<Record<string, unknown>>((resolve, reject) => {
-      pending.set(id, { resolve, reject })
+      const timer = timeoutMs === undefined ? undefined : setTimeout(() => {
+        pending.delete(id)
+        reject(new Error('codex policy read timed out'))
+      }, timeoutMs)
+      const done = () => { if (timer) clearTimeout(timer) }
+      pending.set(id, { resolve: value => { done(); resolve(value) }, reject: error => { done(); reject(error) } })
       if (!send(req as unknown as Record<string, unknown>)) {
         pending.delete(id)
+        done()
         reject(new Error('codex app-server stdin not writable'))
       }
     })
@@ -226,11 +235,11 @@ export async function createCodexBridge(
     send({ method, params })
   }
 
-  function respond(id: number, result: Record<string, unknown>): void {
+  function respond(id: number | string, result: Record<string, unknown>): void {
     send({ id, result })
   }
 
-  function respondError(id: number, message: string): void {
+  function respondError(id: number | string, message: string): void {
     send({ id, error: { code: -32000, message } })
   }
 
@@ -282,11 +291,14 @@ export async function createCodexBridge(
   // Codex reports usage on the thread-level `thread/tokenUsage/updated`
   // notification (not turn/completed), so we hold the latest snapshot and flush
   // it when the turn ends.
+  let compactionPolicy: ProviderCompactionPolicy = { provider: 'codex' }
   let lastUsage: TurnUsage | undefined
+  let manualCompact: { resolve: (value: { ok: boolean; error?: string; compacted?: boolean }) => void; timer: ReturnType<typeof setTimeout> } | undefined
   let nativeCompactionActive = false
   let nativeCompactionCompletedTurnId: string | undefined
 
   function emitNativeCompaction(status: 'started' | 'completed' | 'failed', notificationTurnId?: string) {
+    const automatic = !manualCompact
     const turnId = currentTurnId ?? notificationTurnId
     const completionKey = notificationTurnId ?? currentTurnId ?? undefined
     if (status === 'started') {
@@ -308,7 +320,7 @@ export async function createCodexBridge(
       bridgeId: opts.bridgeId,
       ...(turnId ? { turnId } : {}),
       status,
-      automatic: true,
+      automatic,
       provider: 'codex',
       percent: status === 'completed' ? 100 : undefined,
       message: status === 'started'
@@ -318,6 +330,11 @@ export async function createCodexBridge(
           : 'Codex native context compaction stopped before completion.',
       ...(status === 'completed' ? { resetContext: true } : {}),
     })
+    if (status !== 'started' && manualCompact) {
+      clearTimeout(manualCompact.timer)
+      manualCompact.resolve(status === 'completed' ? { ok: true, compacted: true } : { ok: false, error: 'Codex compaction interrupted before completion' })
+      manualCompact = undefined
+    }
   }
 
   function endTurn(usage?: TurnUsage) {
@@ -347,7 +364,8 @@ export async function createCodexBridge(
       // eslint-disable-next-line no-console
       console.error('[codex usage]', JSON.stringify(params).slice(0, 600))
     }
-    const usage = usageFromCodexTokenUsage(params, opts.model)
+    const reading = usageFromCodexTokenUsage(params, opts.model)
+    const usage = reading ? { ...reading, compactionPolicy } : undefined
     if (!usage) return
     lastUsage = usage
     if (currentTurnId) emit({ type: 'usage_update', bridgeId: opts.bridgeId, turnId: currentTurnId, usage })
@@ -532,8 +550,8 @@ export async function createCodexBridge(
     if (msg.method === 'serverRequest/resolved') {
       // Codex settled a request without us (e.g. non-blocking question).
       // Withdraw the card rather than leave a stale "agent is waiting" prompt.
-      const id = Number(msg.params.requestId)
-      openQuestionRequests.get(id)?.abort()
+      const id = msg.params.requestId
+      if (typeof id === 'number' || typeof id === 'string') openQuestionRequests.get(id)?.abort()
       return
     }
     switch (msg.method) {
@@ -644,6 +662,41 @@ export async function createCodexBridge(
   // renderer answers these inline, then this pending handler resolves and Codex
   // resumes the same turn instead of requiring a new prompt.
   async function handleServerRequest(msg: JsonRpcServerRequest) {
+    if (msg.method === 'item/permissions/requestApproval') {
+      const controller = new AbortController()
+      openQuestionRequests.set(msg.id, controller)
+      try {
+        // These grants widen the sandbox. Keep them explicit even in Full Access,
+        // whose existing contract still scopes Codex execution to workspace-write.
+        const canRequest = opts.toolPolicy !== 'read-only' && opts.mode !== 'ask' && opts.mode !== 'plan'
+        const response = canRequest && requestUser ? await requestUser({
+          kind: 'permission', title: 'Codex sandbox access requested',
+          message: typeof msg.params.reason === 'string' ? msg.params.reason : undefined,
+          detail: JSON.stringify({ cwd: msg.params.cwd, permissions: msg.params.permissions }, null, 2),
+          turnId: typeof msg.params.turnId === 'string' ? msg.params.turnId : undefined,
+          dangerous: true, source: 'codex',
+        }, controller.signal) : undefined
+        if (!controller.signal.aborted) respond(msg.id, {
+          permissions: response?.action === 'accept' || response?.action === 'submit' ? msg.params.permissions : {},
+          scope: 'turn',
+        })
+      } catch (error) {
+        if (!controller.signal.aborted) respondError(msg.id, (error as Error).message)
+      } finally { openQuestionRequests.delete(msg.id) }
+      return
+    }
+    if (msg.method === 'mcpServer/elicitation/request') {
+      const controller = new AbortController()
+      openQuestionRequests.set(msg.id, controller)
+      try {
+        const result = await answerCodexMcpElicitation(msg.params,
+          codexApprovalDecisionForMode(opts.mode, opts.toolPolicy) === 'accept', requestUser, controller.signal)
+        if (!controller.signal.aborted) respond(msg.id, result)
+      } catch (error) {
+        if (!controller.signal.aborted) respondError(msg.id, (error as Error).message)
+      } finally { openQuestionRequests.delete(msg.id) }
+      return
+    }
     if (msg.method === 'item/commandExecution/requestApproval' ||
         msg.method === 'item/fileChange/requestApproval') {
       // Mode switches mutate opts on the live bridge; honor them even when the
@@ -684,8 +737,8 @@ export async function createCodexBridge(
       respond(msg.id, { decision: 'decline' })
       return
     }
-    // Unknown server requests — respond with empty object so the server can move on.
-    respond(msg.id, {})
+    // An empty success response can be interpreted as a user denial by tools.
+    respondError(msg.id, `Unsupported Codex server request: ${msg.method}`)
   }
 
   let lineBuf = ''
@@ -713,6 +766,7 @@ export async function createCodexBridge(
     // The process that asked can no longer receive an answer.
     for (const controller of openQuestionRequests.values()) controller.abort()
     openQuestionRequests.clear()
+    emitNativeCompaction('failed')
     endTurn()
     // Surface the process's stderr tail so a nonzero exit (127 = binary not on
     // the host PATH, etc.) is legible instead of a bare exit code.
@@ -734,6 +788,9 @@ export async function createCodexBridge(
       clientInfo: { name: 'crewcode', title: 'CrewCode', version: '0.1.0' },
     })
     notify('initialized', {})
+    // A read failure must not prevent chat startup or substitute a guessed limit.
+    try { compactionPolicy = codexCompactionPolicy(await request('config/read', { cwd: dir, includeLayers: false }, 2000)) }
+    catch { compactionPolicy = { provider: 'codex' } }
 
     const modeConfig = getModeConfig(opts.mode, opts.toolPolicy)
     const threadParams: Record<string, unknown> = {
@@ -778,6 +835,7 @@ export async function createCodexBridge(
     pid: proc.pid ?? null,
     async prompt(text: string) {
       if (!threadId) return { ok: false, error: 'codex thread not initialised' }
+      if (nativeCompactionActive || manualCompact) return { ok: false, error: 'Codex native compaction is still running' }
       try {
         await request('turn/start', {
           threadId,
@@ -790,18 +848,28 @@ export async function createCodexBridge(
     },
     async compact() {
       if (!threadId) return { ok: false, error: 'codex thread not initialised' }
-      try {
-        await request(CODEX_COMPACT_METHOD, { threadId })
-        return { ok: true }
-      } catch (err) {
-        return { ok: false, error: (err as Error).message }
-      }
+      if (currentTurnId || nativeCompactionActive || manualCompact) return { ok: false, error: 'cannot compact while the conversation or compaction is running' }
+      // RPC acknowledgement starts work; only its native boundary confirms completion.
+      const completion = new Promise<{ ok: boolean; error?: string; compacted?: boolean }>(resolve => {
+        manualCompact = { resolve, timer: setTimeout(() => {
+          // An unobserved outcome cannot leave owned compaction running behind a retry.
+          emitNativeCompaction('failed')
+          try { proc.kill() } catch { /* process already exited */ }
+        }, 120_000) }
+      })
+      emitNativeCompaction('started')
+      void request(CODEX_COMPACT_METHOD, { threadId }).catch(() => emitNativeCompaction('failed'))
+      return completion
     },
     async abort() {
+      for (const controller of openQuestionRequests.values()) controller.abort()
+      openQuestionRequests.clear()
       if (!threadId || !currentTurnId) return
       try { await request('turn/interrupt', { threadId, turnId: currentTurnId }) } catch { /* ignore */ }
     },
     async stop() {
+      for (const controller of openQuestionRequests.values()) controller.abort()
+      openQuestionRequests.clear()
       try { proc.stdin.end() } catch { /* ignore */ }
       setTimeout(() => { if (!proc.killed) try { proc.kill() } catch { /* ignore */ } }, 500)
     },

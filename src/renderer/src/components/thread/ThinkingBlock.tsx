@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import { chronologicalStreamSegments } from '../../streaming/stream-chunks'
 import { Icon } from '../ui/Icon'
 
@@ -6,10 +6,16 @@ interface ThinkingBlockProps {
   text:      string
   streaming: boolean
   chunks?:   string[]
+  turnActive?: boolean
+  collapsedByDefault?: boolean
 }
 
-export function ThinkingBlock({ text, streaming, chunks }: ThinkingBlockProps) {
-  const [open, setOpen] = useState(streaming)
+export function ThinkingBlock({ text, streaming, chunks, turnActive = streaming, collapsedByDefault = false }: ThinkingBlockProps) {
+  const [open, setOpen] = useState(collapsedByDefault ? turnActive : streaming)
+  // Follow turn boundaries, preserving manual disclosure during tool/reasoning pauses.
+  useEffect(() => {
+    if (collapsedByDefault) setOpen(turnActive)
+  }, [collapsedByDefault, turnActive])
   const segments = useMemo(() => chronologicalStreamSegments(chunks, text), [chunks, text])
 
   return (
@@ -18,7 +24,7 @@ export function ThinkingBlock({ text, streaming, chunks }: ThinkingBlockProps) {
         type="button"
         aria-expanded={open}
         onClick={() => setOpen(current => !current)}
-        className="-mx-1.5 flex max-w-full cursor-pointer appearance-none items-center gap-2 rounded-md border-0 bg-transparent px-1.5 py-1 text-left font-[inherit] text-cc-muted transition-colors duration-150 hover:bg-cc-hover hover:text-cc-ink focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-cc-accent"
+        className={`${collapsedByDefault ? 'solo-turn-log-header ' : ''}-mx-1.5 flex max-w-full cursor-pointer appearance-none items-center gap-2 rounded-md border-0 bg-transparent px-1.5 py-1 text-left font-[inherit] text-cc-muted transition-colors duration-150 hover:bg-cc-hover hover:text-cc-ink focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-2 focus-visible:outline-cc-accent`}
       >
         <Icon
           name="thought"

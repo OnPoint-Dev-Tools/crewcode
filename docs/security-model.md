@@ -26,6 +26,13 @@ re-decided at each hop's gate, not carried forward as context.
 
 ## Electron process boundary
 
+Artifact previews use a separate document with a response-header sandbox that
+allows scripts but never same-origin access, forms, popups, or top navigation.
+The trusted renderer permits artifact/HTTP(S) frames while retaining its local-only
+script policy. The static preview document receives HTML only in its URL fragment
+and exposes no IPC or postMessage authority. Desktop, direct web, and Hub serve
+the same bootstrap and policy. See [chat artifacts](chat-artifacts.md).
+
 - `contextIsolation: true`, `nodeIntegration: false`, `sandbox` defaults preserved
   (`src/main/index.ts:138`). Verify in the running app: DevTools console `require`
   throws `ReferenceError`.

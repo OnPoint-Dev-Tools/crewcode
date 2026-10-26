@@ -3,6 +3,7 @@ import { homedir } from 'os'
 import { delimiter, join } from 'path'
 import { spawn, spawnSync } from 'child_process'
 import { listModels } from './agents/model-detect'
+import { windowsAgentCandidates } from './windows-agent-discovery'
 
 const PROVIDER_COMMANDS: Record<string, string> = {
   pi: 'pi', opencode: 'opencode-cli', codex: 'codex', claude: 'claude',
@@ -60,6 +61,7 @@ export async function headlessAgentRegistry(): Promise<HeadlessAgentInfo[]> {
 }
 
 function candidatePaths(command: string): string[] {
+  if (process.platform === 'win32') return windowsAgentCandidates(command)
   const pathEntries = (process.env.PATH ?? '').split(delimiter)
   const home = homedir()
   return [

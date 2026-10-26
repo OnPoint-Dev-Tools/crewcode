@@ -137,6 +137,15 @@ describe('Hub relay expiry', () => {
 })
 
 describe('Hub HTTP security boundary', () => {
+  it('serves only the static sandboxed artifact bootstrap without session authority', async () => {
+    const running = await server()
+    const response = await fetch(`${running.url}/crewcode-artifact-frame`)
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-security-policy')).toContain('sandbox allow-scripts;')
+    expect(response.headers.get('content-security-policy')).not.toContain('allow-same-origin')
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(await response.text()).toContain('location.hash.slice(1)')
+  })
   it('does not disclose the one-time bootstrap token through status', async () => {
     const running = await server()
     expect(running.bootstrapToken).toBeTruthy()

@@ -1,4 +1,5 @@
 import { createPublicKey } from 'crypto'
+import { CHAT_ARTIFACT_PATH, CHAT_ARTIFACT_FRAME_HTML, CHAT_ARTIFACT_HEADERS } from '../shared/chat-artifact-frame'
 import { createServer, type IncomingMessage, type ServerResponse } from 'http'
 import { randomBytes } from 'crypto'
 import { WebSocket, WebSocketServer } from 'ws'
@@ -211,7 +212,7 @@ function serveHubApp(webRoot: string | undefined, pathname: string, response: Se
     'content-type': mime[extname(candidate)] ?? 'application/octet-stream',
     'content-length': body.byteLength,
     'cache-control': pathname === '/app' ? 'no-store' : 'public, max-age=300',
-    'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+    'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss:; frame-src 'self' https: http:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
     'x-content-type-options': 'nosniff',
   })
   response.end(body)
@@ -308,6 +309,9 @@ export async function startHubServer(options: HubServerOptions): Promise<Running
   const server = createServer(async (request, response) => {
     try {
       const pathname = new URL(request.url ?? '/', 'http://localhost').pathname
+      if (request.method === 'GET' && pathname === CHAT_ARTIFACT_PATH) {
+        response.writeHead(200, CHAT_ARTIFACT_HEADERS); response.end(CHAT_ARTIFACT_FRAME_HTML); return
+      }
       if (pathname.startsWith('/api/') && !hubBrowserOriginAllowed(request, publicOrigin)) {
         sendJson(response, 403, { error: 'browser origin is not allowed' })
         return

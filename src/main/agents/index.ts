@@ -1516,6 +1516,7 @@ export function registerAgentBridgeIpc(resolveAgentPath: AgentPathResolver): voi
     if (!entry) return { ok: false, error: 'bridge not found' }
     const refusedCompact = custodyRefusal(entry, bridgeId, 'compact')
     if (refusedCompact) return { ok: false, ...refusedCompact }
+    if (entry.running) return { ok: false, error: 'cannot compact while the conversation is running' }
     const strategy = compactionStrategy({
       provider: entry.provider,
       hasNativeCompact: !!entry.bridge.compact,
@@ -1538,24 +1539,22 @@ export function registerAgentBridgeIpc(resolveAgentPath: AgentPathResolver): voi
       } satisfies BridgeEvent)
     }
 
-    // Newer CrewCoder ACP agents advertise an authoritative durable-session
-    // compact method. Keep the same session/bridge alive, install the returned
-    // summary only into CrewCode's replay shard, and let CrewCoder's
-    // _crewcoder/compaction_update notifications own progress/completion.
-    if (entry.provider === 'crewcoder' && strategy === 'native' && entry.bridge.compact) {
+    // Native compaction preserves the provider session; summary-reset would
+    // discard its durable context. Native lifecycle events own completion.
+    if (strategy === 'native' && entry.bridge.compact && ['codex', 'claude', 'crewcoder'].includes(entry.provider)) {
       const compactionTurnId = `${bridgeId}:compaction:${Date.now().toString(36)}`
       entry.userInitiatedStop = false
       entry.running = true
       entry.lastActivityAt = Date.now()
       custodyJournal().patch(bridgeId, {
         status: 'running', turnId: compactionTurnId, turnStartedAt: Date.now(),
-        activePrompt: 'Compact the current CrewCoder session', authority: authorityOf(entry.opts),
+        activePrompt: 'Compact the current native provider session', authority: authorityOf(entry.opts),
       })
       try {
         const result = await entry.bridge.compact()
         if (!result.ok) {
-          emitCompaction('failed', result.error ?? 'CrewCoder compaction failed.')
-          return { ok: false, error: result.error ?? 'CrewCoder compaction failed' }
+          emitCompaction('failed', result.error ?? 'Native compaction failed.')
+          return { ok: false, error: result.error ?? 'Native compaction failed' }
         }
         if (result.compacted !== false && result.summary?.trim()) {
           saveCompactedSummary(entry.conversationKey, result.summary)
@@ -1568,10 +1567,8 @@ export function registerAgentBridgeIpc(resolveAgentPath: AgentPathResolver): voi
             reason: 'compact',
           } satisfies BridgeEvent)
         }
-        if (result.compacted !== false) {
-          entry.lastUsage = undefined
-          if (entry.sessionKey) clearUsageSnapshot(entry.sessionKey)
-        }
+        // Native completion already invalidated old usage. Do not erase a
+        // fresh post-boundary reading emitted before the compact call returned.
         return { ok: true }
       } finally {
         entry.running = false

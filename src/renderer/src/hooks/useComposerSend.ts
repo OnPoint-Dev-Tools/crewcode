@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react'
+import { getCrewCodeClient } from '../runtime/crewcode-client'
 
 import type { AgentInfo, AgentProviderId, ChatAttachment, ChatPromptOptions, Message, ModeLevel } from '../types'
 import type { Skill } from '../types/prompts'
@@ -103,6 +104,12 @@ export function useComposerSend(opts: UseComposerSendOpts) {
     workspaceName, workspaceBranch, externalDirectories, onSessionUsed,
   } = opts
   const crewcoderMode = rawCrewCoderMode
+  const pendingSends = useRef(new Set<AbortController>())
+  const cancelPendingSend = useCallback(() => {
+    for (const controller of pendingSends.current) controller.abort()
+    pendingSends.current.clear()
+  }, [])
+  useEffect(() => cancelPendingSend, [sessActive, activeAgentId, effectivePath, cancelPendingSend])
 
   const pendingHandoffRef = useRef<Record<string, { fromProvider: string; toProvider: string }>>({})
 
@@ -210,41 +217,48 @@ export function useComposerSend(opts: UseComposerSendOpts) {
           workspace: { name: workspaceName, path: effectivePath, branch: workspaceBranch },
         }
       : undefined
-    await sendChatSessionPrompt({
-      text,
-      attachments,
-      mcpServers,
-      promptOptions: handoff ? { ...promptOptions, handoff } : promptOptions,
-      activeWs,
-      activeTabId,
-      sessActive,
-      setMessages,
-      agents,
-      activeAgentId,
-      model,
-      effort,
-      crewcoderMode,
-      crewcoderApprovalMode,
-      mode,
-      effectivePath,
-      bridges,
-      pty,
-      activeAgentPane,
-      enabledSkills,
-      skillsDeliveredTo,
-      markSkillsDelivered,
-      lastDeliveredMode,
-      markModeDelivered,
-      modePromptsEnabled,
-      modePrompts,
-      sessionHasExistingMessages,
-      delegationPreamble,
-      delegationDeliveredTo,
-      markDelegationDelivered,
-      takeDelegationReports,
-      externalDirectories,
-    })
-    if (handoff) delete pendingHandoffRef.current[sessActive]
+    const controller = new AbortController()
+    pendingSends.current.add(controller)
+    try {
+      await sendChatSessionPrompt({
+        signal: controller.signal,
+        text,
+        attachments,
+        mcpServers,
+        promptOptions: handoff ? { ...promptOptions, handoff } : promptOptions,
+        activeWs,
+        activeTabId,
+        sessActive,
+        setMessages,
+        agents,
+        activeAgentId,
+        model,
+        effort,
+        crewcoderMode,
+        crewcoderApprovalMode,
+        mode,
+        effectivePath,
+        bridges: { ...bridges, stopBridge: bridgeId => getCrewCodeClient().bridgeStop(bridgeId) },
+        pty,
+        activeAgentPane,
+        enabledSkills,
+        skillsDeliveredTo,
+        markSkillsDelivered,
+        lastDeliveredMode,
+        markModeDelivered,
+        modePromptsEnabled,
+        modePrompts,
+        sessionHasExistingMessages,
+        delegationPreamble,
+        delegationDeliveredTo,
+        markDelegationDelivered,
+        takeDelegationReports,
+        externalDirectories,
+      })
+      if (handoff && !controller.signal.aborted) delete pendingHandoffRef.current[sessActive]
+    } finally {
+      pendingSends.current.delete(controller)
+    }
   }, [
     activeWs, activeTabId, sessActive, setMessages, agents, activeAgentId,
     model, effort, mode, crewcoderMode, crewcoderApprovalMode, effectivePath, bridges, pty, activeAgentPane,
@@ -255,12 +269,12 @@ export function useComposerSend(opts: UseComposerSendOpts) {
     workspaceName, workspaceBranch, onSessionUsed,
   ])
 
-  const send = useCallback(async () => {
-    if (!composer.trim() || !activeWs) return
-    const text = composer.trim()
+  const send = useCallback(async (overrideText?: string) => {
+    const text = (overrideText ?? composer).trim()
+    if (!text || !activeWs) return
     const attachments = getAttachments()
     const mcpServers = getMcpServers?.() ?? []
-    setComposer('')
+    if (overrideText === undefined) setComposer('')
 
     if (text === '/compact') {
       onSessionUsed?.()
@@ -271,33 +285,46 @@ export function useComposerSend(opts: UseComposerSendOpts) {
         return
       }
       if (agent.transport === 'bridge') {
-        const ensure = (force: boolean) => bridges.ensureBridge(
-          sessActive, agent.id, agent.id as AgentProviderId, effectivePath, model || undefined, effort, mode, undefined, force, mcpServers,
-        )
-        const r1 = await ensure(false)
-        if ('error' in r1) {
-          setMessages(m => [...m, { kind: 'system', time, tone: 'error', text: r1.error }])
-          return
+        const controller = new AbortController()
+        pendingSends.current.add(controller)
+        const stopped = (bridgeId?: string) => {
+          if (!controller.signal.aborted) return false
+          if (bridgeId) getCrewCodeClient().bridgeStop(bridgeId)
+          return true
         }
-        let res = await (bridges.compact?.(r1.bridgeId) ?? { ok: false, error: 'compact unavailable' })
-        if (!res.ok && res.error === 'bridge not found') {
-          const r2 = await ensure(true)
-          if ('error' in r2) {
-            setMessages(m => [...m, { kind: 'system', time, tone: 'error', text: r2.error }])
+        try {
+          const ensure = (force: boolean) => bridges.ensureBridge(
+            sessActive, agent.id, agent.id as AgentProviderId, effectivePath, model || undefined, effort, mode, undefined, force, mcpServers, false, externalDirectories, crewcoderMode, crewcoderApprovalMode,
+          )
+          const r1 = await ensure(false)
+          if (stopped('bridgeId' in r1 ? r1.bridgeId : undefined)) return
+          if ('error' in r1) {
+            setMessages(m => [...m, { kind: 'system', time, tone: 'error', text: r1.error }])
             return
           }
-          res = await (bridges.compact?.(r2.bridgeId) ?? { ok: false, error: 'compact unavailable' })
-        }
-        if (!res.ok) {
-          const unsupported = 'unsupported' in res && res.unsupported
-          setMessages(m => [...m, {
-            kind: 'system',
-            time,
-            tone: unsupported ? 'info' : 'error',
-            text: unsupported ? `${agent.name} doesn't support /compact yet.` : (res.error ?? 'compaction failed'),
-          }])
-        }
-        return
+          let res = await (bridges.compact?.(r1.bridgeId) ?? { ok: false, error: 'compact unavailable' })
+          if (stopped(r1.bridgeId)) return
+          if (!res.ok && res.error === 'bridge not found') {
+            const r2 = await ensure(true)
+            if (stopped('bridgeId' in r2 ? r2.bridgeId : undefined)) return
+            if ('error' in r2) {
+              setMessages(m => [...m, { kind: 'system', time, tone: 'error', text: r2.error }])
+              return
+            }
+            res = await (bridges.compact?.(r2.bridgeId) ?? { ok: false, error: 'compact unavailable' })
+          }
+          if (controller.signal.aborted) return
+          if (!res.ok) {
+            const unsupported = 'unsupported' in res && res.unsupported
+            setMessages(m => [...m, {
+              kind: 'system',
+              time,
+              tone: unsupported ? 'info' : 'error',
+              text: unsupported ? `${agent.name} doesn't support /compact yet.` : (res.error ?? 'compaction failed'),
+            }])
+          }
+          return
+        } finally { pendingSends.current.delete(controller) }
       }
       let pane = activeAgentPane
       // Terminal providers cannot change cwd in place. Retire an agent pane
@@ -315,10 +342,10 @@ export function useComposerSend(opts: UseComposerSendOpts) {
     await sendText(text, attachments)
   }, [
     composer, activeWs, activeTabId, sessActive, agents, activeAgentId,
-    model, effort, mode, effectivePath, bridges, pty, activeAgentPane,
+    model, effort, mode, crewcoderMode, crewcoderApprovalMode, externalDirectories, effectivePath, bridges, pty, activeAgentPane,
     setComposer, setMessages, sendText,
     getAttachments, getMcpServers, onSessionUsed,
   ])
 
-  return { send, sendText }
+  return { send, sendText, cancelPendingSend }
 }

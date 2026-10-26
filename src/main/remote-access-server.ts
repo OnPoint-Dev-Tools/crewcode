@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'http'
+import { CHAT_ARTIFACT_PATH, CHAT_ARTIFACT_FRAME_HTML, CHAT_ARTIFACT_HEADERS } from '../shared/chat-artifact-frame'
 import { dirname, extname, join, normalize, posix, sep } from 'path'
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from 'fs'
 import { spawnSync } from 'child_process'
@@ -162,7 +163,7 @@ function serveStatic(webRoot: string | undefined, request: IncomingMessage, resp
   const mime: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2' }
   response.writeHead(200, {
     'content-type': mime[extname(target)] ?? 'application/octet-stream',
-    'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss:; object-src 'none'; base-uri 'none'",
+    'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' ws: wss:; frame-src 'self' https: http:; object-src 'none'; base-uri 'none'",
     'x-content-type-options': 'nosniff',
   })
   response.end(readFileSync(target))
@@ -604,6 +605,9 @@ export async function startRemoteAccessServer(options: RemoteAccessServerOptions
   const server: Server = createServer(async (request, response) => {
     try {
       const pathname = new URL(request.url ?? '/', 'http://localhost').pathname
+      if (request.method === 'GET' && pathname === CHAT_ARTIFACT_PATH) {
+        response.writeHead(200, CHAT_ARTIFACT_HEADERS); response.end(CHAT_ARTIFACT_FRAME_HTML); return
+      }
       if (pathname === '/api/v1/desktop/status' || pathname === '/api/v1/desktop/stop' || pathname === '/api/v1/desktop/control') {
         const supplied = bearer(request)
         const expected = options.desktopControl?.token ?? ''

@@ -180,7 +180,7 @@ describe('Messages transcript ordering', () => {
     })
   })
 
-  it('shows every changed file with real stats below the consolidated work log', () => {
+  it.each([false, true])('shows every changed file after completion (solo=%s)', (consolidateTurnLogs) => {
     const messages: Message[] = [
       {
         kind: 'toolcall',
@@ -217,8 +217,16 @@ describe('Messages transcript ordering', () => {
     const onOpenTurnChange = vi.fn()
     let renderer!: TestRenderer.ReactTestRenderer
     TestRenderer.act(() => {
-      renderer = TestRenderer.create(createElement(Messages, { messages, onOpenTurnChange }))
+      renderer = TestRenderer.create(createElement(Messages, { messages, onOpenTurnChange, consolidateTurnLogs, isRunning: consolidateTurnLogs }))
     })
+
+    if (consolidateTurnLogs) {
+      // Every tool has settled, but the provider turn is still active.
+      expect(renderer.root.findAllByProps({ 'data-worklog-changed-files': true })).toHaveLength(0)
+      TestRenderer.act(() => {
+        renderer.update(createElement(Messages, { messages, onOpenTurnChange, consolidateTurnLogs, isRunning: false }))
+      })
+    }
 
     const strip = renderer.root.findByProps({ 'data-worklog-changed-files': true })
     const text = collectText(renderer.toJSON()).join(' ').replace(/\s+/g, ' ')
@@ -342,5 +350,111 @@ describe('Messages transcript ordering', () => {
     TestRenderer.act(() => {
       renderer.unmount()
     })
+  })
+})
+
+describe('solo turn log disclosure', () => {
+  const headers = (renderer: TestRenderer.ReactTestRenderer) => renderer.root.findAll(
+    node => node.type === 'button' && String(node.props.className).includes('solo-turn-log-header'),
+  )
+
+  it('opens only live thinking, keeps tools closed, and collapses both at turn end', () => {
+    const messages = transcript().slice(0, 4)
+    let renderer!: TestRenderer.ReactTestRenderer
+    TestRenderer.act(() => {
+      renderer = TestRenderer.create(createElement(Messages, { messages: messages.slice(0, 2), consolidateTurnLogs: true, isRunning: true }))
+    })
+    expect(headers(renderer).map(header => header.props['aria-expanded'])).toEqual([true, false])
+    TestRenderer.act(() => { headers(renderer)[0].props.onClick() })
+    TestRenderer.act(() => {
+      renderer.update(createElement(Messages, { messages, consolidateTurnLogs: true, isRunning: true }))
+    })
+    expect(renderOrder(renderer.toJSON())).toEqual(['thinking', 'worklog'])
+    expect(headers(renderer).map(header => header.props['aria-expanded'])).toEqual([false, false])
+    TestRenderer.act(() => { headers(renderer).forEach(header => header.props.onClick()) })
+    const text = collectText(renderer.toJSON()).join(' ')
+    expect(text).toContain('first reasoning block')
+    expect(text).toContain('second reasoning block')
+    expect(text).toContain('2 tool calls')
+    TestRenderer.act(() => {
+      renderer.update(createElement(Messages, { messages: transcript(), consolidateTurnLogs: true, isRunning: false }))
+    })
+    expect(renderOrder(renderer.toJSON())).toEqual(['thinking', 'worklog', 'agent'])
+    expect(headers(renderer).map(header => header.props['aria-expanded'])).toEqual([false, false])
+    TestRenderer.act(() => { headers(renderer).forEach(header => header.props.onClick()) })
+    expect(headers(renderer).map(header => header.props['aria-expanded'])).toEqual([true, true])
+    TestRenderer.act(() => renderer.unmount())
+  })
+
+  it('keeps turn histories separate and loads their logs closed', () => {
+    const second = transcript().map(msg => ({ ...msg, turnId: 'turn-2' })) as Message[]
+    let renderer!: TestRenderer.ReactTestRenderer
+    TestRenderer.act(() => {
+      renderer = TestRenderer.create(createElement(Messages, { messages: [...transcript(), ...second], consolidateTurnLogs: true }))
+    })
+    expect(renderOrder(renderer.toJSON())).toEqual(['thinking', 'worklog', 'agent', 'thinking', 'worklog', 'agent'])
+    expect(headers(renderer).map(header => header.props['aria-expanded'])).toEqual([false, false, false, false])
+    TestRenderer.act(() => renderer.unmount())
+  })
+
+  it('retains the beginning of a long turn across the history paging boundary', () => {
+    const messages: Message[] = []
+    for (let i = 0; i < 30; i++) {
+      messages.push(
+        { kind: 'thinking', time: '', turnId: 'long', segmentId: String(i), text: 'reason ' + i, streaming: false },
+        { kind: 'toolcall', time: '', turnId: 'long', toolCallId: String(i), toolName: 'read', args: { path: 'file-' + i }, status: 'completed' },
+      )
+    }
+    let renderer!: TestRenderer.ReactTestRenderer
+    TestRenderer.act(() => {
+      renderer = TestRenderer.create(createElement(Messages, { messages, consolidateTurnLogs: true }))
+    })
+    expect(renderOrder(renderer.toJSON())).toEqual(['thinking', 'worklog'])
+    const text = collectText(renderer.toJSON()).join(' ')
+    expect(text).toContain('reason 0')
+    expect(text).toContain('reason 29')
+    expect(text).toContain('30 tool calls')
+    TestRenderer.act(() => renderer.unmount())
+  })
+})
+
+describe('solo streamed Markdown', () => {
+  it('renders formatting during streaming and preserves the Markdown tree on completion', () => {
+    const response: Message = {
+      kind: 'agent', time: '', turnId: 'markdown-turn', blocks: [],
+      text: '# Progress\n\n**Working**\n\n- First item\n\n```ts\nconst x = 1',
+      streaming: true,
+    }
+    let renderer!: TestRenderer.ReactTestRenderer
+    TestRenderer.act(() => {
+      renderer = TestRenderer.create(createElement(Messages, { messages: [response], markdownReplies: true, isRunning: true }))
+    })
+    const markdown = renderer.root.findByProps({ className: 'md' })
+    expect(markdown.findAllByType('h1')).toHaveLength(1)
+    expect(markdown.findAllByType('strong')).toHaveLength(1)
+    expect(markdown.findAllByType('ul')).toHaveLength(1)
+    expect(markdown.findAllByType('pre')).toHaveLength(1)
+    TestRenderer.act(() => {
+      renderer.update(createElement(Messages, {
+        messages: [{ ...response, text: response.text + '\n```\n\nDone.', streaming: false }],
+        markdownReplies: true,
+      }))
+    })
+    expect(renderer.root.findByProps({ className: 'md' })).toBe(markdown)
+    expect(collectText(renderer.toJSON()).join(' ')).toContain('Done.')
+    TestRenderer.act(() => renderer.unmount())
+  })
+
+  it('keeps an intermediate reply formatted when tools follow in the same turn', () => {
+    const messages: Message[] = [
+      { kind: 'agent', time: '', turnId: 'markdown-turn', blocks: [], text: '**Checking** the file', streaming: false },
+      { kind: 'toolcall', time: '', turnId: 'markdown-turn', toolCallId: 'read', toolName: 'read', args: { path: 'file.ts' }, status: 'running' },
+    ]
+    let renderer!: TestRenderer.ReactTestRenderer
+    TestRenderer.act(() => {
+      renderer = TestRenderer.create(createElement(Messages, { messages, markdownReplies: true, consolidateTurnLogs: true, isRunning: true }))
+    })
+    expect(renderer.root.findByProps({ className: 'md' }).findByType('strong').children).toEqual(['Checking'])
+    TestRenderer.act(() => renderer.unmount())
   })
 })

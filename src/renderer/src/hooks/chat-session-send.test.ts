@@ -304,3 +304,35 @@ describe('sendChatSessionPrompt mode handling', () => {
     }))
   })
 })
+
+
+describe('prompt interruption during startup', () => {
+  it('never forwards a prompt after Stop while startup is pending', async () => {
+    const messages = messageHarness()
+    const opts = makeBaseOpts('build', messages)
+    const controller = new AbortController()
+    let finish!: (value: { bridgeId: string }) => void
+    opts.bridges.ensureBridge.mockImplementation(() => new Promise(resolve => { finish = resolve }))
+    const stopBridge = vi.fn()
+    const markDelegationDelivered = vi.fn()
+    const sending = sendChatSessionPrompt({ ...opts, signal: controller.signal,
+      bridges: { ...opts.bridges, stopBridge }, delegationPreamble: 'delegation context', markDelegationDelivered })
+    controller.abort()
+    finish({ bridgeId: 'late-bridge' })
+    await sending
+    expect(opts.bridges.prompt).not.toHaveBeenCalled()
+    expect(stopBridge).toHaveBeenCalledWith('late-bridge')
+    expect(markDelegationDelivered).not.toHaveBeenCalled()
+  })
+  it('does not retry a missing bridge after Stop', async () => {
+    const messages = messageHarness()
+    const opts = makeBaseOpts('build', messages)
+    const controller = new AbortController()
+    opts.bridges.prompt.mockImplementation(async () => {
+      controller.abort()
+      return { ok: false, error: 'bridge not found' }
+    })
+    await sendChatSessionPrompt({ ...opts, signal: controller.signal })
+    expect(opts.bridges.ensureBridge).toHaveBeenCalledTimes(1)
+  })
+})

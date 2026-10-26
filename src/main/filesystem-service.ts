@@ -1,10 +1,10 @@
 import { execFile } from 'child_process'
 import { basename, dirname, extname, isAbsolute, join, normalize, relative, sep } from 'path'
 import { cpSync, existsSync, mkdirSync, promises as fsp, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
-import { MAX_FILE_BYTES, SCAN_IGNORED_ENTRIES, TREE_HIDDEN_ENTRIES } from './fs-constants'
+import { MAX_ATTACHMENT_FILE_BYTES, MAX_FILE_BYTES, SCAN_IGNORED_ENTRIES, TREE_HIDDEN_ENTRIES } from './fs-constants'
 import { uniqueCopyName } from './fs-copy-name'
 import { isRemoteRoot } from './remote/ssh-target'
-import { remoteListFiles, remoteReadDir, remoteReadFile, remoteWriteFile } from './remote/remote-fs'
+import { remoteListFiles, remoteReadBuffer, remoteReadDir, remoteReadFile, remoteWriteFile } from './remote/remote-fs'
 
 export interface FilesystemNode {
   name: string
@@ -18,6 +18,14 @@ function safeUnder(root: string, target: string): boolean {
   const normalizedRoot = normalize(root)
   const normalizedTarget = normalize(target)
   return normalizedTarget === normalizedRoot || normalizedTarget.startsWith(normalizedRoot + sep)
+}
+
+function imageMimeType(path: string): string {
+  const types: Record<string, string> = {
+    '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
+    '.webp': 'image/webp', '.svg': 'image/svg+xml', '.bmp': 'image/bmp', '.ico': 'image/x-icon', '.avif': 'image/avif',
+  }
+  return types[extname(path).toLowerCase()] ?? 'application/octet-stream'
 }
 
 /** Transport-neutral, workspace-sandboxed filesystem operations. */
@@ -92,24 +100,34 @@ export class FilesystemService {
     } catch (error) { return { error: (error as Error).message } }
   }
 
-  readDataUrl(root: string, sub: string): { ok?: boolean; dataUrl?: string; name?: string; size?: number; mimeType?: string; error?: string } {
-    if (isRemoteRoot(root)) return { error: 'binary previews unavailable on remote workspaces' }
-    if (!root || !isAbsolute(root)) return { error: 'absolute root required' }
-    const target = join(root, sub)
-    if (!safeUnder(root, target)) return { error: 'path escapes root' }
-    if (!existsSync(target)) return { error: 'file missing' }
-    let stat
-    try { stat = statSync(target) } catch { return { error: 'stat failed' } }
-    if (stat.isDirectory()) return { error: 'is a directory' }
-    if (stat.size > MAX_FILE_BYTES) return { error: 'file too large (>2MB)' }
-    const mimeTypes: Record<string, string> = {
-      '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
-      '.webp': 'image/webp', '.svg': 'image/svg+xml', '.bmp': 'image/bmp', '.ico': 'image/x-icon', '.avif': 'image/avif',
+  async readDataUrl(root: string, sub: string): Promise<{ ok?: boolean; dataUrl?: string; name?: string; size?: number; mimeType?: string; error?: string }> {
+    const mimeType = imageMimeType(sub)
+    const maxBytes = mimeType.startsWith('image/') ? MAX_ATTACHMENT_FILE_BYTES : MAX_FILE_BYTES
+    let data: Buffer
+    let name = basename(sub)
+    if (isRemoteRoot(root)) {
+      const result = await remoteReadBuffer(root, sub, maxBytes)
+      if (!result.ok || !result.data) return { error: result.error || 'Cannot read remote image' }
+      data = result.data
+      name = sub.split('/').pop() || sub
+    } else {
+      if (!root || !isAbsolute(root)) return { error: 'absolute root required' }
+      const target = join(root, sub)
+      if (!safeUnder(root, target)) return { error: 'path escapes root' }
+      try {
+        // Resolve links before reading so a workspace image cannot expose outside files.
+        const [realRoot, realTarget] = await Promise.all([fsp.realpath(root), fsp.realpath(target)])
+        if (!safeUnder(realRoot, realTarget)) return { error: 'path escapes root' }
+        const stat = await fsp.stat(realTarget)
+        if (!stat.isFile()) return { error: 'is a directory' }
+        if (stat.size > maxBytes) return { error: `file too large (>${maxBytes / 1024 / 1024}MB)` }
+        data = await fsp.readFile(realTarget)
+      } catch (error) {
+        return { error: (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'file missing' : (error as Error).message }
+      }
     }
-    try {
-      const mimeType = mimeTypes[extname(target).toLowerCase()] ?? 'application/octet-stream'
-      return { ok: true, dataUrl: `data:${mimeType};base64,${readFileSync(target).toString('base64')}`, name: basename(target), size: stat.size, mimeType }
-    } catch (error) { return { error: (error as Error).message } }
+    if (data.length > maxBytes) return { error: `file too large (>${maxBytes / 1024 / 1024}MB)` }
+    return { ok: true, dataUrl: `data:${mimeType};base64,${data.toString('base64')}`, name, size: data.length, mimeType }
   }
 
   mkdir(root: string, sub: string): { ok?: boolean; error?: string } {

@@ -72,11 +72,15 @@ describe('buildDelegationPreamble', () => {
   it('gives the exact shape for running a test suite', () => {
     const text = build({ worktreeIsolationEnabled: true })
     expect(text).toContain('{"mode":"build","isolation":"shared"}')
-    expect(text).toContain('ONLY option that can run tests')
+    expect(text).toContain('Dependencies may need installation before tests/builds')
+  })
+
+  it('keeps the owner placement choice authoritative', () => {
+    expect(build({ worktreeIsolationEnabled: true })).toContain('session choice overrides the request isolation field')
   })
 
   it('warns that shared write-capable threads edit the same files', () => {
-    expect(build({ worktreeIsolationEnabled: true })).toContain('running things, not for concurrent edits')
+    expect(build({ worktreeIsolationEnabled: true })).toContain('coordinate concurrent edits')
   })
 
   // After a restart the transcript holds a block whose endpoint refuses

@@ -154,3 +154,33 @@ describe('useComposerSend session continuity', () => {
     h.unmount()
   })
 })
+
+
+it('routes a picked /compact command through the bridge while preserving the typed draft', async () => {
+  const opts = makeOpts({ composer: 'keep this draft', activeAgentId: 'crewcoder', agents: [{ ...agent, id: 'crewcoder' }], crewcoderMode: 'general', crewcoderApprovalMode: 'review' })
+  opts.bridges.compact = vi.fn(async () => ({ ok: true }))
+  const hook = renderHook(useComposerSend, opts)
+  await act(async () => { await hook.result.current.send('/compact') })
+  expect(opts.bridges.compact).toHaveBeenCalledWith('bridge-1')
+  expect(opts.bridges.prompt).not.toHaveBeenCalled()
+  expect(opts.setComposer).not.toHaveBeenCalled()
+  expect(opts.bridges.ensureBridge).toHaveBeenCalledWith('sess-1', 'crewcoder', 'crewcoder', '/repo', 'model-a', 'medium', 'build', undefined, false, [], false, undefined, 'general', 'review')
+  hook.unmount()
+})
+
+
+it('cancels /compact before a pending bridge startup can dispatch it', async () => {
+  const opts = makeOpts({ composer: '/compact' })
+  let finish!: (result: { error: string }) => void
+  opts.bridges.ensureBridge = () => new Promise(resolve => { finish = resolve })
+  opts.bridges.compact = vi.fn(async () => ({ ok: true }))
+  const hook = renderHook(useComposerSend, opts)
+  let sending!: Promise<void>
+  act(() => { sending = hook.result.current.send() })
+  act(() => hook.result.current.cancelPendingSend())
+  finish({ error: 'startup stopped' })
+  await act(async () => { await sending })
+  expect(opts.bridges.compact).not.toHaveBeenCalled()
+  expect(opts.bridges.prompt).not.toHaveBeenCalled()
+  hook.unmount()
+})

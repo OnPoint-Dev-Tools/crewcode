@@ -62,7 +62,7 @@ describe('Messages render isolation', () => {
     TestRenderer.act(() => renderer.unmount())
   })
 
-  it('does not rerender a work log when only same-turn thinking changes', () => {
+  it.each([false, true])('does not rerender a work log when only same-turn thinking changes (solo=%s)', (consolidateTurnLogs) => {
     counters.workLogRenders = 0
     const tool: ToolCallMessage = {
       kind: 'toolcall',
@@ -85,7 +85,7 @@ describe('Messages render isolation', () => {
 
     let renderer!: TestRenderer.ReactTestRenderer
     TestRenderer.act(() => {
-      renderer = TestRenderer.create(createElement(Messages, { messages: [tool, firstThinking] }))
+      renderer = TestRenderer.create(createElement(Messages, { messages: [tool, firstThinking], consolidateTurnLogs }))
     })
     const initialRenders = counters.workLogRenders
 
@@ -95,7 +95,7 @@ describe('Messages render isolation', () => {
       chunks: ['checking the implementation'],
     }
     TestRenderer.act(() => {
-      renderer.update(createElement(Messages, { messages: [tool, updatedThinking] }))
+      renderer.update(createElement(Messages, { messages: [tool, updatedThinking], consolidateTurnLogs }))
     })
 
     expect(counters.workLogRenders).toBe(initialRenders)
@@ -103,6 +103,7 @@ describe('Messages render isolation', () => {
     TestRenderer.act(() => {
       renderer.update(createElement(Messages, {
         messages: [{ ...tool, status: 'completed', result: 'ok' }, updatedThinking],
+        consolidateTurnLogs,
       }))
     })
     expect(counters.workLogRenders).toBeGreaterThan(initialRenders)

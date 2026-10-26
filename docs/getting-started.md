@@ -64,6 +64,14 @@ and make sure they're on your `PATH` — CrewCode detects them automatically
 
 A provider that isn't detected shows as unavailable in the model picker.
 
+On Windows, discovery checks native `.exe` binaries and npm `.cmd`/`.bat`
+launchers on PATH, plus per-user install folders such as `%APPDATA%/npm`,
+`~/.local/bin`, and `%LOCALAPPDATA%/Programs/OpenAI/Codex/bin`. Desktop and
+Background Brain use the same Windows candidates; no Bash installation is required
+for local provider discovery. Restart CrewCode after installing a CLI because
+desktop detection runs at startup. npm launchers are started through Windows'
+command processor. SSH providers continue to resolve on their remote host.
+
 ## First run
 
 1. **Add a project** — workspace drawer → Add project: browse a local folder,

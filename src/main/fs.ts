@@ -1,8 +1,8 @@
 import electron from 'electron'
-import { join, basename, relative, isAbsolute, normalize, sep, dirname, extname } from 'path'
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync, mkdirSync, rmSync, renameSync } from 'fs'
+import { join, basename, relative, isAbsolute, normalize, sep, dirname } from 'path'
+import { existsSync, readdirSync, statSync, writeFileSync, mkdirSync, rmSync, renameSync } from 'fs'
 import { execFile, spawnSync } from 'child_process'
-import { MAX_ATTACHMENT_FILE_BYTES, MAX_ATTACHMENT_FILE_MB, MAX_FILE_BYTES } from './fs-constants'
+import { MAX_ATTACHMENT_FILE_BYTES, MAX_ATTACHMENT_FILE_MB } from './fs-constants'
 import { isRemoteRoot } from './remote/ssh-target'
 import {
   remoteMkdir, remoteMove, remoteDelete, remoteRename, remoteCopyFile,
@@ -25,45 +25,12 @@ function safeUnder(root: string, target: string): boolean {
   return b === a || b.startsWith(a + sep)
 }
 
-function mimeTypeForPath(path: string): string {
-  const ext = extname(path).toLowerCase()
-  const map: Record<string, string> = {
-    '.png': 'image/png',
-    '.jpg': 'image/jpeg',
-    '.jpeg': 'image/jpeg',
-    '.gif': 'image/gif',
-    '.webp': 'image/webp',
-    '.svg': 'image/svg+xml',
-    '.bmp': 'image/bmp',
-    '.ico': 'image/x-icon',
-    '.avif': 'image/avif',
-  }
-  return map[ext] ?? 'application/octet-stream'
-}
-
 export function registerFsIpc(): void {
   const service = new FilesystemService()
   ipcMain.handle('fs:readDir', (_e, root: string, sub: string = '') => service.readDir(root, sub))
   ipcMain.handle('fs:readFile', (_e, root: string, sub: string) => service.readFile(root, sub))
 
-  ipcMain.handle('fs:readDataUrl', (_e, root: string, sub: string) => {
-    if (isRemoteRoot(root)) return { error: 'binary previews unavailable on remote workspaces' }
-    if (!root || !isAbsolute(root)) return { error: 'absolute root required' }
-    const target = join(root, sub)
-    if (!safeUnder(root, target)) return { error: 'path escapes root' }
-    if (!existsSync(target))      return { error: 'file missing' }
-    let st
-    try { st = statSync(target) } catch { return { error: 'stat failed' } }
-    if (st.isDirectory()) return { error: 'is a directory' }
-    if (st.size > MAX_FILE_BYTES) return { error: 'file too large (>2MB)' }
-    try {
-      const mimeType = mimeTypeForPath(target)
-      const dataUrl = `data:${mimeType};base64,${readFileSync(target).toString('base64')}`
-      return { ok: true, dataUrl, name: basename(target), size: st.size, mimeType }
-    } catch (err) {
-      return { error: (err as Error).message }
-    }
-  })
+  ipcMain.handle('fs:readDataUrl', (_e, root: string, sub: string) => service.readDataUrl(root, sub))
 
   ipcMain.handle('fs:writeFile', (_e, root: string, sub: string, text: string) => service.writeFile(root, sub, text))
 

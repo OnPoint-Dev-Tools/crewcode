@@ -1,3 +1,4 @@
+import type { ProviderCompactionPolicy } from '../../../shared/provider-compaction-policy'
 import type {
   BrowserAwaitGrabSelectionArgs,
   BrowserAwaitGrabSelectionResult,
@@ -145,6 +146,7 @@ export interface ContextCategory {
 }
 
 export interface TurnUsage {
+  compactionPolicy?: ProviderCompactionPolicy
   inputTokens?:   number
   outputTokens?:  number
   totalTokens?:   number
@@ -439,6 +441,9 @@ export interface Session {
   // credentials and may spawn threads. Off by default and absent on existing
   // sessions, so an unrelated chat pays neither the token nor the preamble.
   delegationEnabled?: boolean
+  delegationPlacement?: { isolation: 'worktree' | 'shared'; path: string; base: string }
+  // Shared delegation pins a checkout without claiming an isolated branch.
+  delegatedCheckoutPath?: string
   // Set when an agent created this thread through the local delegation API.
   // Absent on every session created by a human, so `origin === 'delegated'` is
   // the only positive test — never infer delegation from the other fields.

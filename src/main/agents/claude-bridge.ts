@@ -452,6 +452,8 @@ export async function createClaudeBridge(
   let emittedSession = false
   let running = false
   let aborted = false
+  let manualCompact = false
+  let manualCompactBoundary = false
   let followUpSeq = 0
   const followUpQueue: Array<{ id: string; text: string; options?: PromptOptions }> = []
   type ClaudeTaskStatus = 'pending' | 'running' | 'completed' | 'failed' | 'killed' | 'paused'
@@ -487,9 +489,11 @@ export async function createClaudeBridge(
     measured: SDKControlGetContextUsageResponse | undefined,
     request: TurnUsage | undefined,
   ): TurnUsage | undefined {
-    if (measured) return applyClaudeContextUsage(billing, measured)
-    if (request) return { ...(billing ?? {}), ...request }
-    return applyClaudeContextUsage(billing, lastContextUsage, true)
+    const usage = measured ? applyClaudeContextUsage(billing, measured)
+      : request ? { ...(billing ?? {}), ...request }
+        : applyClaudeContextUsage(billing, lastContextUsage, true)
+    return usage ? { ...usage, compactionPolicy: { provider: 'claude',
+      ...(typeof compactionSettings?.autoCompactEnabled === 'boolean' ? { enabled: compactionSettings.autoCompactEnabled } : {}) } } : usage
   }
 
   queueMicrotask(() => emit({ type: 'ready', bridgeId: opts.bridgeId }))
@@ -845,6 +849,7 @@ export async function createClaudeBridge(
         if (message.subtype === 'compact_boundary') {
           const metadata = (message as { compact_metadata?: Record<string, unknown> }).compact_metadata ?? {}
           const automatic = stringValue(metadata.trigger) === 'auto'
+          if (manualCompact) manualCompactBoundary = true
           lastContextUsage = undefined
           emit({
             type: 'compaction_event',
@@ -1006,7 +1011,15 @@ export async function createClaudeBridge(
     // slash command is the supported path and emits the compact_boundary event
     // handleMessage already listens for.
     async compact() {
-      return bridge.prompt('/compact')
+      if (running || manualCompact) return { ok: false, error: 'cannot compact while the conversation or compaction is running' }
+      manualCompact = true
+      manualCompactBoundary = false
+      emit({ type: 'compaction_event', bridgeId: opts.bridgeId, status: 'started', automatic: false, provider: 'claude', message: 'Claude compaction requested' })
+      try {
+        const result = await bridge.prompt('/compact')
+        if (!result.ok) return result
+        return manualCompactBoundary ? { ok: true, compacted: true } : { ok: false, error: 'Claude returned without confirming a native compaction boundary' }
+      } finally { manualCompact = false }
     },
     async removeFollowUp(followUpId: string) {
       const index = followUpQueue.findIndex(item => item.id === followUpId)

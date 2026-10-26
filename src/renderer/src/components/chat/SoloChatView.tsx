@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChatHeader } from '../thread/ChatHeader'
 import { Messages } from '../thread/Messages'
+import { ContextUsageSidebar } from '../thread/ContextUsageSidebar'
+import { latestSessionUsage, latestSessionCompaction } from '../thread/context-usage-breakdown'
 import { Composer } from '../composer/Composer'
 import { MarkdownEditor } from '../editor/MarkdownEditor'
 import { workspaceFilePathFromHref } from './workspace-link-targets'
@@ -143,6 +145,10 @@ export interface SoloChatViewProps {
 }
 
 export function SoloChatView(props: SoloChatViewProps) {
+  const [contextOpen, setContextOpen] = useState(false)
+  const closeContext = useCallback(() => setContextOpen(false), [])
+  useEffect(() => { setContextOpen(false) }, [props.sessionKey])
+  const contextSidebar = contextOpen ? <ContextUsageSidebar key={props.sessionKey} usage={latestSessionUsage(props.messages)} provider={props.activeAgentId} compaction={latestSessionCompaction(props.messages, props.activeAgentId)} onClose={closeContext} /> : null
   const freshChatLogo = useIsDark() ? logoDark : logoLight
   const {
     workspace, effectivePath, effectiveBranch, worktreeBranch,
@@ -311,6 +317,8 @@ export function SoloChatView(props: SoloChatViewProps) {
       dirtyCount={dirtyCount}
       gitOpen={gitOpen}
       onToggleGit={() => setGitOpen(!gitOpen)}
+      contextOpen={contextOpen}
+      onToggleContext={() => setContextOpen(open => !open)}
       changesOpen={changesOpen}
       changesCount={changesCount}
       onToggleChanges={toggleChangesOpen}
@@ -333,6 +341,7 @@ export function SoloChatView(props: SoloChatViewProps) {
     return (
       <>
         {headerNode}
+        {contextSidebar}
         <div className="fresh-chat" onContextMenu={onThreadContextMenu}>
           <div className="fresh-chat-main">
             <div className="fresh-chat-inner">
@@ -359,13 +368,14 @@ export function SoloChatView(props: SoloChatViewProps) {
   return (
     <>
       {headerNode}
+      {contextSidebar}
       <div className="thread-shell">
         <div className={`thread${threadView === 'md' ? ' markdown-editor-thread' : ''}`} ref={setThreadNode} onScroll={onThreadScroll} onContextMenu={onThreadContextMenu}>
           <div className={`thread-content density-${density}`}>
             {threadView === 'chat' && (
               messages.length === 0
                 ? <div className="thread-empty">start typing below to begin a chat in <b>{workspace.name}</b></div>
-                : <Messages messages={messages} workspacePath={effectivePath} isRunning={isRunning} loadingStatus={loadingStatus} onOpenFile={onOpenFile} onOpenTurnChange={onOpenTurnChange} onOpenLink={openThreadLink} scrollParent={threadEl} />
+                : <Messages markdownReplies consolidateTurnLogs messages={messages} workspacePath={effectivePath} isRunning={isRunning} loadingStatus={loadingStatus} onOpenFile={onOpenFile} onOpenTurnChange={onOpenTurnChange} onOpenLink={openThreadLink} scrollParent={threadEl} />
             )}
             {threadView === 'md' && <MarkdownEditor root={workspace.path} persistKey={sessionKey} />}
           </div>

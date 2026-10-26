@@ -26,6 +26,15 @@ async function start(): Promise<RunningRemoteAccessServer> {
 }
 
 describe('remote access server', () => {
+  it('serves only the static sandboxed artifact bootstrap without workspace authority', async () => {
+    const server = await start()
+    const response = await fetch(`${server.url}/crewcode-artifact-frame`)
+    expect(response.status).toBe(200)
+    expect(response.headers.get('content-security-policy')).toContain('sandbox allow-scripts;')
+    expect(response.headers.get('content-security-policy')).not.toContain('allow-same-origin')
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(await response.text()).toContain('location.hash.slice(1)')
+  })
   it('stores allowlisted catalogue continuity on the Brain', async () => {
     const server = await start()
     const pair = await fetch(`${server.url}/api/v1/pair`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: server.pairingToken }) })

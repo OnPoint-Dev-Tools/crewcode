@@ -33,11 +33,11 @@ describe('FilesystemService', () => {
     expect(existsSync(join(root, 'src', 'nested'))).toBe(false)
   })
 
-  it('returns sandboxed data URLs for attachment previews', () => {
+  it('returns sandboxed data URLs for attachment previews', async () => {
     const { root, service } = fixture()
     writeFileSync(join(root, 'pixel.png'), Buffer.from([1, 2, 3]))
-    expect(service.readDataUrl(root, 'pixel.png')).toMatchObject({ ok: true, dataUrl: 'data:image/png;base64,AQID', mimeType: 'image/png' })
-    expect(service.readDataUrl(root, '../pixel.png')).toEqual({ error: 'path escapes root' })
+    expect(await service.readDataUrl(root, 'pixel.png')).toMatchObject({ ok: true, dataUrl: 'data:image/png;base64,AQID', mimeType: 'image/png' })
+    expect(await service.readDataUrl(root, '../pixel.png')).toEqual({ error: 'path escapes root' })
   })
 
   it('copies files and folders without escaping the workspace', () => {

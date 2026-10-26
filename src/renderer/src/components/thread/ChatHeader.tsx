@@ -23,6 +23,8 @@ interface ChatHeaderProps {
   isGitRepo?:      boolean
   gitOpen?:        boolean
   onToggleGit?:    () => void
+  contextOpen?: boolean
+  onToggleContext?: () => void
   changesOpen?:    boolean
   onToggleChanges?: () => void
   changesCount?:   number
@@ -88,7 +90,7 @@ async function copyText(text: string): Promise<void> {
 export function ChatHeader({
   repo, branch, path, view, setView,
   github, dirtyCount = 0, worktreeBranch, isGitRepo = true, gitOpen, onToggleGit, changesOpen, onToggleChanges, changesCount, onStartCrew, onOpenCanvas, onOpenTerminal, onOpenBrowser, onHandoff,
-  agentLabel, modelLabel, delegationEnabled, onToggleDelegation,
+  agentLabel, modelLabel, delegationEnabled, onToggleDelegation, contextOpen, onToggleContext,
   modePromptsEnabled, modePromptsLocked = false, onToggleModePrompts,
   voiceControl,
   pluginChatHeaderItems = [], onPluginChatHeaderItem,
@@ -191,6 +193,8 @@ export function ChatHeader({
       onClick: () => setSetting('hideVerboseAgentLogs', !settings.hideVerboseAgentLogs),
       active: settings.hideVerboseAgentLogs,
     },
+    ...(onToggleContext ? [{ key: 'context', group: 'tool', icon: 'brain', label: 'Context',
+      title: contextOpen ? 'Close context management' : 'Open context management', onClick: onToggleContext, active: contextOpen } as HeaderAction] : []),
     { key: 'canvas',  group: 'tool', icon: 'workbench', label: 'Workbench Mode', title: 'Open Workbench Mode for chats and terminals', onClick: onOpenCanvas },
     ...(!mobileLayout ? [{ key: 'terminal', group: 'tool', icon: 'terminal', label: 'Terminal', title: 'Open a terminal in this worktree', onClick: onOpenTerminal } as HeaderAction] : []),
     { key: 'browser', group: 'tool', icon: 'globe', label: 'Browser', title: 'Open the in-app browser', onClick: onOpenBrowser },
@@ -376,6 +380,7 @@ export function ChatHeader({
                 className={`act-pill icon-only ${a.active ? 'on' : ''}`}
                 title={a.title}
                 aria-label={a.title}
+                aria-pressed={a.key === 'context' ? !!a.active : undefined}
                 onClick={a.onClick}
               >
                 <Icon name={a.icon} />

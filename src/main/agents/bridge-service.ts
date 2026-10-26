@@ -271,6 +271,7 @@ export class AgentBridgeService {
     entry.running = true
     try {
       const result = await entry.bridge.compact()
+      if (!result.ok) this.emit({ type: 'compaction_event', bridgeId, status: 'failed', automatic: false, provider: entry.opts.provider, message: result.error ?? 'Native compaction failed' })
       if (result.ok && result.compacted !== false && result.summary && entry.opts.conversationKey) {
         saveConversation(entry.opts.conversationKey, [
           { role: 'user', content: 'Continue from this compacted conversation summary.' },

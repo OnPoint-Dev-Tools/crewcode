@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
+import { ContextUsageSidebar } from './ContextUsageSidebar'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { normalizePatchForPierre, pathField, extractProviderPatchChanges, diffStats } from '../../hooks/turn-file-edit-detect'
 import { TurnWorkLog } from './TurnWorkLog'
@@ -10,6 +10,7 @@ import { changesForToolMessages } from './turn-changes-data'
 import type { TurnChangeTarget } from './turn-changes-data'
 import { LoadingBlock } from './LoadingBlock'
 import { Markdown } from './Markdown'
+import { ChatArtifacts } from './ChatArtifacts'
 import { Icon } from '../ui/Icon'
 import { UserProfileAvatar } from '../profile/UserProfileAvatar'
 import { AttachmentPreviewStrip } from '../attachments/AttachmentPreviewStrip'
@@ -20,7 +21,7 @@ import {
   stopSelectionSpeech,
   useSelectionSpeechState,
 } from '../../voice/selection-speech-playback'
-import type { ChatAttachment, Message, MessageBlock, ModeLevel, ToolCallMessage, TurnUsage } from '../../types'
+import type { ChatAttachment, Message, MessageBlock, ModeLevel, ThinkingMessage, ToolCallMessage, TurnUsage } from '../../types'
 
 function CodeChip({ children }: { children: React.ReactNode }) {
   return <span className="chip-mono">{children}</span>
@@ -258,60 +259,6 @@ function ContextWindowPopover({ usage, onClose, onOpenTokenLogs }: { usage: Turn
   )
 }
 
-function TokenLogsSidebar({ usage, onClose }: { usage: TurnUsage; onClose: () => void }) {
-  const closeRef = useRef<HTMLButtonElement>(null)
-  useEffect(() => {
-    closeRef.current?.focus()
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose()
-      if (event.key === 'Tab') { event.preventDefault(); closeRef.current?.focus() }
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [onClose])
-
-  return createPortal(
-    <div className="token-logs-layer">
-      <button type="button" className="token-logs-backdrop" onClick={onClose} aria-label="Close token logs" />
-      <aside className="token-logs-sidebar" role="dialog" aria-modal="true" aria-labelledby="token-logs-title">
-        <header className="token-logs-header">
-          <div>
-            <div className="token-logs-kicker">Context window</div>
-            <h2 id="token-logs-title">Token logs</h2>
-          </div>
-          <button ref={closeRef} type="button" className="token-logs-close" onClick={onClose} aria-label="Close token logs">×</button>
-        </header>
-        <div className="token-logs-summary">
-          {usage.contextTokens !== undefined && usage.contextWindow
-            ? <><strong>{withThousands(usage.contextTokens)}</strong> used of {withThousands(usage.contextWindow)} tokens</>
-            : <span>Context usage unavailable</span>}
-          {usage.model && <div className="token-logs-model">{usage.model}</div>}
-          {usage.promptBudgetTokens && (
-            <div className="token-logs-model">Codex prompt budget: {withThousands(usage.promptBudgetTokens)} tokens</div>
-          )}
-        </div>
-        <div className="token-logs-body">
-          <div className="token-logs-section-title">{usage.contextBreakdownSource === 'usage' ? 'Provider token counts' : "What's using it"}</div>
-          <p className="token-logs-note">
-            {usage.contextBreakdownSource === 'usage'
-              ? 'Request, turn, and session counters can overlap; they are not additive context categories.'
-              : 'Detail rows can overlap their category totals.'}
-          </p>
-          <dl className="token-logs-rows">
-            {usage.contextBreakdown?.map((cat, index) => (
-              <div className="token-logs-row" key={`${cat.name}-${index}`}>
-                <dt>{cat.name}{cat.deferred ? ' (reserved)' : ''}</dt>
-                <dd>{withThousands(cat.tokens)}</dd>
-              </div>
-            ))}
-          </dl>
-        </div>
-      </aside>
-    </div>,
-    document.body,
-  )
-}
-
 /** Inline tok/s + context strip rendered above the timestamp on agent bubbles. */
 function UsageStrip({ usage, durationMs, copyText }: { usage?: TurnUsage; durationMs?: number; copyText: string }) {
   const [open, setOpen] = useState(false)
@@ -355,7 +302,8 @@ function UsageStrip({ usage, durationMs, copyText }: { usage?: TurnUsage; durati
         </button>
       )}
       {tokenLogsOpen && usage && (
-        <TokenLogsSidebar
+        <ContextUsageSidebar
+          title="Token logs"
           usage={usage}
           onClose={closeTokenLogs}
         />
@@ -519,23 +467,22 @@ function PlanBody({ text, onOpenLink }: { text: string; onOpenLink?: (url: strin
 function StreamingText({ text, live = false }: { text: string; chunks?: string[]; live?: boolean }) {
   return (
     <div className={`stream-output min-w-0 whitespace-pre-wrap break-words text-cc-ink [overflow-wrap:anywhere]${live ? ' stream-output-live' : ''}`}>
-      {/* Keep stream output as one text node; only the turn's final answer gets Markdown. */}
+      {/* Other chat surfaces retain their lightweight plain-text stream. */}
       {text || ' '}
     </div>
   )
 }
 
-function AgentBubble({ blocks, text, chunks, time, streaming, showStreamCursor = false, durationMs, usage, mode, showTurnSummary = true, onOpenLink }: AgentBubbleProps & { showStreamCursor?: boolean; showTurnSummary?: boolean; onOpenLink?: (url: string) => void }) {
-  const canRenderMarkdown = showTurnSummary && !streaming
-  const isPlan = canRenderMarkdown && mode === 'plan' && typeof text === 'string' && text !== ''
+function AgentBubble({ blocks, text, chunks, time, streaming, markdownReplies = false, showStreamCursor = false, durationMs, usage, mode, showTurnSummary = true, onOpenLink }: AgentBubbleProps & { markdownReplies?: boolean; showStreamCursor?: boolean; showTurnSummary?: boolean; onOpenLink?: (url: string) => void }) {
+  const canRenderMarkdown = markdownReplies || (showTurnSummary && !streaming)
+  const isPlan = canRenderMarkdown && !streaming && mode === 'plan' && typeof text === 'string' && text !== ''
   const body = (text !== undefined && text !== '')
-    ? streaming
-      ? <StreamingText text={text} chunks={chunks} live />
+    ? isPlan
+      ? <PlanBody text={text} onOpenLink={onOpenLink} />
       : canRenderMarkdown
-        ? isPlan
-          ? <PlanBody text={text} onOpenLink={onOpenLink} />
-          : <Markdown text={text} onOpenLink={onOpenLink} />
-        : <StreamingText text={text} chunks={chunks} />
+        // Keep the same Markdown tree during solo streaming and completion.
+        ? <Markdown text={text} onOpenLink={onOpenLink} />
+        : <StreamingText text={text} chunks={chunks} live={streaming} />
       : blocks.map((block, i) =>
           block[0] === 't'
             ? <span key={i}>{block[1]}</span>
@@ -1020,7 +967,7 @@ interface TurnGroup {
   // Source identities let memoized anchors distinguish a real tool update from
   // unrelated thinking/text mutations elsewhere in the same live turn.
   sources: ToolCallMessage[]
-  // Position of the first event in this contiguous tool run.
+  // Stable render anchor for this group.
   anchorIdx: number
 }
 
@@ -1037,12 +984,10 @@ function changedFilesForSources(sources: ToolCallMessage[]): WorkLogChangedFile[
 }
 
 /**
- * Build work-log groups in one pass. Until a response exists, contiguous tool
- * runs stay in stream order so live activity remains visible. Once a later
- * agent response exists for the turn, every earlier tool call is consolidated
- * into one log anchored directly before the turn's latest response.
+ * Solo logs keep their first tool anchor so interleaved reasoning cannot split
+ * or remount them. Other surfaces keep stream order until a response arrives.
  */
-function buildTurnGroups(messages: Message[]): Map<number, TurnGroup> {
+function buildTurnGroups(messages: Message[], consolidate = false): Map<number, TurnGroup> {
   const groups = new Map<number, TurnGroup>()
   const responseAnchorByTurn = new Map<string, number>()
 
@@ -1051,6 +996,7 @@ function buildTurnGroups(messages: Message[]): Map<number, TurnGroup> {
     if (msg.kind === 'agent' && msg.turnId) responseAnchorByTurn.set(msg.turnId, i)
   }
 
+  const byTurn = new Map<string, TurnGroup>()
   let current: TurnGroup | null = null
   for (let i = 0; i < messages.length; i++) {
     const msg = messages[i]
@@ -1070,7 +1016,11 @@ function buildTurnGroups(messages: Message[]): Map<number, TurnGroup> {
 
     const responseAnchor = responseAnchorByTurn.get(turnId)
     let group: TurnGroup
-    if (responseAnchor !== undefined && responseAnchor > i) {
+    if (consolidate) {
+      group = byTurn.get(turnId) ?? { turnId, rows: [], live: false, changedFiles: [], sources: [], anchorIdx: i }
+      byTurn.set(turnId, group)
+      groups.set(group.anchorIdx, group)
+    } else if (responseAnchor !== undefined && responseAnchor > i) {
       group = groups.get(responseAnchor) ?? {
         turnId,
         rows: [],
@@ -1091,6 +1041,7 @@ function buildTurnGroups(messages: Message[]): Map<number, TurnGroup> {
 
     group.sources.push(msg)
     const row = toolCallToRow(msg)
+    row.modifiesFiles = ['edit', 'write', 'patch'].includes(row.kind) || !!msg.fileChange || !!msg.fileChanges?.length
     const diag = extractDiagnostics(msg)
     if (diag && diag.length > 0) row.diagnostics = diag
     group.rows.push(row)
@@ -1108,6 +1059,8 @@ function buildTurnGroups(messages: Message[]): Map<number, TurnGroup> {
 const PAGE_SIZE = 50
 
 interface MessagesProps {
+  markdownReplies?: boolean
+  consolidateTurnLogs?: boolean
   messages:    Message[]
   workspacePath?: string
   isRunning?: boolean
@@ -1130,6 +1083,10 @@ interface MessageRowProps {
   msg:             Message
   index:           number
   groups:          Map<number, TurnGroup>
+  thinkingGroups:  Map<number, ThinkingMessage[]>
+  markdownReplies: boolean
+  consolidateTurnLogs: boolean
+  turnActive: boolean
   isRunning:       boolean
   isWaitingAnchor: boolean
   showTurnSummary: boolean
@@ -1148,6 +1105,14 @@ interface MessageRowProps {
  */
 function areRowsEqual(prev: MessageRowProps, next: MessageRowProps): boolean {
   if (prev.msg !== next.msg) return false
+  if (prev.markdownReplies !== next.markdownReplies) return false
+  if (prev.turnActive !== next.turnActive || prev.consolidateTurnLogs !== next.consolidateTurnLogs) return false
+  const prevThinking = prev.thinkingGroups.get(prev.index)
+  const nextThinking = next.thinkingGroups.get(next.index)
+  if (prevThinking !== nextThinking) {
+    if (!prevThinking || !nextThinking || prevThinking.length !== nextThinking.length) return false
+    if (prevThinking.some((source, i) => source !== nextThinking[i])) return false
+  }
   if (prev.workspacePath !== next.workspacePath) return false
   if (prev.isWaitingAnchor !== next.isWaitingAnchor) return false
   if (next.isWaitingAnchor && prev.isRunning !== next.isRunning) return false
@@ -1168,7 +1133,7 @@ function areRowsEqual(prev: MessageRowProps, next: MessageRowProps): boolean {
 }
 
 const MessageRow = React.memo(function MessageRow({
-  msg, index, groups, isRunning, isWaitingAnchor, showTurnSummary, showStreamCursor, workspacePath, onOpenFile, onOpenTurnChange, onOpenLink,
+  msg, index, groups, thinkingGroups, markdownReplies, consolidateTurnLogs, turnActive, isRunning, isWaitingAnchor, showTurnSummary, showStreamCursor, workspacePath, onOpenFile, onOpenTurnChange, onOpenLink,
 }: MessageRowProps): React.ReactElement | null {
   switch (msg.kind) {
     case 'user':
@@ -1190,6 +1155,8 @@ const MessageRow = React.memo(function MessageRow({
             status: 'done',
           }]}
           live={false}
+          collapsedByDefault={consolidateTurnLogs}
+          turnActive={turnActive}
           total={msg.count}
           onOpenFile={onOpenFile}
         />
@@ -1208,18 +1175,37 @@ const MessageRow = React.memo(function MessageRow({
               onOpenChangedFile={path => onOpenTurnChange?.({ turnId: workLog.turnId, filePath: path })}
             />
           )}
-          <AgentBubble blocks={msg.blocks} text={msg.text} chunks={msg.chunks} time={msg.time} streaming={msg.streaming} showStreamCursor={showStreamCursor} durationMs={msg.durationMs} usage={msg.usage} mode={msg.mode} showTurnSummary={showTurnSummary} onOpenLink={onOpenLink} />
+          <AgentBubble markdownReplies={markdownReplies} blocks={msg.blocks} text={msg.text} chunks={msg.chunks} time={msg.time} streaming={msg.streaming} showStreamCursor={showStreamCursor} durationMs={msg.durationMs} usage={msg.usage} mode={msg.mode} showTurnSummary={showTurnSummary} onOpenLink={onOpenLink} />
         </>
       )
     }
 
-    case 'thinking':
-      return <ThinkingBlock text={msg.text} streaming={msg.streaming} chunks={msg.chunks} />
+    case 'thinking': {
+      const sources = thinkingGroups.get(index)
+      if (consolidateTurnLogs && !sources) return null
+      return <ThinkingBlock
+        text={sources ? sources.map(source => source.text).join('\n\n') : msg.text}
+        chunks={sources ? sources.flatMap(source => source.chunks?.length ? source.chunks : [source.text]) : msg.chunks}
+        streaming={sources ? turnActive && sources.some(source => source.streaming) : msg.streaming}
+        collapsedByDefault={consolidateTurnLogs}
+        turnActive={turnActive}
+      />
+    }
 
     case 'toolcall': {
       const g = groups.get(index)
       if (!g) return null
-      return <TurnWorkLog rows={g.rows} live={g.live} onOpenFile={onOpenFile} />
+      return <TurnWorkLog
+        rows={g.rows}
+        live={g.live}
+        collapsedByDefault={consolidateTurnLogs}
+        separateFileCalls={consolidateTurnLogs}
+        turnActive={turnActive}
+        // A finished tool call is not a finished turn; defer the file summary.
+        changedFiles={consolidateTurnLogs && !turnActive ? g.changedFiles : undefined}
+        onOpenFile={onOpenFile}
+        onOpenChangedFile={path => onOpenTurnChange?.({ turnId: g.turnId, filePath: path })}
+      />
     }
 
     // CrewCode-owned activity renders exclusively in AgentActivityOverlay.
@@ -1254,7 +1240,7 @@ function rowKey(msg: Message, index: number): string {
   }
 }
 
-export function Messages({ messages, workspacePath, isRunning = false, loadingStatus = null, onOpenFile, onOpenTurnChange, onOpenLink, scrollParent }: MessagesProps) {
+export function Messages({ markdownReplies = false, consolidateTurnLogs = false, messages, workspacePath, isRunning = false, loadingStatus = null, onOpenFile, onOpenTurnChange, onOpenLink, scrollParent }: MessagesProps) {
   const { state } = useSettings()
   // ── Pager: render only the most recent PAGE_SIZE rows ──────────────────────
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
@@ -1265,14 +1251,22 @@ export function Messages({ messages, workspacePath, isRunning = false, loadingSt
       // Reasoning is never hidden. This preference only collapses tool/work logs.
       .filter(({ msg }) => !hideVerbose || (msg.kind !== 'toolcall' && msg.kind !== 'worklog'))
   }, [messages, state.hideVerboseAgentLogs])
-  const hidden = Math.max(0, displayEntries.length - visibleCount)
+  let hidden = Math.max(0, displayEntries.length - visibleCount)
+  // Do not page through the middle of a solo turn and drop its log anchors.
+  if (consolidateTurnLogs) {
+    const boundaryTurn = displayEntries[hidden] && rowTurnId(displayEntries[hidden].msg)
+    if (boundaryTurn) {
+      const start = displayEntries.findIndex(({ msg }) => rowTurnId(msg) === boundaryTurn)
+      if (start >= 0) hidden = start
+    }
+  }
   const visibleEntries = useMemo(() => displayEntries.slice(hidden), [displayEntries, hidden])
   const visibleMessages = useMemo(() => visibleEntries.map(entry => entry.msg), [visibleEntries])
 
   // Build expensive work-log/group metadata only for the rows that are actually
   // in the DOM. Streaming used to rescan every old tool call on each paint.
   const { groups, turnChangeKeys } = useMemo(() => {
-    const localGroups = buildTurnGroups(visibleMessages)
+    const localGroups = buildTurnGroups(visibleMessages, consolidateTurnLogs)
     const indexedGroups = new Map<number, TurnGroup>()
     for (const [, group] of localGroups) {
       const anchor = visibleEntries[group.anchorIdx]
@@ -1291,7 +1285,32 @@ export function Messages({ messages, workspacePath, isRunning = false, loadingSt
       }
     }
     return { groups: indexedGroups, turnChangeKeys: changeKeys }
-  }, [visibleEntries, visibleMessages])
+  }, [visibleEntries, visibleMessages, consolidateTurnLogs])
+
+  const thinkingGroups = useMemo(() => {
+    const groups = new Map<number, ThinkingMessage[]>()
+    if (!consolidateTurnLogs) return groups
+    const anchors = new Map<string, number>()
+    for (const { msg, index } of visibleEntries) {
+      if (msg.kind !== 'thinking') continue
+      const anchor = anchors.get(msg.turnId) ?? index
+      anchors.set(msg.turnId, anchor)
+      const sources = groups.get(anchor) ?? []
+      sources.push(msg)
+      groups.set(anchor, sources)
+    }
+    return groups
+  }, [visibleEntries, consolidateTurnLogs])
+
+  // Scope completion to the latest user send, not a temporary pause in reasoning/tools.
+  let activeTurnId: string | undefined
+  if (isRunning) {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].kind === 'user') break
+      activeTurnId = rowTurnId(messages[i])
+      if (activeTurnId) break
+    }
+  }
 
   const latestAgentRowIndex = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -1338,6 +1357,10 @@ export function Messages({ messages, workspacePath, isRunning = false, loadingSt
       msg={msg}
       index={i}
       groups={groups}
+      thinkingGroups={thinkingGroups}
+      markdownReplies={markdownReplies}
+      consolidateTurnLogs={consolidateTurnLogs}
+      turnActive={!!activeTurnId && rowTurnId(msg) === activeTurnId}
       isRunning={isRunning}
       isWaitingAnchor={i === waitingAfterIdx}
       showTurnSummary={finalAgentRowIndices.has(i)}
@@ -1366,7 +1389,7 @@ export function Messages({ messages, workspacePath, isRunning = false, loadingSt
   }, [visibleCount, scrollParent])
 
   return (
-    <>
+    <ChatArtifacts workspacePath={workspacePath} onOpenLink={onOpenLink}>
       {hidden > 0 && (
         <button type="button" className="thread-load-earlier" onClick={loadEarlier}>
           Load {Math.min(hidden, PAGE_SIZE)} earlier · {hidden} hidden
@@ -1380,6 +1403,6 @@ export function Messages({ messages, workspacePath, isRunning = false, loadingSt
           <LoadingBlock text="" streaming={true} time="" status={loadingStatus} />
         </div>
       )}
-    </>
+    </ChatArtifacts>
   )
 }

@@ -368,6 +368,7 @@ export function crewCoderUsageFromPromptResult(result: unknown, model?: string):
     outputTokens,
     totalTokens,
     contextTokens: liveContextTokens,
+    compactionPolicy: { provider: 'crewcoder' },
     contextWindow: finiteNumber(source.contextWindow ?? source.context_window) ?? contextWindowFor(model),
     model,
     ...(liveContextTokens === undefined ? {} : { contextIsAuthoritative: true }),

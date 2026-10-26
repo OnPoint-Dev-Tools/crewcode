@@ -1240,3 +1240,23 @@ describe('claude bridge mode options', () => {
     expect(turnEnd.usage?.contextBreakdown).toBeUndefined()
   })
 })
+
+
+describe('native Claude /compact confirmation', () => {
+  it('does not claim success without a native boundary', async () => {
+    const bridge = await createClaudeBridge('/bin/claude', { bridgeId: 'compact', provider: 'claude', cwd: '/repo' }, () => {})
+    expect((await bridge.compact!()).ok).toBe(false)
+  })
+  it('keeps policy separate from occupancy and confirms the boundary', async () => {
+    resolveSettingsMock.mockResolvedValue({ effective: { autoCompactEnabled: false } })
+    queryMock.mockImplementation(() => ({ close: vi.fn(), async *[Symbol.asyncIterator]() {
+      yield { type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'manual' } }
+      yield { type: 'assistant', message: { content: [], usage: { input_tokens: 2000, output_tokens: 100 } } }
+      yield { type: 'result', subtype: 'success' }
+    } }))
+    const emit = vi.fn()
+    const bridge = await createClaudeBridge('/bin/claude', { bridgeId: 'compact', provider: 'claude', cwd: '/repo' }, emit)
+    expect(await bridge.compact!()).toEqual({ ok: true, compacted: true })
+    expect(emit).toHaveBeenCalledWith(expect.objectContaining({ type: 'turn_end', usage: expect.objectContaining({ compactionPolicy: { provider: 'claude', enabled: false } }) }))
+  })
+})

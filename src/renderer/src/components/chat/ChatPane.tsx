@@ -5,6 +5,7 @@ import { terminalColumnIsVisible } from '../terminal/terminal-column-visibility'
 import type { Layout } from '../../hooks/useTerminalSessions'
 import { Splitter } from './Splitter'
 import { SoloChatView } from './SoloChatView'
+import { useDelegationPlacement } from '../../hooks/useDelegationPlacement'
 import { ExternalDirectoriesModal } from './ExternalDirectoriesModal'
 import { HandoffCard, type HandoffSelection } from './HandoffCard'
 import { CrewBranch } from './CrewBranch'
@@ -450,7 +451,7 @@ export function ChatPane({
     })
   }, [chatSessions, modePromptsLocked, tabId])
 
-  const { send, sendText } = useComposerSend({
+  const { send, sendText, cancelPendingSend } = useComposerSend({
     activeWs,
     activeTabId: tabId,
     sessActive,
@@ -489,6 +490,12 @@ export function ChatPane({
     onSessionUsed: () => chatSessions.touchLastUsed(tabId, sessActive),
   })
 
+  const placement = useDelegationPlacement(activeSession ?? undefined, effectivePath, worktreeBranch ?? effectiveBranch, workspace.kind === 'repo',
+    choice => chatSessions.update(tabId, sessActive, { delegationPlacement: choice }))
+
+  const latestSendRef = useRef({ send, sendText, composer, sessActive })
+  latestSendRef.current = { send, sendText, composer, sessActive }
+
   const sendWithSessionTitle = useCallback(async (overrideText?: string) => {
     // overrideText lets custom slash-commands fire their body directly without
     // routing through the composer draft (which would lag a tick behind state).
@@ -499,6 +506,9 @@ export function ChatPane({
       openHandoff()
       return
     }
+    if (!await placement.ensure()) return
+    const latest = latestSendRef.current
+    if (latest.sessActive !== sessActive || (overrideText === undefined && latest.composer !== composer)) return
     // Cover the gap between appending the user message and bridge runtime state
     // propagation, so the loader appears immediately and stays through await.
     setSendInFlight(true)
@@ -509,23 +519,26 @@ export function ChatPane({
           chatSessions.update(tabId, sessActive, { label: nextLabel })
         }
       }
-      if (overrideText === undefined) await send()
-      else await sendText(text, attachmentsRef.current)
+      if (overrideText === undefined) await latest.send()
+      else if (text === '/compact') await latest.send(text)
+      else await latest.sendText(text, attachmentsRef.current)
     } finally {
       setSendInFlight(false)
     }
-  }, [activeSession?.label, attachmentsRef, chatSessions, composer, messages.length, openHandoff, send, sendText, sessActive, setComposer, tabId, workspace.name])
+  }, [placement.ensure, activeSession?.label, attachmentsRef, chatSessions, composer, messages.length, openHandoff, send, sendText, sessActive, setComposer, tabId, workspace.name])
 
-  const queueFollowUp = useCallback(() => {
+  const queueFollowUp = useCallback(async () => {
     const text = composer.trim()
     if (!text) return
+    if (!await placement.ensure()) return
+    if (latestSendRef.current.sessActive !== sessActive || latestSendRef.current.composer !== composer) return
     const queuedAttachments = attachmentsRef.current
     setComposer('')
     setAttachments([])
     // Delegate timing to the provider; it knows the safe point inside the
     // current stream better than CrewCode's renderer-level turn_end heuristic.
-    void sendText(text, queuedAttachments, { streamingBehavior: 'followUp' })
-  }, [composer, sendText, setAttachments, setComposer])
+    void latestSendRef.current.sendText(text, queuedAttachments, { streamingBehavior: 'followUp' })
+  }, [placement.ensure, sessActive, composer, sendText, setAttachments, setComposer])
 
   // Live agent state comes from bridge-activity-store, scoped to this pane's
   // bridge/tab. Subscribing directly means the Stop button, spinner, follow-up
@@ -669,11 +682,15 @@ export function ChatPane({
   // A custom slash-command fires the moment it is picked. While the agent is
   // running the body is queued as a follow-up (mirroring composer send); idle,
   // it dispatches immediately with session-title/loader handling.
-  const runCommand = useCallback((body: string) => {
+  const runCommand = useCallback(async (body: string) => {
     const text = body.trim()
     if (!text) return
     if (text === '/handoff') {
       openHandoff()
+      return
+    }
+    if (text === '/compact') {
+      void sendWithSessionTitle(text)
       return
     }
     if (text === '/add-dir' || text === '/remove-dir') {
@@ -681,17 +698,21 @@ export function ChatPane({
       return
     }
     if (isRunning) {
-      void sendText(text, attachmentsRef.current, { streamingBehavior: 'followUp' })
+      if (!await placement.ensure()) return
+      if (latestSendRef.current.sessActive !== sessActive) return
+      void latestSendRef.current.sendText(text, attachmentsRef.current, { streamingBehavior: 'followUp' })
       return
     }
     void sendWithSessionTitle(text)
-  }, [isRunning, sendText, attachmentsRef, sendWithSessionTitle, openHandoff])
+  }, [placement.ensure, sessActive, isRunning, sendText, attachmentsRef, sendWithSessionTitle, openHandoff])
 
   // Agents offered as chat providers / crew lanes. Terminal-only CLIs (Claude
   // Code) are filtered out here but stay available via the terminal column.
   const chatAgents = useMemo(() => orchestrationAgents(agents), [agents])
 
   const stop = useCallback(() => {
+    placement.cancel()
+    cancelPendingSend()
     const bridgeId = bridges.getBridgeId?.(sessActive, activeAgentId)
     if (!bridgeId) return
 
@@ -709,7 +730,7 @@ export function ChatPane({
       })
       return [...next, { kind: 'system', tone: 'info', text: 'request stopped', time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) }]
     })
-  }, [bridges, sessActive, activeAgentId, setMessages])
+  }, [placement.cancel, cancelPendingSend, bridges, sessActive, activeAgentId, setMessages])
 
   // The selected worktree is authoritative. A sibling pane's Git refresh must
   // never override this pane's composer branch label.
@@ -871,13 +892,13 @@ export function ChatPane({
             onQueueFollowUp={queueFollowUp}
             queuedFollowUps={queuedFollowUps}
             onRemoveQueuedFollowUp={removeQueuedFollowUp}
-            isRunning={isRunning || sendInFlight}
+            isRunning={isRunning || sendInFlight || !!placement.request}
             loadingStatus={loadingStatus}
             onStop={stop}
-            agentRequest={pendingAgentRequest}
+            agentRequest={placement.request ?? pendingAgentRequest}
             custodyHalt={custodyHalt}
             onReauthorizeCustody={reauthorizeCustody}
-            onAgentRequestResponse={(response) => bridges.respondUserRequest?.(response)}
+            onAgentRequestResponse={(response) => placement.request ? placement.respond(response) : bridges.respondUserRequest?.(response)}
             agents={chatAgents}
             activeAgentId={activeAgentId}
             setActiveAgentId={setActiveAgentId}

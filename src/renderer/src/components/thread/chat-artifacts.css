@@ -1,0 +1,10 @@
+.chat-artifacts-panel { position:fixed; z-index:180; top:48px; right:12px; bottom:16px; width:min(680px, calc(100vw - 24px)); display:flex; flex-direction:column; background:var(--popover); color:var(--foreground); border:1px solid var(--border); border-radius:10px; box-shadow:0 12px 44px #0006; overflow:hidden; }
+.chat-artifacts-panel header, .chat-artifacts-toolbar { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px; border-bottom:1px solid var(--border); }
+.chat-artifacts-panel button, .chat-artifact-open { cursor:pointer; border:1px solid var(--border); border-radius:5px; padding:5px 9px; color:inherit; background:transparent; font-size:13px; flex-shrink:0; }
+.chat-artifacts-toolbar span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13px; }
+.chat-artifacts-panel iframe { border:0; flex:1; min-height:0; width:100%; background:white; }
+.chat-artifacts-panel pre { margin:0; padding:16px; overflow:auto; white-space:pre-wrap; }
+.chat-artifacts-panel p { padding:10px 12px; margin:0; }
+.chat-artifacts-hint { font-size:13px; }
+.chat-artifact-open { margin:4px; }
+@media (max-width:768px) { .chat-artifacts-panel { top:48px; bottom:70px; } .chat-artifacts-toolbar { flex-wrap:wrap; } }

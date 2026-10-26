@@ -54,29 +54,15 @@ export function buildDelegationPreamble(options: DelegationPreambleOptions): str
   // running a command needs a shell, not a git repository.
   const modeLine = '`mode` sets permissions and defaults to this chat\'s. `ask`/`plan` are READ-ONLY — no Bash, no file writes. Use `build` for anything that must run a command (tests, builds, linters).'
 
-  const worktreeOption = worktreeIsolationEnabled
-    ? `
-    "worktree" — a fresh isolated branch+checkout. Default for \`build\`/\`full\`.
-                 Dependencies are NOT installed there, so a test run would have to
-                 install them first.`
-    : `
-    "worktree" — unavailable: this workspace is not a git repository, so there is
-                 nothing to branch from. Requesting it is refused; use "shared".`
-
-  const isolationDefaultNote = worktreeIsolationEnabled
-    ? `
-  To make isolated edits you will review and merge: {"mode":"build"} (isolation
-  defaults to "worktree").`
-    : ''
-
-  const isolationLine = `
-- \`isolation\` sets WHERE the thread works, independently of \`mode\`:
-    "shared"   — this same checkout. Has node_modules and build artifacts already,
-                 so it is the ONLY option that can run tests or builds. Default for
-                 \`ask\`/\`plan\`.${worktreeOption}
-  To run the test suite: {"mode":"build","isolation":"shared"}.${isolationDefaultNote}
-  Several \`build\` threads on "shared" write to the same files at once — use it for
-  running things, not for concurrent edits.`
+  const isolationLine = [
+    '- CrewCode asks the owner for placement before the first delegated send. That session choice overrides the request isolation field.',
+    '  The returned isolation and worktreePath describe the actual placement; never switch or checkout the parent branch.',
+    '  Shared threads use the exact chosen checkout. Several writers edit the same files; coordinate concurrent edits.',
+    '  For commands use build mode, for example: {"mode":"build","isolation":"shared"}.',
+    worktreeIsolationEnabled
+      ? '  Isolated threads use a fresh branch from the chosen committed base. Dependencies may need installation before tests/builds.'
+      : '  Worktree isolation is unavailable: this workspace is not a git repository. Shared placement remains available.',
+  ].join('\n')
 
   const mergeSection = worktreeIsolationEnabled
     ? `
@@ -90,7 +76,7 @@ export function buildDelegationPreamble(options: DelegationPreambleOptions): str
 
   const mergeRules = worktreeIsolationEnabled
     ? `
-- Write-capable threads work on their own branch. Merge them ONE AT A TIME, and stop
+- Only isolated threads have their own branch to merge. Merge them ONE AT A TIME, and stop
   at the first failure instead of merging the rest.
 - A merge returns 409 if the thread is still working, has uncommitted changes, or
   hits conflicts. On conflict the rebase pauses in THAT thread's worktree and your

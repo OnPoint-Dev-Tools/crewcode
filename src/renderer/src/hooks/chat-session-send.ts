@@ -6,6 +6,7 @@ import type { CrewCoderApprovalMode, CrewCoderMode } from '../../../shared/crewc
 import { createTurnActivity, settleCurrentTurnActivity } from '../components/thread/turn-activity'
 
 interface BridgesLike {
+  stopBridge?: (bridgeId: string) => void
   ensureBridge: (
     tabId: string,
     agentId: string,
@@ -31,6 +32,7 @@ interface PtyLike {
 }
 
 export interface SendChatSessionPromptArgs {
+  signal?: AbortSignal
   text: string
   activeWs: string
   activeTabId: string
@@ -248,7 +250,7 @@ export async function sendChatSessionPrompt(opts: SendChatSessionPromptArgs): Pr
     crewcoderApprovalMode,
   } = opts
 
-  if (!text.trim() || !activeWs) return
+  if (!text.trim() || !activeWs || opts.signal?.aborted) return
 
   const agent = agents.find(a => a.id === activeAgentId)
   if (!agent) {
@@ -259,10 +261,11 @@ export async function sendChatSessionPrompt(opts: SendChatSessionPromptArgs): Pr
 
   const trimmed = text.trim()
   const time = new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
+  const activity = agent.transport === 'bridge' ? createTurnActivity(trimmed, time) : undefined
   setMessages(m => [
     ...m,
     { kind: 'user', text: trimmed, time, attachments },
-    ...(agent.transport === 'bridge' ? [createTurnActivity(trimmed, time)] : []),
+    ...(activity ? [activity] : []),
   ])
 
   const { pending, preamble: skillPreamble } = buildSkillPreamble(enabledSkills, skillsDeliveredTo(sessActive))
@@ -297,7 +300,6 @@ export async function sendChatSessionPrompt(opts: SendChatSessionPromptArgs): Pr
     ? '\n\n<attachments>\n' + attachments.map(attachment => `@${attachment.rel}`).join('\n') + '\n</attachments>\n'
     : ''
   const wireText = `${modePreamble}${delegationBlock}${skillPreamble}${reportBlock}${trimmed}${attachBlock}`
-  if (shouldSendDelegation) markDelegationDelivered?.(sessActive)
   const handoffId = promptOptions?.handoff ? `handoff-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}` : null
   const updateHandoff = (status: 'completed' | 'failed', message: string, percent: number) => {
     if (!handoffId) return
@@ -356,7 +358,18 @@ export async function sendChatSessionPrompt(opts: SendChatSessionPromptArgs): Pr
           sessActive, agent.id, provider, effectivePath, model || undefined, effort, mode, undefined, force, mcpServers, !!promptOptions?.handoff, externalDirectories,
         )
 
+    const stopped = (bridgeId?: string): boolean => {
+      if (!opts.signal?.aborted) return false
+      // Startup can finish after Stop, so retire its result before forwarding.
+      if (bridgeId) bridges.stopBridge?.(bridgeId)
+      setMessages(m => m.map(message => message.kind === 'activity' && message.activityRunId === activity?.activityRunId
+        && (message.status === 'pending' || message.status === 'in_progress')
+        ? { ...message, status: 'interrupted', activeForm: 'Request interrupted' } : message))
+      updateHandoff('failed', 'handoff interrupted', 100)
+      return true
+    }
     const r1 = await ensure(false)
+    if (stopped('bridgeId' in r1 ? r1.bridgeId : undefined)) return
     if ('error' in r1) {
       setMessages(m => settleCurrentTurnActivity(m, 'interrupted'))
       updateHandoff('failed', 'handoff failed before the next agent started', 100)
@@ -368,8 +381,10 @@ export async function sendChatSessionPrompt(opts: SendChatSessionPromptArgs): Pr
     // Self-heal: the renderer can hold a bridge id whose process main no longer
     // has (agent crash, or a cached id gone stale). Force a fresh bridge once
     // and retry rather than dead-ending on "bridge not found".
+    if (stopped(r1.bridgeId)) return
     if (!res.ok && res.error === 'bridge not found') {
       const r2 = await ensure(true)
+      if (stopped('bridgeId' in r2 ? r2.bridgeId : undefined)) return
       if ('error' in r2) {
         setMessages(m => settleCurrentTurnActivity(m, 'interrupted'))
         updateHandoff('failed', 'handoff failed before the next agent started', 100)
@@ -384,6 +399,7 @@ export async function sendChatSessionPrompt(opts: SendChatSessionPromptArgs): Pr
       updateHandoff('failed', 'handoff failed', 100)
       setMessages(m => [...m, { kind: 'system', time, tone: 'error', text: res.error ?? 'prompt failed' }])
     } else {
+      if (shouldSendDelegation) markDelegationDelivered?.(sessActive)
       updateHandoff('completed', 'handoff complete', 100)
     }
     return
@@ -392,4 +408,5 @@ export async function sendChatSessionPrompt(opts: SendChatSessionPromptArgs): Pr
   let pane = activeAgentPane
   if (!pane || !pane.live) pane = pty.addAgent(activeWs, activeTabId, agent.id, agent.name, effectivePath, agent.path)
   pty.write(pane.paneId, wireText + '\n')
+  if (shouldSendDelegation) markDelegationDelivered?.(sessActive)
 }

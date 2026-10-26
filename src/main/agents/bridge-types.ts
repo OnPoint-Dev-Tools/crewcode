@@ -1,3 +1,4 @@
+import type { ProviderCompactionPolicy } from '../../shared/provider-compaction-policy'
 // Normalized event stream shared by all agent providers.
 // Each provider (pi, opencode, claude/code-stream) maps its native events to these.
 
@@ -35,6 +36,7 @@ export interface ContextCategory {
 }
 
 export interface TurnUsage {
+  compactionPolicy?: ProviderCompactionPolicy
   inputTokens?:   number
   outputTokens?:  number
   totalTokens?:   number
