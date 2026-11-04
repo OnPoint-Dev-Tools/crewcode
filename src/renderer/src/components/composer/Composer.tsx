@@ -366,9 +366,9 @@ export function Composer({
     }
     if (!composerHasText) return
     resetHistoryNavigation()
+    // The send owner clears attachments after placement accepts the send;
+    // clearing here races its asynchronous gate and drops the provider references.
     onSend()
-    // Clear chips after the message ships so they don't linger in the composer.
-    if (attachments.length > 0) setAttachments([])
   }
 
   // Keep workspace/session switches snappy: file discovery can walk large repos

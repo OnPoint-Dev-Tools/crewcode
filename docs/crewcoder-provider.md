@@ -43,7 +43,7 @@ session-scoped approval picker for **General**, **CrewCoder**, **Plugin**,
 - **Review** (`review`) lets safe calls proceed and asks for mutations and dangerous calls.
 - **Always** (`always`) asks for every non-safe call.
 - **Never** (`never`) shows no prompts while continuing to block dangerous calls.
-- **Full access** (`full-access`) accepts calls without prompts.
+- **Full access** (`full-access`) accepts tool calls; external services may still request consent.
 - **Sandboxed** (`sandboxed`) shows no prompts and runs non-dangerous calls through the sandbox policy where supported.
 
 The selected policy survives profile changes, including Configured default.
@@ -52,7 +52,29 @@ drops only the idle CrewCoder bridge and native-resumes it on the next prompt;
 both controls are disabled during a running turn. Full access is an explicit
 authority escalation: CrewCoder stops emitting approval requests and permits
 dangerous commands, so CrewCode's permission overlay and dangerous-command
-tripwire cannot interpose on those provider-native calls.
+tripwire cannot interpose on those provider-native calls. Updated CrewCoder
+versions keep Codex MCP computer-use consent and additional-permission requests
+interactive even under Full access; these are separate from tool-call approval.
+
+CrewCoder's nested Codex adapter must answer MCP elicitations explicitly, just
+like CrewCode's direct Codex bridge. Use Review for interactive approval, or
+Full access when automatic tool approval is intended. Never and Sandboxed can
+auto-reject service consent upstream. The installed CrewCoder runtime must
+include this fix; editing CrewCode alone cannot update the child process.
+This repairs configured Codex computer-use tools. A common computer-use backend
+for Claude and other providers is a separate integration; it is not supplied by
+changing an approval policy. See CrewCoder's `docs/CODEX_CLI_PROVIDER.md`.
+
+The current direction is to reuse each provider's existing computer-use
+integration where available. A universal CrewCode/CrewCoder computer-use layer
+is deferred. Model capability alone does not establish availability: the active
+adapter must expose the tools and route consent. Claude's native computer-use
+integration cannot currently be reused through CrewCoder's non-interactive
+Agent SDK transport. Anthropic documents the CLI feature as macOS-only and
+interactive-only; Windows support in Claude Desktop does not expose it through
+the Agent SDK. See [Claude Code computer use](https://code.claude.com/docs/en/computer-use).
+Do not enable all MCP servers or broaden native tools to work around this limit.
+A separately configured automation service would be a different integration.
 
 A concrete CrewCoder profile also owns the agent's behavioral mode, so CrewCode
 locks its separate execution policy to **Build** and disables the
@@ -220,6 +242,19 @@ blocked-pending, completed, owner, and display-number semantics as the
 CrewCoder TUI, including active → pending → completed ordering.
 
 ## Mode and permission enforcement
+
+Provider questions use the negotiated `_crewcoder/request_question` extension
+and the shared agent request card, separately from ACP tool approvals. They
+remain answerable in every composer mode and are never automatically answered
+by Full Access. Provider permission requests still obey the active write policy
+and show their exact command or requested access. See
+[Agent activity overlay](agent-activity-overlay.md).
+
+Never deliberately prevents native sandbox escalation and may reject
+computer-use consent before a card can be shown. Select Review for interactive
+approvals or Full access for automatic tool approval with service consent.
+Do not reinterpret an explicit Never selection or automatically make `.git`
+writable to bypass that policy.
 
 CrewCoder starts with the session's selected `--approval` policy in every agent
 profile, defaulting to `review`. CrewCode applies the current composer mode

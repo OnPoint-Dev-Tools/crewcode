@@ -35,7 +35,7 @@ describe('CrewCoder filesystem custody handshake', () => {
   it('keeps ACP file capabilities separate from virtual custody', () => {
     expect(crewCoderInitializeParams()).toEqual(expect.objectContaining({
       clientCapabilities: { fs: { readTextFile: true, writeTextFile: true }, terminal: false },
-      _meta: { 'crewcode/virtualFilesystem': false },
+      _meta: { 'crewcode/virtualFilesystem': false, 'crewcoder/questions': { version: 1 } },
     }))
   })
 
@@ -130,6 +130,43 @@ function crewCoderAcpHarness(options: { directoryError?: string; compact?: boole
   })
   return { proc, sent }
 }
+
+describe('CrewCoder question transport', () => {
+  it.each(['full', 'ask'] as const)('shows questions without permission filtering in %s mode', async mode => {
+    const harness = crewCoderAcpHarness()
+    spawnAgentProcess.mockResolvedValue({ proc: harness.proc, dir: '/repo', remote: false })
+    const requestUser = vi.fn().mockResolvedValue({ requestId: 'ui', action: 'submit', optionId: 'choice-0' })
+    const events: BridgeEvent[] = []
+    const bridge = await createCrewCoderBridge('crewcoder', { bridgeId: 'q', provider: 'crewcoder', cwd: '/repo', mode }, event => events.push(event), requestUser)
+    await bridge.prompt('work')
+    harness.proc.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: 'question-rpc', method: '_crewcoder/request_question', params: {
+      sessionId: 'session-1', version: 1, requestId: 'q1', kind: 'question', title: 'Which approach?', options: [{ label: 'Small change', value: 'minimal' }],
+    } })}\n`)
+    await vi.waitFor(() => expect(harness.sent.find(frame => frame.id === 'question-rpc')?.result).toEqual({ cancelled: false, value: 'minimal' }))
+    expect(requestUser).toHaveBeenCalledWith(expect.objectContaining({ kind: 'select', title: 'Which approach?', options: [{ id: 'choice-0', label: 'Small change', description: undefined }] }), expect.any(AbortSignal))
+    const prompt = harness.sent.find(frame => frame.method === 'session/prompt')!
+    harness.proc.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: prompt.id, result: { stopReason: 'end_turn' } })}\n`)
+    await vi.waitFor(() => expect(events.some(event => event.type === 'turn_end')).toBe(true))
+  })
+
+  it('withdraws the exact pending card on provider cancellation', async () => {
+    const harness = crewCoderAcpHarness()
+    spawnAgentProcess.mockResolvedValue({ proc: harness.proc, dir: '/repo', remote: false })
+    const requestUser = vi.fn((_request, signal?: AbortSignal) => new Promise<{ requestId: string; action: 'cancel' }>(resolve => {
+      signal?.addEventListener('abort', () => resolve({ requestId: 'ui', action: 'cancel' }), { once: true })
+    }))
+    const bridge = await createCrewCoderBridge('crewcoder', { bridgeId: 'q', provider: 'crewcoder', cwd: '/repo', mode: 'build' }, () => {}, requestUser)
+    await bridge.prompt('work')
+    harness.proc.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: 900, method: '_crewcoder/request_question', params: {
+      sessionId: 'session-1', version: 1, requestId: 'q1', kind: 'question', title: 'Anything else?',
+    } })}\n`)
+    await vi.waitFor(() => expect(requestUser).toHaveBeenCalledOnce())
+    harness.proc.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', method: '_crewcoder/question_cancelled', params: { sessionId: 'session-1', requestId: 'q1' } })}\n`)
+    await vi.waitFor(() => expect(harness.sent.find(frame => frame.id === 900)?.result).toEqual({ cancelled: true }))
+    const prompt = harness.sent.find(frame => frame.method === 'session/prompt')!
+    harness.proc.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: prompt.id, result: { stopReason: 'cancelled' } })}\n`)
+  })
+})
 
 describe('CrewCoder native compaction', () => {
   it('exposes compact only when advertised and calls session/compact without fabricating a turn', async () => {

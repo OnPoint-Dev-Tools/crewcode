@@ -24,12 +24,26 @@ Update corresponding Docs in [CrewCode Docs](/docs/), and [AGENTS.md](/AGENTS.md
 
 ## Agent Notes
 
+Codex Full Access must keep `on-request` so MCP computer-use consent can reach
+the bridge's approval rules. CrewCoder's nested Codex adapter must also answer
+MCP elicitations explicitly; native Full access does not erase a service's own
+consent. Preserve Never/Sandboxed and hosted-tool lockdown. Configured native
+computer-use tools are provider-specific, not a universal backend. See
+`docs/crewcoder-provider.md` and `docs/chat-artifacts.md`.
+Reuse provider-specific computer-use integrations where available; a universal
+layer is deferred. Claude's built-in CLI computer use is documented as
+macOS-only and interactive-only, so it cannot currently be reused through
+CrewCoder's non-interactive Agent SDK transport. Do not imply Claude Desktop
+Windows support applies to the SDK or relax MCP isolation as a workaround.
+
 Image files open read-only in Code Editor tabs; chat attachments and agent
 Markdown images/image links open the shared in-app viewer. Use the typed
 `fsReadDataUrl` boundary for workspace images, retaining the bounded local/SSH
 read path. Render SVG only as an inert image; never turn it into an active app
 document or persist image bytes in editor-session state. Keep generated-code
-artifact sandboxing separate. See `docs/image-viewer.md`.
+artifact sandboxing separate. Clear composer attachments only after the send
+captures them and asynchronous placement accepts; cancellation must preserve the
+unsent files. See `docs/image-viewer.md`.
 
 Chat artifacts use the sandboxed Artifacts panel for HTML/SVG fences and supported
 workspace/HTTP links. Keep generated scripts in an opaque iframe without native
@@ -170,6 +184,11 @@ agent exits, or replies from the L1 cache, L2 transcript hydration, continuity
 reconciliation, startup, or session switching. Preserve global delivery for
 newly appended live errors and active-scope delivery for live agent-exit
 warnings. See `docs/notifications.md`.
+
+CrewCoder negotiates `_crewcoder/request_question` for nested provider questions
+and permission details. Keep questions separate from permission-option filtering
+and Full Access auto-approval; preserve free text, choices, and cancellation.
+Never remains an explicit non-interactive approval policy.
 
 Provider questions use the shared `AgentRequestCard` overlay: option buttons for
 choice questions (short Yes/No sets on one row), toggles for multi-select, and an

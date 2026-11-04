@@ -519,13 +519,17 @@ export function ChatPane({
           chatSessions.update(tabId, sessActive, { label: nextLabel })
         }
       }
-      if (overrideText === undefined) await latest.send()
-      else if (text === '/compact') await latest.send(text)
-      else await latest.sendText(text, attachmentsRef.current)
+      const sending = overrideText === undefined ? latest.send()
+        : text === '/compact' ? latest.send(text)
+        : latest.sendText(text, attachmentsRef.current)
+      // Send captures attachments synchronously. Clear only after the placement
+      // gate accepts, so cancelled sends keep their draft and files together.
+      if (text !== '/compact') setAttachments([])
+      await sending
     } finally {
       setSendInFlight(false)
     }
-  }, [placement.ensure, activeSession?.label, attachmentsRef, chatSessions, composer, messages.length, openHandoff, send, sendText, sessActive, setComposer, tabId, workspace.name])
+  }, [placement.ensure, activeSession?.label, attachmentsRef, chatSessions, composer, messages.length, openHandoff, send, sendText, sessActive, setAttachments, setComposer, tabId, workspace.name])
 
   const queueFollowUp = useCallback(async () => {
     const text = composer.trim()

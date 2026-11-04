@@ -32,6 +32,9 @@ For SSH workspaces, loopback HTTP previews require explicit port forwarding:
 workspace host. The panel explains this rather than loading the wrong machine.
 
 Codex browser automation is separate from this panel and the Electron browser.
+Full Access uses Codex's `on-request` approval policy so MCP consent can reach
+the bridge. The bridge applies the mode's automatic approval rules; `never`
+would prevent the service from asking for consent in the first place.
 The app-server bridge handles `mcpServer/elicitation/request` using MCP's
 `action`/`content` response. Full Access automatically accepts consent-only forms;
 forms requesting data and URL-based authentication remain interactive. Structured

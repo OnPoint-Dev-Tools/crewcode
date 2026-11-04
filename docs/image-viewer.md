@@ -5,6 +5,11 @@ tabs are read-only: they never decode binary bytes as text or expose formatting
 and saving. Restored tabs retain their file identity and reload the image through
 the workspace client; image data is not stored in editor-session persistence.
 
+Chat attachments stay in the draft while delegation placement is pending or
+cancelled. Once a send is accepted, its images are captured in the visible user
+message and workspace attachment references are included in the agent prompt
+before the composer clears its chips.
+
 Chat attachment thumbnails open an image modal. Agent replies can provide
 Markdown image syntax (`![Preview](renders/preview.png)`) or a normal image link
 (`[Preview](renders/preview.png)`); both open the image inside the app. Markdown

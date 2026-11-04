@@ -15,6 +15,7 @@ import { contextWindowFor } from './model-context'
 import { enrichUsageContextWindow } from './openrouter-model-context'
 import { tripwireForToolCall } from './dangerous-command'
 import { normalizeCrewCoderApprovalMode, normalizeCrewCoderMode } from '../../shared/crewcoder-types'
+import { parseCrewCoderQuestion, crewCoderQuestionAnswer } from './crewcoder-question'
 
 // CrewCoder is an ACP agent. CrewCode is the client: it spawns `crewcoder acp`
 // and maps the newline-delimited JSON-RPC stream onto the shared BridgeEvent API.
@@ -436,7 +437,7 @@ export function crewCoderInitializeParams(): Record<string, unknown> {
     // and SSH roots. ACP file methods remain available for host-mediated text
     // I/O, but this is not a virtual filesystem boundary: provider-native file
     // tools and transports operate on the same host and workspace.
-    _meta: { 'crewcode/virtualFilesystem': false },
+    _meta: { 'crewcode/virtualFilesystem': false, 'crewcoder/questions': { version: 1 } },
   }
 }
 
@@ -447,6 +448,11 @@ export async function createCrewCoderBridge(
   requestUser?: RequestUserFn,
 ): Promise<AgentBridge> {
   const args = ['acp', '--approval', normalizeCrewCoderApprovalMode(opts.crewcoderApprovalMode)]
+  const openQuestions = new Map<string, AbortController>()
+  function cancelQuestions(): void {
+    for (const controller of openQuestions.values()) controller.abort()
+    openQuestions.clear()
+  }
   if (opts.crewcoderMode) args.push('--mode', normalizeCrewCoderMode(opts.crewcoderMode))
   const selectedModel = splitModel(opts.model)
   const env: Record<string, string> = { ...(opts.env ?? {}) }
@@ -575,6 +581,7 @@ export async function createCrewCoderBridge(
   }
 
   async function endTurn(): Promise<void> {
+    cancelQuestions()
     if (!currentTurnId) return
     const turnId = currentTurnId
     const turnTools = tools
@@ -703,6 +710,26 @@ export async function createCrewCoderBridge(
     promptWatchdog?.activity()
     const params = requestMessage.params ?? {}
     try {
+      if (requestMessage.method === '_crewcoder/request_question') {
+        if (!sessionId || params.sessionId !== sessionId || !currentTurnId) throw new Error('CrewCoder question does not belong to the active session and turn')
+        const question = parseCrewCoderQuestion(params, currentTurnId)
+        if (openQuestions.has(question.requestId)) throw new Error('Duplicate CrewCoder question request')
+        if (!requestUser || (question.permission && writeBlocked(opts))) {
+          send({ jsonrpc: '2.0', id: requestMessage.id, result: { cancelled: true } })
+          return
+        }
+        const controller = new AbortController()
+        openQuestions.set(question.requestId, controller)
+        promptWatchdog?.pause()
+        try {
+          const response = await requestUser(question.request, controller.signal)
+          send({ jsonrpc: '2.0', id: requestMessage.id, result: controller.signal.aborted ? { cancelled: true } : crewCoderQuestionAnswer(question, response) })
+        } finally {
+          openQuestions.delete(question.requestId)
+          if (!openQuestions.size) promptWatchdog?.resume()
+        }
+        return
+      }
       if (requestMessage.method === 'session/request_permission') {
         await handlePermissionRequest(requestMessage, params)
         return
@@ -787,6 +814,11 @@ export async function createCrewCoderBridge(
       void handleAgentRequest(message as unknown as AcpRequestIn)
       return
     }
+    if (message.method === '_crewcoder/question_cancelled') {
+      const params = record(message.params)
+      if (params?.sessionId === sessionId && typeof params.requestId === 'string') openQuestions.get(params.requestId)?.abort()
+      return
+    }
     if (typeof message.method === 'string' && message.method === 'session/update') {
       const params = record(message.params)
       const update = record(params?.update)
@@ -825,6 +857,7 @@ export async function createCrewCoderBridge(
   })
 
   proc.on('close', code => {
+    cancelQuestions()
     for (const [, entry] of pending) {
       entry.stopTimeout()
       entry.reject(new Error(`crewcoder acp closed before responding (code ${String(code)})`))
@@ -834,6 +867,7 @@ export async function createCrewCoderBridge(
   })
 
   proc.on('error', error => {
+    cancelQuestions()
     emit({ type: 'error', bridgeId: opts.bridgeId, message: `crewcoder spawn failed: ${error.message}` })
     emit({ type: 'closed', bridgeId: opts.bridgeId, code: null })
   })
@@ -951,12 +985,14 @@ export async function createCrewCoderBridge(
       return { ok: true }
     },
     async abort() {
+      cancelQuestions()
       if (!sessionId) return
       // ACP session/cancel is a notification. The prompt response still settles
       // with stopReason=cancelled and owns the normalized turn_end.
       notify('session/cancel', { sessionId })
     },
     async stop() {
+      cancelQuestions()
       stopping = true
       if (sessionId) notify('session/cancel', { sessionId })
       try { proc.stdin.end() } catch { /* already closed */ }

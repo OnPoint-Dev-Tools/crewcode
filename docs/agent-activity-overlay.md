@@ -78,7 +78,22 @@ Provider mapping — only structured, provider-issued questions reach this card:
 | Codex | app-server `item/tool/requestUserInput` (legacy `tool/requestUserInput` alias), one card per question | when the question sets `isOther` or has no options |
 | OpenCode | `question` SSE request | unless `custom: false` |
 | Pi | extension UI `select` / `input` / `editor` | per method |
-| CrewCoder | `crewcoder_clarify` workflow card (above) | reply box |
+| CrewCoder | negotiated `_crewcoder/request_question` for provider questions; `crewcoder_clarify` workflow card (above) | provider free text/Other and clarify reply box |
+
+CrewCode advertises `_meta["crewcoder/questions"].version: 1` on ACP initialize.
+Updated CrewCoder forwards nested Codex `requestUserInput` and Claude
+`AskUserQuestion` through `_crewcoder/request_question`, retaining original
+option values, descriptions, free-text availability, multi-select toggles, and
+secret input flags.
+Questions use `select`/`prompt` cards and remain interactive in Ask/Plan/Full;
+they never pass through permission-option filtering or Full Access auto-approval.
+Actual provider approval requests carry `kind: permission`, show the requested
+command or filesystem/network scope, and retain read-only mode restrictions.
+CrewCode returns only once/turn permission choices, never session-wide grants.
+Stop, process exit, turn completion, and the exact
+`_crewcoder/question_cancelled` notification abort the pending card. Empty or
+cancelled responses never become answers. Older ACP clients without the
+capability retain option-only permission transport; they cannot collect free text.
 
 Codex answers are returned as `{ answers: { [questionId]: { answers: string[] } } }`. A cancelled, empty, or out-of-contract answer (typed text where Codex offered no "Other") fails the whole request with an explicit JSON-RPC error; Codex never receives a fabricated or empty answer. When Codex settles a request itself (`serverRequest/resolved`, e.g. non-blocking questions) or the app-server exits, the bridge aborts the pending `RequestUserFn` signal: the promise settles as `cancel` and the card is retracted with `user_request_resolved`.
 

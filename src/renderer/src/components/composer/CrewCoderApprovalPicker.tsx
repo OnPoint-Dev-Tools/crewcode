@@ -8,7 +8,7 @@ export function crewCoderApprovalItems() {
     { id: 'review', label: 'Review', sub: 'Safe calls proceed; mutations and dangerous calls ask' },
     { id: 'always', label: 'Always', sub: 'Every non-safe call asks for permission' },
     { id: 'never', label: 'Never', sub: 'No prompts; dangerous calls remain blocked' },
-    { id: 'full-access', label: 'Full access', sub: 'No prompts; all calls are accepted' },
+    { id: 'full-access', label: 'Full access', sub: 'Accepts tool calls; external services may still ask for consent' },
     { id: 'sandboxed', label: 'Sandboxed', sub: 'No prompts; non-dangerous calls use the sandbox policy' },
   ] satisfies Array<{ id: CrewCoderApprovalMode; label: string; sub: string }>
 }

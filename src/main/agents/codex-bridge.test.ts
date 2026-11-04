@@ -8,7 +8,7 @@ describe('codex bridge mode config', () => {
     ['ask', 'read-only', 'untrusted', true],
     ['plan', 'read-only', 'untrusted', true],
     ['build', 'workspace-write', 'on-request', false],
-    ['full', 'workspace-write', 'never', false],
+    ['full', 'workspace-write', 'on-request', false],
   ] as const)('maps %s to the expected sandbox and approval policy', (mode, sandbox, approvalPolicy, readOnlyTools) => {
     const config = getModeConfig(mode)
 

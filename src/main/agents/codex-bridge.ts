@@ -56,7 +56,8 @@ export function getModeConfig(mode?: ModeLevel, toolPolicy?: BridgeStartOpts['to
     case 'build':
       return { sandbox: 'workspace-write' as const, approvalPolicy: 'on-request' as const, allowTools: null }
     case 'full':
-      return { sandbox: 'workspace-write' as const, approvalPolicy: 'never' as const, allowTools: null }
+      // The bridge handles approvals; never would suppress MCP computer-use consent upstream.
+      return { sandbox: 'workspace-write' as const, approvalPolicy: 'on-request' as const, allowTools: null }
     default:
       return { sandbox: 'workspace-write' as const, approvalPolicy: 'on-request' as const, allowTools: null }
   }
