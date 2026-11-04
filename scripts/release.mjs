@@ -13,7 +13,8 @@ const capture = args =>
 
 const git = args => execFileSync('git', args, { stdio: 'inherit' })
 const npm = args =>
-  execFileSync(process.platform === 'win32' ? 'npm.cmd' : 'npm', args, {
+  // Invoke npm's JavaScript entry directly because Windows cannot exec a .cmd file.
+  execFileSync(process.execPath, [process.env.npm_execpath, ...args], {
     // Release verification and `npm version` are deliberately non-interactive.
     // Inheriting a shell PTY's stdin lets nested test/git processes participate
     // in fish job control and can suspend the entire release with SIGTTIN.

@@ -182,3 +182,5 @@ are distribution-only formats — users on those reinstall manually.
 `.github/workflows/ci.yml` runs `typecheck` + `test` on pushes to `main` and on
 PRs. Both workflows install with `--legacy-peer-deps` (xterm's peer range
 conflicts with the installed React major).
+
+On Windows, release subprocesses invoke npm's JavaScript entry through Node to preserve argument boundaries without executing a batch launcher directly.
