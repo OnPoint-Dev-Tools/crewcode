@@ -104,12 +104,24 @@ export function useComposerSend(opts: UseComposerSendOpts) {
     workspaceName, workspaceBranch, externalDirectories, onSessionUsed,
   } = opts
   const crewcoderMode = rawCrewCoderMode
-  const pendingSends = useRef(new Set<AbortController>())
+  const pendingSends = useRef(new Map<AbortController, string>())
   const cancelPendingSend = useCallback(() => {
-    for (const controller of pendingSends.current) controller.abort()
-    pendingSends.current.clear()
-  }, [])
-  useEffect(() => cancelPendingSend, [sessActive, activeAgentId, effectivePath, cancelPendingSend])
+    for (const [controller, sessionId] of pendingSends.current) {
+      if (sessionId !== sessActive) continue
+      controller.abort()
+      pendingSends.current.delete(controller)
+    }
+  }, [sessActive])
+  const sendScopeRef = useRef({ sessActive, activeAgentId, effectivePath })
+  useEffect(() => {
+    const previous = sendScopeRef.current
+    sendScopeRef.current = { sessActive, activeAgentId, effectivePath }
+    // Navigation only changes the visible pane. A submitted prompt still owns
+    // its original session; cancel only an actual change to that session's host.
+    if (previous.sessActive === sessActive && (previous.activeAgentId !== activeAgentId || previous.effectivePath !== effectivePath)) {
+      cancelPendingSend()
+    }
+  }, [sessActive, activeAgentId, effectivePath, cancelPendingSend])
 
   const pendingHandoffRef = useRef<Record<string, { fromProvider: string; toProvider: string }>>({})
 
@@ -218,7 +230,7 @@ export function useComposerSend(opts: UseComposerSendOpts) {
         }
       : undefined
     const controller = new AbortController()
-    pendingSends.current.add(controller)
+    pendingSends.current.set(controller, sessActive)
     try {
       await sendChatSessionPrompt({
         signal: controller.signal,
@@ -286,7 +298,7 @@ export function useComposerSend(opts: UseComposerSendOpts) {
       }
       if (agent.transport === 'bridge') {
         const controller = new AbortController()
-        pendingSends.current.add(controller)
+        pendingSends.current.set(controller, sessActive)
         const stopped = (bridgeId?: string) => {
           if (!controller.signal.aborted) return false
           if (bridgeId) getCrewCodeClient().bridgeStop(bridgeId)

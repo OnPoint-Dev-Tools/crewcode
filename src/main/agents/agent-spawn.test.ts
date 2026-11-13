@@ -1,12 +1,24 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { spawnAgentProcess } from './agent-spawn'
 
-const { spawn, execRemoteStream } = vi.hoisted(() => ({ spawn: vi.fn(() => ({})), execRemoteStream: vi.fn() }))
-vi.mock('child_process', () => ({ spawn }))
+const { spawn, execFile, execRemoteStream } = vi.hoisted(() => ({
+  spawn: vi.fn(() => ({ pid: 123, exitCode: null, signalCode: null, kill: vi.fn(() => true) })),
+  execFile: vi.fn(), execRemoteStream: vi.fn(),
+}))
+vi.mock('child_process', () => ({ spawn, execFile }))
 vi.mock('../remote/ssh-pool', () => ({ execRemoteStream }))
-afterEach(() => { vi.restoreAllMocks(); spawn.mockClear() })
+afterEach(() => { vi.restoreAllMocks(); spawn.mockClear(); execFile.mockClear() })
 
 describe('local agent spawning', () => {
+  it('kills only the selected owned Windows process tree', async () => {
+    vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    const { proc } = await spawnAgentProcess({ command: 'C:/bin/codex.exe', args: [], cwd: 'C:/project' })
+    proc.kill()
+    proc.kill()
+    expect(execFile).toHaveBeenCalledOnce()
+    expect(execFile).toHaveBeenCalledWith(expect.stringMatching(/taskkill.exe$/i),
+      ['/PID', '123', '/T', '/F'], { windowsHide: true }, expect.any(Function))
+  })
   it('routes Windows npm launchers through cmd.exe', async () => {
     vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
     await spawnAgentProcess({ command: 'C:/CLI Tools/crewcoder.cmd', args: ['acp'], cwd: 'C:/project' })

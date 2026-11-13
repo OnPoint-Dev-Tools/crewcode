@@ -487,6 +487,27 @@ export function useAgentBridge({ setMessagesForTab, bridgeToTab, bridgeToCwd, br
           return
         }
 
+        case 'thinking_snapshot': {
+          closeThinkingSegment(ev.turnId)
+          // Snapshot bookkeeping must not split an interleaved dialogue stream into token bubbles.
+          const segmentId = JSON.stringify([ev.bridgeId, ev.turnId, 'progress', ev.itemId])
+          setMessagesForTab(tabId, messages => {
+            const index = messages.findIndex(m => m.kind === 'thinking' && m.segmentId === segmentId)
+            const previous = index >= 0 ? messages[index] : undefined
+            const message: Extract<Message, { kind: 'thinking' }> = {
+              kind: 'thinking', time: previous?.time ?? nowTime(), turnId: ev.turnId,
+              segmentId, text: ev.text, chunks: appendStreamChunk(undefined, ev.text),
+              streaming: !ev.completed,
+            }
+            // Preserve row identity and position when an authoritative item is corrected.
+            if (index < 0) return ev.text ? [...messages, message] : messages
+            const next = [...messages]
+            next[index] = message
+            return next
+          })
+          return
+        }
+
         case 'thinking_delta': {
           enqueueStreamDelta(ev.bridgeId, tabId, ev.turnId, 'thinking', ev.delta)
           return

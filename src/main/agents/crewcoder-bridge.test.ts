@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events'
+import { promises as fsp } from 'node:fs'
 import { PassThrough } from 'node:stream'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { BridgeEvent } from './bridge-types'
 
 const spawnAgentProcess = vi.hoisted(() => vi.fn())
@@ -46,8 +47,11 @@ describe('CrewCoder filesystem custody handshake', () => {
   })
 })
 
+beforeEach(() => { vi.spyOn(fsp, 'appendFile').mockResolvedValue(undefined) })
+
 afterEach(() => {
   vi.useRealTimers()
+  vi.restoreAllMocks()
   spawnAgentProcess.mockReset()
 })
 
@@ -209,6 +213,51 @@ describe('CrewCoder native compaction', () => {
 })
 
 describe('CrewCoder ACP errors', () => {
+  it.each([
+    { code: null, signal: 'SIGTERM', status: 'signal SIGTERM' },
+    { code: 1, signal: null, status: 'code 1' },
+    { code: null, signal: null, status: 'no exit status reported' },
+  ])('reports $status and the stderr tail when the ACP process exits', async ({ code, signal, status }) => {
+    const harness = crewCoderAcpHarness()
+    spawnAgentProcess.mockResolvedValue({ proc: harness.proc, dir: '/repo', remote: false })
+    const events: BridgeEvent[] = []
+    const bridge = await createCrewCoderBridge('crewcoder', {
+      bridgeId: 'exiting', provider: 'crewcoder', cwd: '/repo', mode: 'build',
+    }, event => events.push(event))
+    await bridge.prompt('work')
+    harness.proc.stderr.write('Unexpected provider shutdown')
+    harness.proc.emit('close', code, signal)
+    await vi.waitFor(() => expect(events.some(event => event.type === 'closed')).toBe(true))
+    expect(events.filter(event => event.type === 'error')).toEqual([{
+      type: 'error', bridgeId: 'exiting',
+      message: `crewcoder acp exited (${status}): Unexpected provider shutdown`,
+    }])
+    expect(await bridge.prompt('do not replay')).toMatchObject({ ok: false })
+    expect(harness.sent.filter(frame => frame.method === 'session/prompt')).toHaveLength(1)
+    expect(fsp.appendFile).toHaveBeenCalledWith(expect.stringContaining('crewcode-crewcoder-lifecycle.jsonl'),
+      expect.stringContaining('"stopRequested":false'), expect.objectContaining({ mode: 0o600 }))
+  })
+
+  it('keeps an explicitly stopped ACP process exit quiet', async () => {
+    vi.useFakeTimers()
+    const harness = crewCoderAcpHarness()
+    spawnAgentProcess.mockResolvedValue({ proc: harness.proc, dir: '/repo', remote: false })
+    const events: BridgeEvent[] = []
+    const bridge = await createCrewCoderBridge('crewcoder', {
+      bridgeId: 'stopping', provider: 'crewcoder', cwd: '/repo', mode: 'build',
+    }, event => events.push(event))
+    await bridge.stop()
+    harness.proc.emit('close', null, 'SIGTERM')
+    await Promise.resolve()
+    expect(events.some(event => event.type === 'error')).toBe(false)
+    const records = vi.mocked(fsp.appendFile).mock.calls.map(call => JSON.parse(String(call[1])) as Record<string, unknown>)
+    expect(records).toEqual([
+      expect.objectContaining({ event: 'stop_requested', bridgeId: 'stopping', caller: expect.stringContaining('CrewCode requested ACP stop') }),
+      expect.objectContaining({ event: 'exit', code: null, signal: 'SIGTERM', stopRequested: true, stderr: '' }),
+    ])
+    await vi.runAllTimersAsync()
+  })
+
   it('prefers actionable RequestError data over the generic JSON-RPC message', () => {
     expect(crewCoderAcpErrorMessage({
       code: -32603,
@@ -439,6 +488,41 @@ describe('CrewCoder ACP prompt inactivity watchdog', () => {
 })
 
 describe('CrewCoder ACP update projection', () => {
+  it('renders mirrored commentary once while preserving the final answer', () => {
+    const state = createCrewCoderToolProjectionState()
+    let text = ''
+    const events: BridgeEvent[] = []
+    for (const delta of ['Yes', '—I', '’ll', ' keep', ' Crew', 'Coder', ' thinking.']) {
+      text += delta
+      events.push(...crewCoderEventsFromUpdate({
+        sessionUpdate: 'agent_thought_chunk', content: { type: 'text', text: delta },
+        _meta: { 'crewcoder/progress': { itemId: 'c1', kind: 'commentary', text, completed: false } },
+      }, 'bridge', 'turn', state))
+      events.push(...crewCoderEventsFromUpdate({
+        sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: delta },
+      }, 'bridge', 'turn', state))
+    }
+    expect(events.every(e => e.type === 'thinking_snapshot')).toBe(true)
+    expect(crewCoderEventsFromUpdate({
+      sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Fixed.' },
+    }, 'bridge', 'turn', state)).toEqual([{
+      type: 'text_delta', bridgeId: 'bridge', turnId: 'turn', delta: 'Fixed.',
+    }])
+  })
+
+  it('prefers authoritative progress snapshots even with empty portable text', () => {
+    for (const text of ['Corrected reasoning', '']) {
+      expect(crewCoderEventsFromUpdate({
+        sessionUpdate: 'agent_thought_chunk',
+        content: { type: 'text', text: 'duplicated portable fallback' },
+        _meta: { 'crewcoder/progress': { itemId: 'r1', kind: 'summary', text, completed: true } },
+      }, 'bridge', 'turn', createCrewCoderToolProjectionState())).toEqual([{
+        type: 'thinking_snapshot', bridgeId: 'bridge', turnId: 'turn',
+        itemId: '["summary","r1"]', text, completed: true,
+      }])
+    }
+  })
+
   it('preserves genuine short reasoning that ends in an ellipsis', () => {
     const events = crewCoderEventsFromUpdate({
       sessionUpdate: 'agent_thought_chunk',

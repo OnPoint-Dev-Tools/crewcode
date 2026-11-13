@@ -24,6 +24,23 @@ Update corresponding Docs in [CrewCode Docs](/docs/), and [AGENTS.md](/AGENTS.md
 
 ## Agent Notes
 
+Explicit Stop must reach runtime teardown without waiting for provider abort
+acknowledgement. Windows termination targets only the owned runtime PID tree;
+never kill by provider/image name. Preserve the native resume id and do not replay
+the cancelled prompt. Keep desktop and Brain Stop behavior aligned.
+
+Bridge invalidation from model/effort/profile/approval or hydrated settings must
+defer while startup or a turn is active. Apply the restart on the next idle send
+with the existing resume key; never send changed settings into the old runtime.
+Explicit Stop/removal remains immediate. Unexpected CrewCoder ACP exits must
+retain the observed code/signal and bounded stderr tail without replaying work.
+See `docs/crewcoder-provider.md`.
+
+Keep CrewCoder lifecycle diagnostics independent of chat error suppression:
+record internal stop callers and observed exit code/signal/stderr in the OS-temp
+`crewcode-crewcoder-lifecycle.jsonl`. A packaged executable path does not establish
+its build revision, and a requested internal stop is not proof of a user action.
+
 Codex Full Access must keep `on-request` so MCP computer-use consent can reach
 the bridge's approval rules. CrewCoder's nested Codex adapter must also answer
 MCP elicitations explicitly; native Full access does not erase a service's own
@@ -59,11 +76,21 @@ grants, including in Full Access. See `docs/chat-artifacts.md`.
 Delegation first-send placement is an explicit CrewCode choice before provider
 dispatch. Honor the persisted owner isolation choice, pin shared checkout paths
 separately from isolated worktree metadata, and never checkout the parent to
-satisfy delegation. Cancel pending sends on Stop/session or checkout changes;
+satisfy delegation. Cancel pending sends on explicit Stop/session removal or checkout changes;
 recheck parent liveness and cohort after worktree creation, preserving interrupted
 results without launching workers. Stop during bridge startup must cancel prompt
 forwarding and stale-bridge retries, targeting only the exact late bridge id.
 See `docs/delegated-threads.md`.
+
+Pane unmounts and switching visible chats are navigation, not Stop. A submitted
+prompt must finish starting in its captured session even when hidden. Preserve
+explicit Stop and same-session provider/checkout cancellation; explicit session
+removal/reset must retire an exact late startup before any prompt is dispatched.
+The explicit Stop button must bypass launch-setting restart deferral using
+`dropBridge(..., { stopRunning: true })`, scoped to its exact session/provider.
+Clear the selected pane's pending-send UI immediately on Stop, even before a
+bridge id exists. Late settlement of the cancelled RPC must not change a newer
+send's indicator or another chat's state. See `usePendingChatSend`.
 
 Windows provider discovery must use the shared Windows executable candidates
 for desktop, Brain, and usage probes, including native .exe and npm .cmd/.bat
@@ -184,6 +211,12 @@ agent exits, or replies from the L1 cache, L2 transcript hydration, continuity
 reconciliation, startup, or session switching. Preserve global delivery for
 newly appended live errors and active-scope delivery for live agent-exit
 warnings. See `docs/notifications.md`.
+
+CrewCoder thought chunks with `crewcoder/progress` metadata are authoritative
+item snapshots: replace by turn/item/kind, including empty corrections, and do not
+also append portable text. Consume matching commentary dialogue echoes once in
+Thinking; snapshot updates must not split active reply bubbles. Keep plain ACP delta compatibility and the existing
+Thinking log presentation. See `docs/crewcoder-provider.md`.
 
 CrewCoder negotiates `_crewcoder/request_question` for nested provider questions
 and permission details. Keep questions separate from permission-option filtering

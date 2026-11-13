@@ -69,6 +69,41 @@ describe('useAgentBridge thinking stream routing', () => {
     act(() => { vi.advanceTimersByTime(60) })
   }
 
+  it('replaces identified thinking snapshots across tools without duplicating corrections', () => {
+    const bridge = renderBridge()
+    emit({ type: 'turn_start', bridgeId: 'b1', turnId: 't1' })
+    const snapshot = (itemId: string, text: string, completed = false) =>
+      emit({ type: 'thinking_snapshot', bridgeId: 'b1', turnId: 't1', itemId, text, completed })
+    snapshot('summary:r1', 'Partial')
+    emit({ type: 'tool_start', bridgeId: 'b1', turnId: 't1', toolCallId: 'c1', toolName: 'Read', args: {} })
+    snapshot('summary:r2', 'Second')
+    snapshot('summary:r1', 'Corrected\n\nFull section', true)
+    snapshot('summary:r2', '', true)
+    emit({ type: 'text_delta', bridgeId: 'b1', turnId: 't1', delta: 'Answer' })
+    emit({ type: 'turn_end', bridgeId: 'b1', turnId: 't1' })
+    const thinking = messagesByTab.tab1.filter(m => m.kind === 'thinking')
+    expect(thinking.map(m => m.text)).toEqual(['Corrected\n\nFull section', ''])
+    expect(thinking.every(m => !m.streaming)).toBe(true)
+    expect(messagesByTab.tab1.filter(m => m.kind === 'agent').map(m => m.text)).toEqual(['Answer'])
+    bridge.unmount()
+  })
+
+  it('keeps dialogue in one bubble when progress snapshots interleave per token', () => {
+    const bridge = renderBridge()
+    emit({ type: 'turn_start', bridgeId: 'b1', turnId: 't1' })
+    let text = ''
+    for (const delta of ['Yes', '—I', '’ll', ' keep', ' Crew', 'Coder', ' thinking.']) {
+      text += delta
+      emit({ type: 'thinking_snapshot', bridgeId: 'b1', turnId: 't1', itemId: 'c1', text, completed: false })
+      emit({ type: 'text_delta', bridgeId: 'b1', turnId: 't1', delta })
+      flushBuffers()
+    }
+    emit({ type: 'turn_end', bridgeId: 'b1', turnId: 't1' })
+    expect(messagesByTab.tab1.filter(m => m.kind === 'agent').map(m => m.text)).toEqual([text])
+    expect(messagesByTab.tab1.filter(m => m.kind === 'thinking').map(m => m.text)).toEqual([text])
+    bridge.unmount()
+  })
+
   it('keeps thinking deltas as thinking rows across tools and final text', () => {
     const bridge = renderBridge()
     expect(onEvent).not.toBeNull()

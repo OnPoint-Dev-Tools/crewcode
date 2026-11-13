@@ -44,9 +44,126 @@ describe('bridge runtime identity', () => {
 })
 
 describe('useBridgeRegistry navigation keepalive', () => {
+  it.each(['starting', 'running'] as const)('explicit Stop retires only its selected %s bridge', async status => {
+    const startup = deferred<{ ok: boolean }>()
+    const bridgeStop = vi.fn()
+    const bridgeStart = vi.fn().mockResolvedValueOnce({ ok: true })
+      .mockImplementationOnce(() => status === 'starting' ? startup.promise : Promise.resolve({ ok: true }))
+    vi.stubGlobal('window', { electronAPI: {
+      onBridgeEvent: vi.fn(() => vi.fn()), bridgeStart, bridgeStop,
+      bridgePrompt: vi.fn(async () => ({ ok: true })), bridgeSetMode: vi.fn(),
+    } })
+    const hook = renderRegistry()
+    await act(async () => { await hook.result.current.ensureBridge('sibling', 'crewcoder', 'crewcoder', '/repo') })
+    const sibling = hook.result.current.getBridgeId('sibling', 'crewcoder')!
+    let targetStartup!: Promise<{ bridgeId: string } | { error: string }>
+    await act(async () => {
+      targetStartup = hook.result.current.ensureBridge('target', 'crewcoder', 'crewcoder', '/repo')
+      if (status === 'running') await targetStartup
+    })
+    const target = hook.result.current.getBridgeId('target', 'crewcoder')!
+    if (status === 'running') await act(async () => { await hook.result.current.prompt(target, 'work') })
+    act(() => hook.result.current.dropBridge('target', 'crewcoder', { stopRunning: true }))
+    expect(bridgeStop).toHaveBeenCalledWith(target)
+    expect(bridgeStop).not.toHaveBeenCalledWith(sibling)
+    expect(hook.result.current.getBridgeId('target', 'crewcoder')).toBeNull()
+    expect(hook.result.current.getBridgeId('sibling', 'crewcoder')).toBe(sibling)
+    expect(hook.result.current.isBridgeRunning('sibling', 'crewcoder')).toBe(true)
+    if (status === 'starting') {
+      await act(async () => {
+        startup.resolve({ ok: true })
+        expect(await targetStartup).toHaveProperty('error')
+      })
+      expect(bridgeStop).toHaveBeenCalledTimes(2)
+      expect(bridgeStop).toHaveBeenLastCalledWith(target)
+    }
+    hook.unmount()
+  })
+
+  it('refuses a late startup result after explicit session removal', async () => {
+    const startup = deferred<{ ok: boolean }>()
+    const bridgeStop = vi.fn()
+    vi.stubGlobal('window', { electronAPI: {
+      onBridgeEvent: vi.fn(() => vi.fn()), bridgeStart: vi.fn(() => startup.promise),
+      bridgeStop, bridgeSetMode: vi.fn(),
+    } })
+    const hook = renderRegistry()
+    let starting!: Promise<{ bridgeId: string } | { error: string }>
+    await act(async () => { starting = hook.result.current.ensureBridge('removed-chat', 'crewcoder', 'crewcoder', '/repo') })
+    const original = hook.result.current.getBridgeId('removed-chat', 'crewcoder')!
+    act(() => hook.result.current.releaseScope('removed-chat', { stopRunning: true }))
+    await act(async () => {
+      startup.resolve({ ok: true })
+      expect(await starting).toEqual({ error: 'Chat startup was cancelled because the session was removed or reset.' })
+    })
+    expect(bridgeStop).toHaveBeenCalledTimes(2)
+    expect(bridgeStop).toHaveBeenLastCalledWith(original)
+    expect(hook.result.current.getBridgeId('removed-chat', 'crewcoder')).toBeNull()
+    hook.unmount()
+  })
+
   afterEach(() => {
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
+  })
+
+  it('defers launch-setting restarts during startup and execution until the next idle send', async () => {
+    const startup = deferred<{ ok: boolean }>()
+    let emitEvent!: (ev: unknown) => void
+    const bridgeStop = vi.fn()
+    const bridgeStart = vi.fn().mockImplementationOnce(() => startup.promise).mockResolvedValue({ ok: true })
+    vi.stubGlobal('window', {
+      electronAPI: {
+        onBridgeEvent: vi.fn((cb: (ev: unknown) => void) => { emitEvent = cb; return vi.fn() }),
+        bridgeStart, bridgeStop,
+        bridgePrompt: vi.fn(async () => ({ ok: true })),
+        bridgeSetMode: vi.fn(),
+      },
+    })
+    const hook = renderRegistry()
+    let starting!: Promise<{ bridgeId: string } | { error: string }>
+    await act(async () => {
+      starting = hook.result.current.ensureBridge('chat', 'crewcoder', 'crewcoder', '/repo', 'old-model')
+    })
+    const original = hook.result.current.getBridgeId('chat', 'crewcoder')!
+    act(() => hook.result.current.dropBridge('chat', 'crewcoder'))
+    expect(bridgeStop).not.toHaveBeenCalled()
+    expect(hook.result.current.getBridgeId('chat', 'crewcoder')).toBe(original)
+    await act(async () => { startup.resolve({ ok: true }); await starting })
+    await act(async () => { await hook.result.current.prompt(original, 'work') })
+    act(() => hook.result.current.dropBridge('chat', 'crewcoder'))
+    expect(bridgeStop).not.toHaveBeenCalled()
+    await act(async () => {
+      const blocked = await hook.result.current.ensureBridge('chat', 'crewcoder', 'crewcoder', '/repo', 'new-model')
+      expect(blocked).toEqual({ error: 'Agent settings changed while this chat was running. Wait for it to finish before sending again.' })
+    })
+    act(() => emitEvent({ type: 'turn_end', bridgeId: original, turnId: 'work' }))
+    expect(bridgeStop).not.toHaveBeenCalled()
+    await act(async () => {
+      await hook.result.current.ensureBridge('chat', 'crewcoder', 'crewcoder', '/repo', 'new-model')
+    })
+    expect(bridgeStop).toHaveBeenCalledOnce()
+    expect(bridgeStop).toHaveBeenCalledWith(original)
+    expect(bridgeStart).toHaveBeenCalledTimes(2)
+    expect(bridgeStart).toHaveBeenLastCalledWith(expect.objectContaining({ model: 'new-model', freshSession: false }))
+    hook.unmount()
+  })
+
+  it('still drops an idle bridge immediately when a launch setting changes', async () => {
+    let emitEvent!: (ev: unknown) => void
+    const bridgeStop = vi.fn()
+    vi.stubGlobal('window', { electronAPI: {
+      onBridgeEvent: vi.fn((cb: (ev: unknown) => void) => { emitEvent = cb; return vi.fn() }),
+      bridgeStart: vi.fn(async () => ({ ok: true })), bridgeStop, bridgeSetMode: vi.fn(),
+    } })
+    const hook = renderRegistry()
+    await act(async () => { await hook.result.current.ensureBridge('chat', 'crewcoder', 'crewcoder', '/repo') })
+    const original = hook.result.current.getBridgeId('chat', 'crewcoder')!
+    act(() => emitEvent({ type: 'turn_end', bridgeId: original, turnId: 'done' }))
+    act(() => hook.result.current.dropBridge('chat', 'crewcoder'))
+    expect(bridgeStop).toHaveBeenCalledWith(original)
+    expect(hook.result.current.getBridgeId('chat', 'crewcoder')).toBeNull()
+    hook.unmount()
   })
 
   it('routes provider events emitted before React commits bridge map state', async () => {

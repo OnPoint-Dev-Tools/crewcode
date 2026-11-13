@@ -1,4 +1,5 @@
-import { spawn } from 'child_process'
+import { execFile, spawn } from 'child_process'
+import { join } from 'path'
 import type { ClientChannel } from 'ssh2'
 import { isRemoteRoot, parseRemoteTarget } from '../remote/ssh-target'
 import { execRemoteStream } from '../remote/ssh-pool'
@@ -18,7 +19,7 @@ export interface AgentProc {
   }
   stdout: NodeJS.ReadableStream
   stderr: NodeJS.ReadableStream
-  on(event: 'close', cb: (code: number | null) => void): void
+  on(event: 'close', cb: (code: number | null, signal?: NodeJS.Signals | null) => void): void
   on(event: 'error', cb: (err: Error) => void): void
   kill(): void
   killed: boolean
@@ -79,6 +80,25 @@ export async function spawnAgentProcess(opts: SpawnAgentOpts): Promise<SpawnAgen
     stdio: ['pipe', 'pipe', 'pipe'],
     windowsHide: true,
   })
+  if (process.platform === 'win32') {
+    const killParent = cp.kill.bind(cp)
+    let killRequested = false
+    cp.kill = (signal) => {
+      if (!cp.pid || cp.exitCode !== null || cp.signalCode !== null) return false
+      if (killRequested) return true
+      killRequested = true
+      // npm launchers and agent subprocesses outlive a parent-only kill.
+      // Target this exact live owned PID, never a provider name or all Node processes.
+      execFile(join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe'),
+        ['/PID', String(cp.pid), '/T', '/F'], { windowsHide: true }, error => {
+          if (error && cp.exitCode === null && cp.signalCode === null) {
+            killRequested = false
+            killParent(signal)
+          }
+        })
+      return true
+    }
+  }
   // child_process satisfies the AgentProc subset structurally; the cast keeps
   // the bridges on a single type regardless of transport.
   return { proc: cp as unknown as AgentProc, dir: opts.cwd, remote: false }

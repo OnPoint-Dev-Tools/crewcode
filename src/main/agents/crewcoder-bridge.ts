@@ -1,5 +1,6 @@
 import { promises as fsp } from 'fs'
-import { isAbsolute, posix, resolve as pathResolve } from 'path'
+import { isAbsolute, join, posix, resolve as pathResolve } from 'path'
+import { tmpdir } from 'os'
 import { remoteReadFile, remoteWriteFile } from '../remote/remote-fs'
 import { spawnAgentProcess } from './agent-spawn'
 import type {
@@ -139,6 +140,7 @@ export class InactivityWatchdog {
 }
 
 export interface CrewCoderToolProjectionState {
+  commentaryEcho?: string
   announced: Set<string>
   settled: Set<string>
   argsById: Map<string, unknown>
@@ -223,6 +225,17 @@ export function crewCoderEventsFromUpdate(
   tools: CrewCoderToolProjectionState,
 ): BridgeEvent[] {
   const kind = update.sessionUpdate
+  if (kind === 'agent_message_chunk' && tools.commentaryEcho) {
+    const text = contentText(update.content)
+    // ACP mirrors commentary as dialogue for host gates; render it only once in Thinking.
+    if (text && tools.commentaryEcho.startsWith(text)) {
+      tools.commentaryEcho = tools.commentaryEcho.slice(text.length)
+      return []
+    }
+    tools.commentaryEcho = undefined
+  } else if (kind !== 'agent_thought_chunk') {
+    tools.commentaryEcho = undefined
+  }
   if (kind === 'user_message_chunk') return []
   if (kind === '_crewcoder/compaction_update') {
     const status = update.status
@@ -241,6 +254,21 @@ export function crewCoderEventsFromUpdate(
       provider: 'crewcoder',
       ...(status === 'completed' && update.phase !== 'skipped' ? { resetContext: true } : {}),
     }]
+  }
+  if (kind === 'agent_thought_chunk') {
+    const progress = record(record(update._meta)?.['crewcoder/progress'])
+    if (progress && typeof progress.itemId === 'string' && typeof progress.text === 'string'
+      && ['summary', 'reasoning', 'plan', 'commentary'].includes(String(progress.kind))) {
+      if (progress.kind === 'commentary' && progress.completed !== true) {
+        tools.commentaryEcho = (tools.commentaryEcho ?? '') + contentText(update.content)
+      }
+      // Completed snapshots can correct or clear earlier text; portable deltas cannot express that.
+      return [{
+        type: 'thinking_snapshot', bridgeId, turnId,
+        itemId: JSON.stringify([progress.kind, progress.itemId]),
+        text: progress.text, completed: progress.completed === true,
+      }]
+    }
   }
   if (kind === 'agent_message_chunk' || kind === 'agent_thought_chunk') {
     const delta = contentText(update.content)
@@ -475,6 +503,7 @@ export async function createCrewCoderBridge(
   let lastUsage: TurnUsage | undefined
   let stdoutBuffer = ''
   let stderrBuffer = ''
+  let stderrTail = ''
   let replayingSessionLoad = false
   let replayTurnSequence = 0
   let replayTurnId: string | null = null
@@ -484,11 +513,20 @@ export async function createCrewCoderBridge(
   let unusable = false
   let unusableReason = 'bridge must restart after an unresponsive cancellation'
   let stopping = false
+  let processClosed = false
   const debug = process.env.CREWCODE_CREWCODER_DEBUG === '1'
 
   function dbg(direction: '>>' | '<<', label: string, extra?: string): void {
     if (!debug) return
     process.stderr.write(`[crewcoder ${opts.bridgeId}] ${direction} ${label}${extra ? ` ${extra}` : ''}\n`)
+  }
+
+  function recordLifecycle(event: 'stop_requested' | 'exit', details: Record<string, unknown>): void {
+    // Expected shutdowns also need evidence: renderer cleanup can request Stop
+    // without the user clicking it, and suppressing errors hides that distinction.
+    const line = JSON.stringify({ at: new Date().toISOString(), event, bridgeId: opts.bridgeId, pid: proc.pid, ...details })
+    void fsp.appendFile(join(tmpdir(), 'crewcode-crewcoder-lifecycle.jsonl'), `${line}\n`, { encoding: 'utf8', mode: 0o600 })
+      .catch(error => { process.stderr.write(`CrewCode could not record CrewCoder lifecycle: ${String(error)}\n`) })
   }
 
   function send(message: Record<string, unknown>): boolean {
@@ -843,6 +881,7 @@ export async function createCrewCoderBridge(
 
   proc.stderr.setEncoding('utf8')
   proc.stderr.on('data', (chunk: string) => {
+    stderrTail = (stderrTail + chunk).slice(-2_000)
     stderrBuffer += chunk
     const lines = stderrBuffer.split(/\r?\n/)
     stderrBuffer = lines.pop() ?? ''
@@ -856,11 +895,19 @@ export async function createCrewCoderBridge(
     }
   })
 
-  proc.on('close', code => {
+  proc.on('close', (code, signal) => {
+    processClosed = true
+    unusable = true
+    const status = signal ? `signal ${signal}` : code !== null ? `code ${code}` : 'no exit status reported'
+    const tail = stderrTail.trim().slice(-600)
+    const reason = `crewcoder acp exited (${status})${tail ? `: ${tail}` : ''}`
+    recordLifecycle('exit', { code, signal: signal ?? null, stopRequested: stopping, stderr: stderrTail.trim() })
+    unusableReason = reason
+    if (!stopping) emit({ type: 'error', bridgeId: opts.bridgeId, message: reason })
     cancelQuestions()
     for (const [, entry] of pending) {
       entry.stopTimeout()
-      entry.reject(new Error(`crewcoder acp closed before responding (code ${String(code)})`))
+      entry.reject(new Error(reason))
     }
     pending.clear()
     void endTurn().finally(() => emit({ type: 'closed', bridgeId: opts.bridgeId, code }))
@@ -977,7 +1024,7 @@ export async function createCrewCoderBridge(
         } catch (error) {
           // CrewCoder deliberately reports provider/stall failures as JSON-RPC
           // errors. User-requested teardown is silent; the closed event owns it.
-          if (!stopping) emit({ type: 'error', bridgeId: opts.bridgeId, message: (error as Error).message })
+          if (!stopping && !processClosed) emit({ type: 'error', bridgeId: opts.bridgeId, message: (error as Error).message })
         } finally {
           await endTurn()
         }
@@ -992,6 +1039,7 @@ export async function createCrewCoderBridge(
       notify('session/cancel', { sessionId })
     },
     async stop() {
+      recordLifecycle('stop_requested', { caller: new Error('CrewCode requested ACP stop').stack })
       cancelQuestions()
       stopping = true
       if (sessionId) notify('session/cancel', { sessionId })

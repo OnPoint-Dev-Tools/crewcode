@@ -12,11 +12,13 @@ import { CrewBranch } from './CrewBranch'
 import { GitSidebar } from '../git/GitSidebar'
 import { TurnChangesDrawer } from '../thread/TurnChangesDrawer'
 import { collectTurnChangeEntries } from '../thread/turn-changes-data'
+import { settleCurrentTurnActivity } from '../thread/turn-activity'
 import type { TurnChangeTarget } from '../thread/turn-changes-data'
 import { useGitSidebar, type GitAuthCredentials, type GitAuthRequest, type GitSigningRequest } from '../../hooks/useGitSidebar'
 import { MODE_FROM_SETTINGS, MODE_TO_LEVEL, normalizeModeLevel } from '../../app-constants'
 import { titleFromFirstMessage } from '../../hooks/useChatSessions'
 import { useComposerSend } from '../../hooks/useComposerSend'
+import { usePendingChatSend } from '../../hooks/usePendingChatSend'
 import { useMobileLayout } from '../../hooks/useMobileLayout'
 import { useSessionDelegation } from '../../hooks/useSessionDelegation'
 import { canSessionDelegate } from '../../hooks/delegation-eligibility'
@@ -314,7 +316,7 @@ export function ChatPane({
   const composerMode: Mode = MODE_FROM_SETTINGS[modeLevel] ?? 'Build'
   const tabPanes = useMemo(() => pty.panes.filter((p: any) => p.tabId === layoutTabId), [layoutTabId, pty.panes])
   const [terminalHidden, setTerminalHidden] = useState(false)
-  const [sendInFlight, setSendInFlight] = useState(false)
+  const { pending: sendInFlight, begin: beginSend, finish: finishSend, cancel: cancelSend } = usePendingChatSend(sessActive)
   const [externalDirsMode, setExternalDirsMode] = useState<'add' | 'remove' | null>(null)
   const [handoffOpen, setHandoffOpen] = useState(false)
   const [handoffBusy, setHandoffBusy] = useState(false)
@@ -511,7 +513,7 @@ export function ChatPane({
     if (latest.sessActive !== sessActive || (overrideText === undefined && latest.composer !== composer)) return
     // Cover the gap between appending the user message and bridge runtime state
     // propagation, so the loader appears immediately and stays through await.
-    setSendInFlight(true)
+    const sendToken = beginSend()
     try {
       if (messages.length === 0) {
         const nextLabel = titleFromFirstMessage(text) || workspace.name
@@ -527,9 +529,9 @@ export function ChatPane({
       if (text !== '/compact') setAttachments([])
       await sending
     } finally {
-      setSendInFlight(false)
+      finishSend(sendToken)
     }
-  }, [placement.ensure, activeSession?.label, attachmentsRef, chatSessions, composer, messages.length, openHandoff, send, sendText, sessActive, setAttachments, setComposer, tabId, workspace.name])
+  }, [placement.ensure, activeSession?.label, attachmentsRef, beginSend, finishSend, chatSessions, composer, messages.length, openHandoff, send, sendText, sessActive, setAttachments, setComposer, tabId, workspace.name])
 
   const queueFollowUp = useCallback(async () => {
     const text = composer.trim()
@@ -717,14 +719,14 @@ export function ChatPane({
   const stop = useCallback(() => {
     placement.cancel()
     cancelPendingSend()
+    cancelSend()
     const bridgeId = bridges.getBridgeId?.(sessActive, activeAgentId)
-    if (!bridgeId) return
 
     // A hard stop tears down the live bridge so providers that ignore aborts
     // still stop streaming immediately and the next send gets a fresh bridge.
-    bridges.dropBridge(sessActive, activeAgentId)
+    if (bridgeId) bridges.dropBridge(sessActive, activeAgentId, { stopRunning: true })
     setMessages(prev => {
-      const next = prev.map(msg => {
+      const next = settleCurrentTurnActivity(prev, 'cancelled').map(msg => {
         if (msg.kind === 'agent' && msg.streaming) return { ...msg, streaming: false }
         if (msg.kind === 'thinking' && msg.streaming) return { ...msg, streaming: false }
         if (msg.kind === 'toolcall' && (msg.status === 'pending' || msg.status === 'running')) {
@@ -734,7 +736,7 @@ export function ChatPane({
       })
       return [...next, { kind: 'system', tone: 'info', text: 'request stopped', time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) }]
     })
-  }, [placement.cancel, cancelPendingSend, bridges, sessActive, activeAgentId, setMessages])
+  }, [placement.cancel, cancelPendingSend, cancelSend, bridges, sessActive, activeAgentId, setMessages])
 
   // The selected worktree is authoritative. A sibling pane's Git refresh must
   // never override this pane's composer branch label.

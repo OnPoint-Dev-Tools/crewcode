@@ -1,6 +1,7 @@
 import electron from 'electron'
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import { createPiBridge } from './pi-bridge'
+import { stopRuntime } from './stop-runtime'
 import { createOpencodeBridge } from './opencode-bridge'
 import { createCodexBridge } from './codex-bridge'
 import { createClaudeBridge } from './claude-bridge'
@@ -1694,11 +1695,9 @@ export function registerAgentBridgeIpc(resolveAgentPath: AgentPathResolver): voi
     entry.stopping = true
     custodyJournal().patch(bridgeId, { status: 'ended', endedAt: Date.now(), turnId: undefined, activePrompt: undefined })
     cancelPendingUserRequests(bridgeId, 'stopped by user')
-    // Stop is the user's "make it stop no matter what" escape hatch, so we
-    // try a polite abort first before tearing the bridge process down.
-    await entry.bridge.abort().catch(() => {})
-    await entry.bridge.stop().catch(() => {})
-    bridges.delete(bridgeId)
+    // A provider may never acknowledge abort. Hard teardown must not wait for it.
+    await stopRuntime(entry.bridge).catch(() => {})
+    if (bridges.get(bridgeId) === entry) bridges.delete(bridgeId)
   })
 
   // Explicit human reauthorization — the only way out of a halt. The halted

@@ -98,6 +98,7 @@ export type BridgeEvent =
   | { type: 'session_id';       bridgeId: string; sessionId: string; resumed: boolean }
   | { type: 'turn_start';       bridgeId: string; turnId: string }
   | { type: 'text_delta';       bridgeId: string; turnId: string; delta: string }
+  | { type: 'thinking_snapshot'; bridgeId: string; turnId: string; itemId: string; text: string; completed: boolean }
   | { type: 'thinking_delta';   bridgeId: string; turnId: string; delta: string }
   // Non-streaming history replay from providers that send transcript chunks on resume.
   | { type: 'history_user';     bridgeId: string; text: string }

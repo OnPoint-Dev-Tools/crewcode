@@ -6,6 +6,15 @@ CrewCoder is a first-class CrewCode chat and Crew provider implemented by
 `--mode`, and translates newline-delimited JSON-RPC 2.0 onto the shared
 `AgentBridge` event stream. CrewCoder remains the ACP agent.
 
+CrewCode consumes optional `_meta["crewcoder/progress"]` thought snapshots by
+turn, item id, and kind. Updates replace that item's Thinking log text, including
+completed corrections and empty results, instead of appending the portable fallback
+again. Commentary snapshots also identify the matching portable dialogue echo;
+CrewCode consumes that echo once in Thinking rather than opening a reply for each
+token. Snapshot updates do not close an active dialogue bubble, so interleaved
+progress cannot fragment replies. Older ACP thought chunks still stream as text deltas. This keeps the existing
+CrewCode Thinking log presentation without changing CrewCoder's own thinking UI.
+
 CrewCoder-specific usage metadata, permission semantics, reasoning,
 and tool-call ordering must not change Hermes behavior.
 
@@ -97,6 +106,46 @@ plan is a normal composer message; CrewCoder treats that as a new
 `awaiting_plan` cycle rather than approval.
 
 ## ACP lifecycle
+
+The shared desktop/Brain Stop path requests cancellation but never waits for its
+acknowledgement before runtime teardown. Windows kills target the exact owned
+runtime PID and its descendants, including npm launcher children. Stop keeps the
+saved native session id so the next user message follows normal resume; it never
+replays the cancelled prompt automatically. Unix and SSH keep their existing
+process/channel termination paths.
+
+Switching chats or unmounting the visible pane does not cancel a submitted prompt,
+including while its bridge is still starting. The send retains its original chat,
+provider, and checkout. Explicit Stop, same-session provider/checkout changes, and
+session removal/reset retain cancellation. If removal wins a startup race, the
+registry stops the exact late bridge and refuses prompt dispatch.
+The Stop button explicitly requests `dropBridge(..., { stopRunning: true })`;
+it must bypass the deferral used for launch-setting changes, affect only the
+selected session/provider, and retire a late startup before dispatch.
+Stop also clears the pane's local pending-send indicator immediately, without
+waiting for startup/resume RPC settlement. Late completion of a stopped send
+must not clear a newer send's indicator or make another chat look busy.
+
+Launch-setting changes discovered during startup or an active turn must not
+terminate that chat. CrewCode defers model, effort, profile, approval, and other
+bridge invalidations until the next idle send, which restarts with the latest
+settings and the existing resume key. Sends under changed settings are refused
+until the current turn settles. Explicit Stop and session removal still stop
+their exact bridge.
+
+Unexpected ACP exits report the observed exit code or termination signal and a
+bounded stderr tail, including an unterminated last line. Missing exit status is
+reported explicitly. CrewCode does not automatically replay an interrupted prompt.
+The preceding error carries the cause even if the generic exit row has no code.
+
+Every CrewCoder stop request and exit also appends a diagnostic record to
+`crewcode-crewcoder-lifecycle.jsonl` in the agent host's OS temporary directory
+(`%TEMP%` on Windows). This remains active for expected/internal stops, whose
+chat errors are intentionally suppressed. Records include bridge/process ids,
+the stop caller stack, exit code/signal, whether Stop was requested, and a bounded
+stderr tail; they exclude prompt and response bodies. A requested stop establishes
+that CrewCode initiated teardown, not that the user clicked Stop. Inspect this
+file for unexplained `agent exited (unknown)` rows instead of inferring an old build.
 
 The bridge performs this handshake before reporting ready:
 

@@ -57,6 +57,8 @@ export function useBridgeRegistry({ setMessagesForTab }: UseBridgeRegistryOpts) 
   const runningByBridge = useRunningByBridge()
   const runningByScope = useRunningByScope()
   const startingBridgeIdsRef = useRef(new Set<string>())
+  const cancelledStartsRef = useRef(new Set<string>())
+  const pendingRestartsRef = useRef(new Set<string>())
   const bridgesByKeyRef = useRef(bridgesByKey)
   bridgesByKeyRef.current = bridgesByKey
   useEffect(() => {
@@ -188,8 +190,12 @@ export function useBridgeRegistry({ setMessagesForTab }: UseBridgeRegistryOpts) 
     crewcoderApprovalMode?: import('../../../shared/crewcoder-types').CrewCoderApprovalMode,
   ): Promise<{ bridgeId: string } | { error: string }> => {
     const key      = `${tabId}:${agentId}`
-    const existing = bridgesByKey[key]
-    const forceFresh = force || freshSession
+    const existing = bridgesByKeyRef.current[key]
+    const pendingRestart = pendingRestartsRef.current.has(key)
+    if (existing && pendingRestart && (startingBridgeIdsRef.current.has(existing) || bridgeActivity.snapshot().runningByBridge[existing])) {
+      return { error: 'Agent settings changed while this chat was running. Wait for it to finish before sending again.' }
+    }
+    const forceFresh = force || freshSession || pendingRestart
     if (existing && !forceFresh) {
       bridgeActivity.bindScope(existing, tabId)
       if (webRuntime) {
@@ -211,6 +217,7 @@ export function useBridgeRegistry({ setMessagesForTab }: UseBridgeRegistryOpts) 
     // A stale-id self-heal carries the accepted user request into the replacement
     // runtime. Preserve its pending activity instead of recording an interruption.
     if (existing && forceFresh) bridge.stop(existing, true)
+    pendingRestartsRef.current.delete(key)
 
     // A stable remote id lets a newly authenticated browser runtime explicitly
     // reclaim the same Brain-side execution without replaying its start/prompt.
@@ -238,6 +245,12 @@ export function useBridgeRegistry({ setMessagesForTab }: UseBridgeRegistryOpts) 
     // is session-scoped so switching providers can continue the same thread.
     const r = await bridge.start(bridgeId, provider, cwd, model, mode, effort, toolPolicy, key, tabId, mcpServers, freshSession, externalDirectories, crewcoderMode, crewcoderApprovalMode)
     startingBridgeIdsRef.current.delete(bridgeId)
+    // Explicit removal can happen before main has registered the new process.
+    // Retire that exact late result instead of dispatching into a deleted chat.
+    if (cancelledStartsRef.current.delete(bridgeId)) {
+      bridge.stop(bridgeId)
+      return { error: 'Chat startup was cancelled because the session was removed or reset.' }
+    }
     // A halt in force refuses the start outright, so no process was spawned.
     // Record it here, where the tab is known synchronously.
     if (r.custodyHalt) bridgeActivity.setCustodyHalt(tabId, r.custodyHalt)
@@ -253,11 +266,22 @@ export function useBridgeRegistry({ setMessagesForTab }: UseBridgeRegistryOpts) 
     return { bridgeId }
   }, [bridge, bridgesByKey, webRuntime])
 
-  /** Stop and forget one bridge — used when model/effort change forces a respawn. */
-  const dropBridge = useCallback((tabId: string, agentId: string) => {
+  /** Defer setting changes while busy; explicit Stop always retires this exact bridge. */
+  const dropBridge = useCallback((tabId: string, agentId: string, opts?: { stopRunning?: boolean }) => {
     const key = `${tabId}:${agentId}`
-    const id  = bridgesByKey[key]
+    const id  = bridgesByKeyRef.current[key]
     if (!id) return
+    // Model discovery and session hydration can change launch settings during
+    // startup. Keep the accepted turn alive and apply them on the next send.
+    if (!opts?.stopRunning && (startingBridgeIdsRef.current.has(id) || bridgeActivity.snapshot().runningByBridge[id])) {
+      pendingRestartsRef.current.add(key)
+      return
+    }
+    pendingRestartsRef.current.delete(key)
+    if (startingBridgeIdsRef.current.has(id)) cancelledStartsRef.current.add(id)
+    const remaining = { ...bridgesByKeyRef.current }
+    delete remaining[key]
+    bridgesByKeyRef.current = remaining
     bridge.stop(id)
     setBridgesByKey(prev => { const n = { ...prev }; delete n[key]; return n })
     setBridgeToTab(prev => { const n = { ...prev }; delete n[id]; return n })
@@ -276,15 +300,17 @@ export function useBridgeRegistry({ setMessagesForTab }: UseBridgeRegistryOpts) 
     // a bridge that started since the last render is still protected.
     const running = bridgeActivity.snapshot().runningByBridge
     const dropped = new Set<string>()
-    Object.entries(bridgesByKey)
+    Object.entries(bridgesByKeyRef.current)
       .filter(([key]) => match(key))
       .forEach(([, id]) => {
         const protectedByTurn = running[id] || startingBridgeIdsRef.current.has(id)
         if (protectedByTurn && !stopRunning) return
+        if (startingBridgeIdsRef.current.has(id)) cancelledStartsRef.current.add(id)
         bridge.stop(id)
         dropped.add(id)
       })
     if (dropped.size === 0) return
+    bridgesByKeyRef.current = Object.fromEntries(Object.entries(bridgesByKeyRef.current).filter(([, id]) => !dropped.has(id)))
     setBridgesByKey(prev => {
       const n = { ...prev }
       for (const [key, id] of Object.entries(n)) if (dropped.has(id)) delete n[key]
@@ -331,6 +357,7 @@ export function useBridgeRegistry({ setMessagesForTab }: UseBridgeRegistryOpts) 
     const key = `${tabId}:${agentId}`
     const id  = bridgesByKey[key]
     if (id) {
+      if (startingBridgeIdsRef.current.has(id)) cancelledStartsRef.current.add(id)
       bridge.stop(id)
       setBridgesByKey(prev => { const n = { ...prev }; delete n[key]; return n })
       setBridgeToTab(prev => { const n = { ...prev }; delete n[id]; return n })

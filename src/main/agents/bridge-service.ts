@@ -1,4 +1,5 @@
 import { createPiBridge } from './pi-bridge'
+import { stopRuntime } from './stop-runtime'
 import { createOpencodeBridge } from './opencode-bridge'
 import { createCodexBridge } from './codex-bridge'
 import { createClaudeBridge } from './claude-bridge'
@@ -423,8 +424,8 @@ export class AgentBridgeService {
     const entry = this.bridges.get(bridgeId)
     this.clearQueuedPromptsForBridge(bridgeId)
     this.releaseConversationPrompt(bridgeId)
-    if (entry) await entry.bridge.stop().catch(() => {})
-    this.bridges.delete(bridgeId)
+    if (entry) await stopRuntime(entry.bridge).catch(() => {})
+    if (this.bridges.get(bridgeId) === entry) this.bridges.delete(bridgeId)
     return { ok: true }
   }
 

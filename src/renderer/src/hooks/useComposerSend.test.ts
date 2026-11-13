@@ -4,6 +4,9 @@ import type { AgentInfo } from '../types'
 import { act, renderHook } from './hook-test-host'
 import { useComposerSend, type UseComposerSendOpts } from './useComposerSend'
 
+const bridgeStop = vi.hoisted(() => vi.fn())
+vi.mock('../runtime/crewcode-client', () => ({ getCrewCodeClient: () => ({ bridgeStop }) }))
+
 const agent: AgentInfo = {
   id: 'pi',
   name: 'pi',
@@ -48,6 +51,65 @@ function makeOpts(overrides: Partial<UseComposerSendOpts> = {}): UseComposerSend
 }
 
 describe('useComposerSend session continuity', () => {
+  it('stops only the selected chat when two submitted prompts are starting', async () => {
+    bridgeStop.mockClear()
+    const opts = makeOpts()
+    const pending = new Map<string, (result: { bridgeId: string }) => void>()
+    opts.bridges.ensureBridge = vi.fn(sessionId => new Promise<{ bridgeId: string }>(resolve => { pending.set(sessionId, resolve) }))
+    const hook = renderHook(useComposerSend, opts)
+    let first!: Promise<void>
+    let second!: Promise<void>
+    act(() => { first = hook.result.current.sendText('first chat', []) })
+    act(() => hook.rerender({ ...opts, sessActive: 'sess-2' }))
+    act(() => { second = hook.result.current.sendText('second chat', []) })
+    act(() => hook.result.current.cancelPendingSend())
+    await act(async () => {
+      pending.get('sess-1')!({ bridgeId: 'first-bridge' })
+      pending.get('sess-2')!({ bridgeId: 'second-bridge' })
+      await Promise.all([first, second])
+    })
+    expect(bridgeStop).toHaveBeenCalledOnce()
+    expect(bridgeStop).toHaveBeenCalledWith('second-bridge')
+    expect(opts.bridges.prompt).toHaveBeenCalledOnce()
+    expect(opts.bridges.prompt).toHaveBeenCalledWith('first-bridge', expect.stringContaining('first chat'), undefined)
+    hook.unmount()
+  })
+
+  it.each(['switch', 'unmount'] as const)('keeps a submitted prompt alive during startup on pane %s', async navigation => {
+    bridgeStop.mockClear()
+    const opts = makeOpts()
+    let finish!: (result: { bridgeId: string }) => void
+    opts.bridges.ensureBridge = vi.fn(() => new Promise<{ bridgeId: string }>(resolve => { finish = resolve }))
+    const hook = renderHook(useComposerSend, opts)
+    let sending!: Promise<void>
+    act(() => { sending = hook.result.current.sendText('original chat work', []) })
+    if (navigation === 'switch') {
+      act(() => hook.rerender({ ...opts, sessActive: 'other-chat', activeTabId: 'other-tab', effectivePath: '/other-repo' }))
+    } else {
+      hook.unmount()
+    }
+    await act(async () => { finish({ bridgeId: 'original-bridge' }); await sending })
+    expect(bridgeStop).not.toHaveBeenCalled()
+    expect(opts.bridges.prompt).toHaveBeenCalledWith('original-bridge', expect.stringContaining('original chat work'), undefined)
+    if (navigation === 'switch') hook.unmount()
+  })
+
+  it.each(['stop', 'checkout', 'provider'] as const)('still cancels pending startup on explicit %s changes', async change => {
+    bridgeStop.mockClear()
+    const opts = makeOpts()
+    let finish!: (result: { bridgeId: string }) => void
+    opts.bridges.ensureBridge = vi.fn(() => new Promise<{ bridgeId: string }>(resolve => { finish = resolve }))
+    const hook = renderHook(useComposerSend, opts)
+    let sending!: Promise<void>
+    act(() => { sending = hook.result.current.sendText('do not dispatch', []) })
+    if (change === 'stop') act(() => hook.result.current.cancelPendingSend())
+    else act(() => hook.rerender({ ...opts, ...(change === 'checkout' ? { effectivePath: '/changed-checkout' } : { activeAgentId: 'claude' }) }))
+    await act(async () => { finish({ bridgeId: 'cancelled-bridge' }); await sending })
+    expect(opts.bridges.prompt).not.toHaveBeenCalled()
+    expect(bridgeStop).toHaveBeenCalledWith('cancelled-bridge')
+    hook.unmount()
+  })
+
   it('does not drop or reset provider history on initial mount', () => {
     const opts = makeOpts()
     const h = renderHook(useComposerSend, opts)
