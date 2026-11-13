@@ -10,6 +10,7 @@
 [![Website](https://img.shields.io/badge/Website-crewcode.logixhub.icu-0b7285.svg)](https://crewcode.logixhub.icu)
 [![X](https://img.shields.io/badge/X-@OnPointTools-000000.svg)](https://x.com/OnPointTools)
 [![YouTube](https://img.shields.io/badge/YouTube-@CjWisdom-FF0000.svg)](https://www.youtube.com/@CjWisdom)
+[![As seen on Open Source Alternatives](https://www.opensourcealternatives.to/badge-osa.svg)](https://www.opensourcealternatives.to)
 
 **[Want to continue where you left off, from any browser? Jump to the setup →](#continue-your-work-from-anywhere)**
 
